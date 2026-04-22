@@ -1,0 +1,2 @@
+source python-env/bin/activate
+uvicorn main:app --reload --port 8009

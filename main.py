@@ -120,6 +120,20 @@ def resolve_file_path(file_name: str) -> Path:
     return file_path
 
 
+@app.get("/last", response_class=HTMLResponse)
+def serve_last_file() -> HTMLResponse:
+    files = [f for f in FILES_DIR.iterdir() if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS]
+    if not files:
+        raise HTTPException(status_code=404, detail="No files found.")
+    last = max(files, key=lambda f: f.stat().st_mtime)
+    content = last.read_text(encoding="utf-8")
+    if last.suffix.lower() == ".html":
+        return HTMLResponse(content=content)
+    rendered_html = md.render(content)
+    full_html = HTML_TEMPLATE.format(title=last.name, css=DARK_THEME_CSS, content=rendered_html)
+    return HTMLResponse(content=full_html)
+
+
 @app.get("/{file_name}", response_class=HTMLResponse)
 def serve_file(file_name: str) -> HTMLResponse:
     file_path = resolve_file_path(file_name)

@@ -1,0 +1,22 @@
+#Color: blue
+#Icon: bell
+
+import Shortcuts
+
+askForInput(prompt: "Filename", type: Text) >> filename
+askForInput(prompt: "Content", type: Text) >> content
+
+downloadURL(
+    url: "https://serve.chiq.me/file/new",
+    method: POST,
+    headers: {"Authorization": "Bearer 0q29302dfc_3949292828AA"},
+    requestType: Form,
+    requestJSON: {"filename": "${filename}", "content": "${content}"},
+    requestVar:
+) >> response
+
+getDictionaryFrom(input: response) >> dict
+valueFor(key: "url", dictionary: dict) >> fileUrl
+
+setClipboard(variable: fileUrl, local: false, expiration: )
+alert(alert: "${fileUrl}")

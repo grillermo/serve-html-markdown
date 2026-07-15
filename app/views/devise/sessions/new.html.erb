@@ -1,0 +1,28 @@
+<% content_for :title, "Sign in" %>
+
+<main class="signin">
+  <h1>Sign in</h1>
+
+  <% if alert %>
+    <p class="signin-alert"><%= alert %></p>
+  <% end %>
+
+  <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
+    <div class="field">
+      <%= f.label :email %>
+      <%= f.email_field :email, autofocus: true, autocomplete: "email", required: true %>
+    </div>
+
+    <div class="field">
+      <%= f.label :password %>
+      <%= f.password_field :password, autocomplete: "current-password", required: true %>
+    </div>
+
+    <div class="field field--checkbox">
+      <%= f.check_box :remember_me %>
+      <%= f.label :remember_me %>
+    </div>
+
+    <%= f.submit "Sign in" %>
+  <% end %>
+</main>

@@ -8,3 +8,24 @@
  *
  * Consider organizing styles into separate files for maintainability.
  */
+
+.signin {
+  max-width: 24rem;
+  margin: 4rem auto;
+  padding: 0 1rem;
+}
+
+.signin .field {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.signin .field--checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.signin-alert {
+  color: #b00020;
+}

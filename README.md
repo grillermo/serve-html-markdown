@@ -1,35 +1,81 @@
-# Serve HTML & Markdown with FastAPI
+# Serve HTML & Markdown with Rails
 
-This project exposes a single endpoint that serves files from the local `/files` folder:
+A minimal Rails 8 application that serves trusted HTML and Markdown files from
+the `files/` directory.
 
-- `/your-file.html` -> serves HTML as-is
-- `/your-file.md` -> renders Markdown to HTML
-- `/your-file.markdown` -> renders Markdown to HTML
+- `GET /name.html` serves HTML as-is.
+- `GET /name.md` and `GET /name.markdown` render Markdown with a dark theme.
+- `GET /` and `GET /last` redirect to the most recently modified supported file.
+- `HEAD /health` returns `200 OK`.
+- `POST /file/new` formats content with Gemini and saves it as Markdown.
+
+## Requirements
+
+- Ruby 3.4.7
+- Bundler
+
+Rails 8.1.3 and all application dependencies are pinned in `Gemfile.lock`.
 
 ## Setup
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+```sh
+bundle install
+cp .env.example .env
 ```
+
+Set these values in `.env`:
+
+```dotenv
+API_TOKEN=replace-with-a-long-random-token
+GEMINI_API_KEY=replace-with-your-gemini-api-key
+HOST=example.com
+```
+
+The `.env` file and served files are ignored by Git.
 
 ## Run
 
-```bash
-uvicorn main:app --reload
+```sh
+./serve
 ```
 
-Server default URL: `http://127.0.0.1:8000`
+The server listens on <http://localhost:8009>.
+
+You can also run it directly:
+
+```sh
+bin/rails server -p 8009
+```
 
 ## Usage
 
-1. Put files into the `files/` folder.
-2. Open in browser:
-   - `http://127.0.0.1:8000/example.html`
-   - `http://127.0.0.1:8000/example.markdown`
+Put `.html`, `.md`, or `.markdown` files in `files/`, then open them by name:
 
-## Notes
+```text
+http://localhost:8009/example.html
+http://localhost:8009/example.md
+```
 
-- UTF-8 text files are expected.
-- Unsupported extensions return `404`.
+Create a Gemini-formatted Markdown file with a bearer token:
+
+```sh
+curl -X POST http://localhost:8009/file/new \
+  -H "Authorization: Bearer $API_TOKEN" \
+  --data-urlencode "content=some text" \
+  --data-urlencode "filename=note"
+```
+
+The response contains the public HTTPS URL. Existing names receive a numeric
+suffix such as `note-1.md`.
+
+## Test
+
+```sh
+bin/rails test
+```
+
+## Trust boundary
+
+This application intentionally serves `.html` files verbatim and enables raw
+HTML inside Markdown to preserve the original behavior. Only place trusted
+content in `files/` and only share the upload bearer token with trusted clients.

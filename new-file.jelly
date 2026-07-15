@@ -3,13 +3,14 @@
 
 import Shortcuts
 
+askForInput(prompt: "API Token", type: Text) >> apiToken
 askForInput(prompt: "Filename", type: Text) >> filename
 askForInput(prompt: "Content", type: Text) >> content
 
 downloadURL(
     url: "https://serve.chiq.me/file/new",
     method: POST,
-    headers: {"Authorization": "Bearer 0q29302dfc_3949292828AA"},
+    headers: {"Authorization": "Bearer ${apiToken}"},
     requestType: Form,
     requestJSON: {"filename": "${filename}", "content": "${content}"},
     requestVar:

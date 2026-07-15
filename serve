@@ -1,5 +1,3 @@
-source python_env/bin/activate
-if [ ! -f python_env/bin/serve-html-markdown ]; then
-    ln -s python3 python_env/bin/serve-html-markdown
-fi
-serve-html-markdown -m uvicorn main:app --reload --port 8009
+#!/usr/bin/env sh
+
+exec bin/rails server -p 8009 "$@"

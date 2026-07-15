@@ -1,0 +1,60 @@
+body {
+    background-color: #2A2A2A;
+    color: #e0e0e0;
+    font-family: "Bookerly", Georgia, serif;
+    line-height: 1.6;
+    margin: 40px auto;
+    max-width: 800px;
+    padding: 0 20px;
+}
+h1, h2, h3, h4, h5, h6 {
+    color: #ffffff;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+}
+a {
+    color: #bb86fc;
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+code {
+    background: #1e1e1e;
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+    font-size: 0.9em;
+}
+pre {
+    background: #1e1e1e;
+    padding: 1em;
+    border-radius: 8px;
+    overflow-x: auto;
+}
+pre code {
+    background: none;
+    padding: 0;
+}
+blockquote {
+    border-left: 4px solid #333;
+    margin: 0;
+    padding-left: 1em;
+    color: #888;
+}
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 1em;
+}
+th, td {
+    border: 1px solid #333;
+    padding: 8px;
+    text-align: left;
+}
+th {
+    background-color: #1e1e1e;
+}
+img {
+    max-width: 100%;
+}

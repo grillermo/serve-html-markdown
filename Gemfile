@@ -6,6 +6,8 @@ gem "rails", "~> 8.1.3"
 gem "propshaft"
 # Use the Puma web server [https://github.com/puma/puma]
 gem "puma", ">= 5.0"
+# PostgreSQL database for authentication
+gem "pg", "~> 1.5"
 gem "commonmarker", "~> 1.1"
 gem "dotenv-rails"
 

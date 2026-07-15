@@ -8,6 +8,8 @@ gem "propshaft"
 gem "puma", ">= 5.0"
 # PostgreSQL database for authentication
 gem "pg", "~> 1.5"
+# Authentication
+gem "devise", "~> 4.9"
 gem "commonmarker", "~> 1.1"
 gem "dotenv-rails"
 

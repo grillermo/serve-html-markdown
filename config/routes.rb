@@ -1,4 +1,5 @@
 Rails.application.routes.draw do
+  devise_for :users
   match "/health", to: proc { [200, {}, [""]] }, via: :head
   post "/file/new", to: "files#create"
   root "files#last"

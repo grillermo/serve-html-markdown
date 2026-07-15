@@ -14,6 +14,7 @@ class FilesController < ApplicationController
   FILES_DIR.mkpath
 
   skip_forgery_protection only: :create
+  skip_before_action :authenticate_user!, only: :create
 
   rescue_from ActionController::BadRequest do |error|
     render json: { detail: error.message }, status: :bad_request

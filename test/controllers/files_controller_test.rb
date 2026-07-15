@@ -8,6 +8,8 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
 
     FilesController.send(:remove_const, :FILES_DIR) if FilesController.const_defined?(:FILES_DIR, false)
     FilesController.const_set(:FILES_DIR, @files_dir)
+    @user = User.create!(email: "viewer@example.com", password: "s3cretpass")
+    sign_in @user
   end
 
   teardown do
@@ -17,10 +19,43 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "health responds to HEAD requests" do
+    sign_out @user
+
     head "/health"
 
     assert_response :success
     assert_empty response.body
+  end
+
+  test "redirects unauthenticated viewers to sign in" do
+    sign_out @user
+    write_file "notes.md", "# Notes"
+
+    get "/notes.md"
+
+    assert_redirected_to new_user_session_path
+  end
+
+  test "redirects unauthenticated root requests to sign in" do
+    sign_out @user
+
+    get "/"
+
+    assert_redirected_to new_user_session_path
+  end
+
+  test "creates files with a bearer token and no session" do
+    sign_out @user
+
+    with_env("API_TOKEN", "token-123") do
+      with_formatter(->(*) { "formatted" }) do
+        post "/file/new",
+          params: { content: "# Hi", filename: "hi.md" },
+          headers: { "Authorization" => "Bearer token-123" }
+      end
+    end
+
+    assert_response :success
   end
 
   test "serves HTML files without a Rails layout" do

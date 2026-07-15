@@ -4,5 +4,5 @@ Rails.application.routes.draw do
   post "/file/new", to: "files#create"
   root "files#last"
   get "/last", to: "files#last"
-  get "/:file_name", to: "files#show", constraints: { file_name: /[^\/]+/ }
+  get "/:file_name", to: "files#show", constraints: { file_name: /[^\/]+/ }, defaults: { format: :html }
 end

@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
 
+from setproctitle import setproctitle
+setproctitle("serve-html-markdown")
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response

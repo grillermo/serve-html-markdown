@@ -28,7 +28,10 @@ falling back to the `codex` CLI (model `earth`) on failure — the same
 
 ## Components
 
-### 1. Client JS — `public/expand.js` (or app/assets, served statically)
+### 1. Client JS — `public/expand.js`
+
+Lives in `public/` (not Propshaft assets) so the hardcoded `src="/expand.js"`
+in injected HTML works without digest resolution.
 
 Vanilla JS, no bundler (app has none).
 
@@ -77,8 +80,13 @@ Behind Devise session auth (`authenticate_user!`, default) and CSRF protection.
    starts at 1 and increments until unique (same loop style as
    `unique_file_path`).
 6. Rewrite the source file, replacing the located occurrence:
-   - `.md` / `.markdown`: `[<selected_text>](/<new-file>.html)`
-   - `.html`: `<a href="/<new-file>.html"><selected_text></a>`
+   - `.md` / `.markdown`: `[<selected_text>](/<new-file>.html)`; if
+     `selected_text` contains `]`, escape as `\]` in the link label.
+   - `.html`: `<a href="/<new-file>.html"><selected_text></a>`; reject with
+     422 if the match falls inside a tag (between `<` and `>`) or inside a
+     `<script>`/`<style>` block, to avoid corrupting markup. Also reject if
+     the match is already inside an `<a>` tag or a markdown link (nested
+     links).
 7. Respond `{ url: "/<stem>--expand-<n>.html" }`.
 
 Error mapping: service failure → 502 `{ detail: "Generation failed." }`
@@ -139,7 +147,7 @@ Requirements:
 post "/expansions", to: "expansions#create"
 ```
 
-Must be declared before the catch-all `/:file_name` route.
+(The catch-all `/:file_name` route is `get`-only, so no collision.)
 
 ## Testing
 
@@ -161,7 +169,11 @@ Must be declared before the catch-all `/:file_name` route.
 
 - Selection must exist verbatim in the raw source file; selections crossing
   formatting (e.g. across `**bold**`) are rejected with a clear 422. v1 limit.
-- Synchronous generation — the browser waits up to ~2 minutes.
+- Synchronous generation — the browser waits up to ~2 minutes. Any reverse
+  proxy in front of Puma must allow a matching request timeout.
+- Occurrence index counted client-side in rendered text but applied to raw
+  source; the two can diverge (e.g. text also appearing in a URL or
+  attribute), possibly linking the wrong occurrence. Accepted v1 limit.
 - Script injection into `.html` responses softens the "served verbatim"
   guarantee; README trust-boundary section updated to note the injected tag.
 

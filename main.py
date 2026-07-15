@@ -180,6 +180,7 @@ def create_file(
     return JSONResponse({"url": f"https://{host}/{file_path.name}"})
 
 
+@app.get("/")
 @app.get("/last")
 def serve_last_file() -> RedirectResponse:
     files = [f for f in FILES_DIR.iterdir() if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS]

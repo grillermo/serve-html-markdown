@@ -33,6 +33,13 @@ HOST=example.com
 
 The `.env` file and served files are ignored by Git.
 
+## Authentication
+
+Viewing served files requires signing in. Configure `ADMIN_EMAIL` and
+`ADMIN_PASSWORD`, then run `bin/rails db:seed` to create or update the admin
+user. Configure the database with the `DATABASE_*` environment variables.
+API uploads remain authenticated separately with the `API_TOKEN` bearer token.
+
 ## Run
 
 ```sh

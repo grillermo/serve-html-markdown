@@ -44,6 +44,23 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_user_session_path
   end
 
+  test "favicon requests do not replace the post-sign-in root destination" do
+    sign_out @user
+    write_file "newest.md", "# Newest"
+
+    get "/"
+    assert_redirected_to new_user_session_path
+
+    get "/favicon.ico"
+    favicon_status = response.status
+
+    post user_session_path, params: {
+      user: { email: @user.email, password: "s3cretpass" }
+    }
+
+    assert_equal [204, root_path], [favicon_status, URI(response.location).path]
+  end
+
   test "creates files with a bearer token and no session" do
     sign_out @user
 

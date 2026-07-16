@@ -169,6 +169,18 @@ class SelectionLinkerTest < ActiveSupport::TestCase
     end
   end
 
+  test "rejects a markdown selection containing a link with an escaped closing bracket" do
+    assert_raises SelectionLinker::UnsafeMatch do
+      SelectionLinker.link(
+        source: "see [b\\]](/old.html) end",
+        extension: ".md",
+        selected_text: "[b\\]](/old.html)",
+        occurrence: 0,
+        url: "/x.html"
+      )
+    end
+  end
+
   test "rejects a markdown selection crossing an existing link" do
     assert_raises SelectionLinker::UnsafeMatch do
       SelectionLinker.link(

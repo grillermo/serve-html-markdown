@@ -65,7 +65,7 @@ class SelectionLinker
 
     def ensure_safe_markdown!(prefix, selection_start, selection_end)
       position = 0
-      while (match = @source.match(/\[[^\]]*\]\([^)]*\)/, position))
+      while (match = @source.match(/\[(?:\\.|[^\]])*\]\([^)]*\)/, position))
         match_start = match.begin(0)
         match_end = match.end(0)
         if match_start < selection_end && match_end > selection_start

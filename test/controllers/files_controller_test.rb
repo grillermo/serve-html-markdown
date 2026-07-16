@@ -3,7 +3,8 @@ require "tmpdir"
 
 class FilesControllerTest < ActionDispatch::IntegrationTest
   setup do
-    @files_dir = Pathname.new(Dir.mktmpdir("served-files"))
+    @files_parent = Pathname.new(Dir.mktmpdir("files-parent"))
+    @files_dir = Pathname.new(Dir.mktmpdir("served-files", @files_parent))
     @original_files_dir = FilesController::FILES_DIR if FilesController.const_defined?(:FILES_DIR, false)
 
     FilesController.send(:remove_const, :FILES_DIR) if FilesController.const_defined?(:FILES_DIR, false)
@@ -13,7 +14,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
   end
 
   teardown do
-    FileUtils.remove_entry(@files_dir)
+    FileUtils.remove_entry(@files_parent)
     FilesController.send(:remove_const, :FILES_DIR)
     FilesController.const_set(:FILES_DIR, @original_files_dir) if @original_files_dir
   end

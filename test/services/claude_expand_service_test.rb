@@ -170,7 +170,71 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
     end
   end
 
+  test "calls openai when use_openai is true" do
+    ENV["EXPANSION_LLM_API_KEY"] = "test-key"
+    response = fake_http_response(200, {
+      "output" => [
+        { "type" => "message", "content" => [{ "type" => "output_text", "text" => HTML }] }
+      ]
+    }.to_json)
+    request_body = nil
+    request_headers = nil
+
+    Net::HTTP.stub(:start, ->(*_args, **_opts, &blk) {
+      fake_http = Object.new
+      fake_http.define_singleton_method(:request) do |req|
+        request_body = req.body
+        request_headers = req.to_hash
+        response
+      end
+      blk.call(fake_http)
+    }) do
+      result = @service.expand(**@args, use_openai: true)
+      assert_equal HTML, result
+    end
+
+    parsed_body = JSON.parse(request_body)
+    assert_equal "gpt-5.6-terra", parsed_body["model"]
+    assert_equal "medium", parsed_body["reasoning"]["effort"]
+    assert_includes parsed_body["input"], "Alpha beta."
+    assert_equal ["Bearer test-key"], request_headers["authorization"]
+  ensure
+    ENV.delete("EXPANSION_LLM_API_KEY")
+  end
+
+  test "raises without falling back to codex when openai fails" do
+    ENV["EXPANSION_LLM_API_KEY"] = "test-key"
+    response = fake_http_response(500, "boom")
+
+    Net::HTTP.stub(:start, ->(*_args, **_opts, &blk) {
+      fake_http = Object.new
+      fake_http.define_singleton_method(:request) { |_req| response }
+      blk.call(fake_http)
+    }) do
+      assert_raises ClaudeExpandService::Error do
+        @service.expand(**@args, use_openai: true)
+      end
+    end
+  ensure
+    ENV.delete("EXPANSION_LLM_API_KEY")
+  end
+
+  test "raises when EXPANSION_LLM_API_KEY is not configured" do
+    ENV.delete("EXPANSION_LLM_API_KEY")
+
+    assert_raises ClaudeExpandService::Error do
+      @service.expand(**@args, use_openai: true)
+    end
+  end
+
   private
+    def fake_http_response(code, body)
+      response = Object.new
+      response.define_singleton_method(:code) { code.to_s }
+      response.define_singleton_method(:body) { body }
+      response
+    end
+
     def with_captured_logs
       output = StringIO.new
       original_logger = Rails.logger

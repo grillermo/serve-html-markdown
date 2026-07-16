@@ -42,6 +42,25 @@ class ExpansionsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "Alpha beta gamma.", received[:document]
     assert_equal "beta", received[:selection]
     assert_equal "why?", received[:question]
+    assert_equal false, received[:use_openai]
+  end
+
+  test "passes use_openai through to the expander" do
+    write_file "notes.md", "Alpha beta gamma."
+    received = nil
+    expander = lambda do |**kwargs|
+      received = kwargs
+      HTML
+    end
+
+    with_expander(expander) do
+      post "/expansions", params: {
+        file_name: "notes.md", selected_text: "beta", occurrence: 0, question: "why?", use_openai: true
+      }, as: :json
+    end
+
+    assert_response :success
+    assert_equal true, received[:use_openai]
   end
 
   test "rewrites an html source with an anchor" do

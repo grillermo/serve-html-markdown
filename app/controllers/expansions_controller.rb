@@ -42,7 +42,8 @@ class ExpansionsController < ApplicationController
       file_name: file_path.basename.to_s,
       document: source,
       selection: selected_text,
-      question: question
+      question: question,
+      use_openai: ActiveModel::Type::Boolean.new.cast(params[:use_openai]) || false
     )
 
     expansion_path.write(html, encoding: "UTF-8")

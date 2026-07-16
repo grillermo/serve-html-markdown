@@ -1,4 +1,5 @@
 require "json"
+require "net/http"
 require "open3"
 require "tempfile"
 
@@ -7,6 +8,9 @@ class ClaudeExpandService
 
   CLAUDE_MODEL = "sonnet"
   CODEX_MODEL = "earth"
+  OPENAI_MODEL = "gpt-5.6-terra"
+  OPENAI_REASONING_EFFORT = "medium"
+  OPENAI_ENDPOINT = URI("https://api.openai.com/v1/responses")
   TIMEOUT_SECONDS = 120
 
   PROMPT_TEMPLATE = <<~PROMPT
@@ -35,14 +39,22 @@ class ClaudeExpandService
 
   def self.expand(**kwargs) = new.expand(**kwargs)
 
-  def expand(file_name:, document:, selection:, question:)
+  def expand(file_name:, document:, selection:, question:, use_openai: false)
     prompt = format(PROMPT_TEMPLATE, file_name:, document:, selection:, question:)
-    Rails.logger.info "[ClaudeExpandService] expanding file=#{file_name} selection_bytes=#{selection.bytesize} question_bytes=#{question.bytesize}"
+    Rails.logger.info "[ClaudeExpandService] expanding file=#{file_name} selection_bytes=#{selection.bytesize} question_bytes=#{question.bytesize} use_openai=#{use_openai}"
+
+    if use_openai
+      html = run_openai(prompt)
+      Rails.logger.info "[ClaudeExpandService] openai succeeded bytes=#{html.bytesize}"
+      return html
+    end
 
     html = run_claude(prompt)
     Rails.logger.info "[ClaudeExpandService] claude succeeded bytes=#{html.bytesize}"
     html
-  rescue Error
+  rescue Error => error
+    raise error if use_openai
+
     Rails.logger.warn "[ClaudeExpandService] claude failed, falling back to codex"
     html = run_codex(prompt)
     Rails.logger.info "[ClaudeExpandService] codex succeeded bytes=#{html.bytesize}"
@@ -50,6 +62,43 @@ class ClaudeExpandService
   end
 
   private
+    def run_openai(prompt)
+      api_key = ENV["EXPANSION_LLM_API_KEY"]
+      raise Error, "EXPANSION_LLM_API_KEY is not configured." if api_key.blank?
+
+      request = Net::HTTP::Post.new(OPENAI_ENDPOINT)
+      request["Content-Type"] = "application/json"
+      request["Authorization"] = "Bearer #{api_key}"
+      request.body = {
+        model: OPENAI_MODEL,
+        input: prompt,
+        reasoning: { effort: OPENAI_REASONING_EFFORT }
+      }.to_json
+
+      response = Net::HTTP.start(OPENAI_ENDPOINT.host, OPENAI_ENDPOINT.port, use_ssl: true) do |http|
+        http.request(request)
+      end
+
+      unless response.code.to_i.between?(200, 299)
+        raise Error, "openai CLI failed"
+      end
+
+      parsed = JSON.parse(response.body)
+      text = parsed["output"]
+        &.find { |item| item["type"] == "message" }
+        &.dig("content")
+        &.find { |content| content["type"] == "output_text" }
+        &.fetch("text", nil)
+
+      raise Error, "openai returned no output" if text.blank?
+
+      ensure_html(strip_fence(text))
+    rescue JSON::ParserError
+      raise Error, "openai output was not JSON"
+    rescue SystemCallError
+      raise Error, "openai request could not be started"
+    end
+
     def run_claude(prompt)
       stdout, stderr, status = run_command([
         "claude", "-p", prompt,

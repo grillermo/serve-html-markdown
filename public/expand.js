@@ -92,6 +92,25 @@
       font: "inherit"
     });
 
+    textarea.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        popover.requestSubmit();
+      }
+    });
+
+    const openaiLabel = document.createElement("label");
+    Object.assign(openaiLabel.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "6px",
+      font: "inherit",
+      cursor: "pointer"
+    });
+    const openaiCheckbox = document.createElement("input");
+    openaiCheckbox.type = "checkbox";
+    openaiLabel.append(openaiCheckbox, document.createTextNode("Use OpenAI"));
+
     const submit = document.createElement("button");
     submit.type = "submit";
     submit.textContent = "Expand";
@@ -109,7 +128,7 @@
     message.style.color = "#e08080";
     message.style.minHeight = "1em";
 
-    popover.append(textarea, submit, message);
+    popover.append(textarea, openaiLabel, submit, message);
     popover.addEventListener("submit", (event) => {
       event.preventDefault();
       submit.disabled = true;
@@ -126,7 +145,8 @@
           file_name: decodeURIComponent(location.pathname.slice(1)),
           selected_text: currentSelection.text,
           occurrence: currentSelection.occurrence,
-          question: textarea.value
+          question: textarea.value,
+          use_openai: openaiCheckbox.checked
         })
       })
         .then(async (response) => {

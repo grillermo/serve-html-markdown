@@ -24,7 +24,8 @@
 
 /public/assets
 
-# Ignore key files for decrypting credentials and more.
+# Safety net: never commit a master/environment key if one is
+# accidentally generated (credentials are not used by this app).
 /config/*.key
 
 # Python artifacts left by the previous implementation.

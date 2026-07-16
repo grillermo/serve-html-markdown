@@ -6,6 +6,8 @@
     <title><%= @file_name %></title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bookerly:ital,wght@0,400;0,700;1,400;1,700&display=swap">
     <%= stylesheet_link_tag "markdown" %>
+    <%= csrf_meta_tags %>
+    <script src="/expand.js" defer></script>
   </head>
   <body>
     <%= yield %>

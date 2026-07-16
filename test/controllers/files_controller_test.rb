@@ -83,7 +83,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_equal "text/html", response.media_type
-    assert_equal "<main>Raw HTML</main>", response.body
+    assert response.body.start_with?("<main>Raw HTML</main>")
   end
 
   test "renders Markdown with the dark layout and Commonmarker options" do
@@ -186,7 +186,40 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     }
 
     assert_response :success
-    assert_equal "<main>Available</main>", response.body
+    assert response.body.start_with?("<main>Available</main>")
+  end
+
+  test "injects the expand script and csrf token into served HTML" do
+    write_file "page.html", "<html><body><main>Raw</main></body></html>"
+
+    get "/page.html"
+
+    assert_response :success
+    assert_includes response.body, %(<script src="/expand.js" defer></script></body>)
+    assert_select "meta[name='csrf-token']"
+    assert_includes response.body, "<main>Raw</main>"
+  end
+
+  test "appends the expand script when HTML has no body tag" do
+    write_file "page.html", "<main>Raw HTML</main>"
+
+    get "/page.html"
+
+    assert_response :success
+    assert_includes response.body, %(<script src="/expand.js" defer></script>)
+    assert response.body.start_with?("<main>Raw HTML</main>")
+  end
+
+  test "includes the expand script and csrf tags in the markdown layout" do
+    write_file "notes.md", "# Notes"
+
+    with_forgery_protection do
+      get "/notes.md"
+    end
+
+    assert_response :success
+    assert_select "meta[name='csrf-token']"
+    assert_select "script[src='/expand.js'][defer]"
   end
 
   test "rejects uploads without a configured bearer token" do
@@ -285,5 +318,13 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     ensure
       FilesController.send(:remove_const, :FORMATTER) if FilesController.const_defined?(:FORMATTER, false)
       FilesController.const_set(:FORMATTER, original) if had_formatter
+    end
+
+    def with_forgery_protection
+      original = ActionController::Base.allow_forgery_protection
+      ActionController::Base.allow_forgery_protection = true
+      yield
+    ensure
+      ActionController::Base.allow_forgery_protection = original
     end
 end

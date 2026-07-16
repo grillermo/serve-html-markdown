@@ -30,7 +30,7 @@ class FilesController < ApplicationController
     content = file_path.read(encoding: "UTF-8")
 
     if file_path.extname.downcase == ".html"
-      render html: content.html_safe, layout: false
+      render html: inject_expand_script(content).html_safe, layout: false
     else
       @file_name = file_path.basename.to_s
       @rendered = Commonmarker.to_html(content, options: MARKDOWN_OPTIONS)
@@ -67,6 +67,15 @@ class FilesController < ApplicationController
   end
 
   private
+    def inject_expand_script(content)
+      snippet = %(<meta name="csrf-token" content="#{form_authenticity_token}"><script src="/expand.js" defer></script>)
+      if content =~ %r{</body>}i
+        content.sub(%r{</body>}i) { "#{snippet}</body>" }
+      else
+        content + snippet
+      end
+    end
+
     def authenticated?
       token = ENV["API_TOKEN"].to_s
       authorization = request.authorization.to_s

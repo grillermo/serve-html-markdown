@@ -1,17 +1,12 @@
 class FilesController < ApplicationController
-  FILES_DIR = Rails.root.join("files").expand_path
-  ALLOWED_EXTENSIONS = %w[.html .md .markdown].freeze
+  include ResolvesServedFiles
+
   MARKDOWN_OPTIONS = {
     render: { unsafe: true },
     extension: { autolink: true },
     parse: { smart: true }
   }.freeze
   FORMATTER = GeminiFormatter
-
-  UnsupportedFile = Class.new(StandardError)
-  MissingFile = Class.new(StandardError)
-
-  FILES_DIR.mkpath
 
   skip_forgery_protection only: :create
   skip_before_action :authenticate_user!, only: :create
@@ -72,29 +67,6 @@ class FilesController < ApplicationController
   end
 
   private
-    def resolve_file_path(file_name)
-      file_path = FILES_DIR.join(file_name).expand_path
-      root_prefix = "#{FILES_DIR}#{File::SEPARATOR}"
-
-      unless file_path.to_s.start_with?(root_prefix)
-        raise ActionController::BadRequest, "Invalid file path."
-      end
-
-      unless ALLOWED_EXTENSIONS.include?(file_path.extname.downcase)
-        raise UnsupportedFile, "Only .html, .md, and .markdown files are supported."
-      end
-
-      raise MissingFile, "File not found: #{file_name}" unless file_path.file?
-
-      resolved_path = file_path.realpath
-      resolved_root_prefix = "#{FILES_DIR.realpath}#{File::SEPARATOR}"
-      unless resolved_path.to_s.start_with?(resolved_root_prefix)
-        raise ActionController::BadRequest, "Invalid file path."
-      end
-
-      resolved_path
-    end
-
     def authenticated?
       token = ENV["API_TOKEN"].to_s
       authorization = request.authorization.to_s

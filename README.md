@@ -3,7 +3,8 @@
 A minimal Rails 8 application that serves trusted HTML and Markdown files from
 the `files/` directory.
 
-- `GET /name.html` serves HTML as-is.
+- `GET /name.html` serves HTML with a small expansion script injected.
+- Select text on any page to ask a question and generate a linked AI answer page (requires the `claude` CLI; falls back to `codex`).
 - `GET /name.md` and `GET /name.markdown` render Markdown with a dark theme.
 - `GET /` and `GET /last` redirect to the most recently modified supported file.
 - `HEAD /health` returns `200 OK`.
@@ -84,5 +85,7 @@ bin/rails test
 ## Trust boundary
 
 This application intentionally serves `.html` files verbatim and enables raw
-HTML inside Markdown to preserve the original behavior. Only place trusted
+HTML inside Markdown to preserve the original behavior. Served .html responses
+have a small script tag injected before </body> to enable the text-expansion
+feature, so they are no longer byte-for-byte verbatim. Only place trusted
 content in `files/` and only share the upload bearer token with trusted clients.

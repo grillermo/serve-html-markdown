@@ -84,7 +84,7 @@ bin/rails test
 
 ## Trust boundary
 
-This application intentionally serves `.html` files verbatim and enables raw
+This application intentionally serves `.html` files and enables raw
 HTML inside Markdown to preserve the original behavior. Served .html responses
 have a small script tag injected before </body> to enable the text-expansion
 feature, so they are no longer byte-for-byte verbatim. Only place trusted

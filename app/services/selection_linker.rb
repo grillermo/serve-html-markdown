@@ -18,13 +18,14 @@ class SelectionLinker
   def link
     index = match_index
     prefix = @source[0, index]
+    selection = @source[index, @selected_text.length]
     suffix = @source[(index + @selected_text.length)..]
 
     if @extension == ".html"
-      ensure_safe_html!(prefix)
+      ensure_safe_html!(prefix, selection)
       "#{prefix}<a href=\"#{@url}\">#{@selected_text}</a>#{suffix}"
     else
-      ensure_safe_markdown!(prefix)
+      ensure_safe_markdown!(prefix, index, index + @selected_text.length)
       label = @selected_text.gsub("]", "\\]")
       "#{prefix}[#{label}](#{@url})#{suffix}"
     end
@@ -45,7 +46,11 @@ class SelectionLinker
       indices.fetch(@occurrence, indices.first)
     end
 
-    def ensure_safe_html!(prefix)
+    def ensure_safe_html!(prefix, selection)
+      if selection.match?(/[<>]/)
+        raise UnsafeMatch, "Selection includes HTML markup."
+      end
+
       last_lt = prefix.rindex("<")
       last_gt = prefix.rindex(">")
       if last_lt && (last_gt.nil? || last_lt > last_gt)
@@ -58,7 +63,17 @@ class SelectionLinker
       end
     end
 
-    def ensure_safe_markdown!(prefix)
+    def ensure_safe_markdown!(prefix, selection_start, selection_end)
+      position = 0
+      while (match = @source.match(/\[[^\]]*\]\([^)]*\)/, position))
+        match_start = match.begin(0)
+        match_end = match.end(0)
+        if match_start < selection_end && match_end > selection_start
+          raise UnsafeMatch, "Selection overlaps an existing markdown link."
+        end
+        position = match_end
+      end
+
       last_open = prefix.rindex("[")
       last_close = prefix.rindex("]")
       if last_open && (last_close.nil? || last_open > last_close)

@@ -133,6 +133,54 @@ class SelectionLinkerTest < ActiveSupport::TestCase
     end
   end
 
+  test "rejects an html selection containing an existing anchor" do
+    assert_raises SelectionLinker::UnsafeMatch do
+      SelectionLinker.link(
+        source: %(<p>before <a href="/old.html">beta</a> after</p>),
+        extension: ".html",
+        selected_text: %(<a href="/old.html">beta</a>),
+        occurrence: 0,
+        url: "/x.html"
+      )
+    end
+  end
+
+  test "rejects an html selection crossing an existing anchor" do
+    assert_raises SelectionLinker::UnsafeMatch do
+      SelectionLinker.link(
+        source: %(<p>before <a href="/old.html">beta</a> after</p>),
+        extension: ".html",
+        selected_text: "beta</a> after",
+        occurrence: 0,
+        url: "/x.html"
+      )
+    end
+  end
+
+  test "rejects a markdown selection containing an existing link" do
+    assert_raises SelectionLinker::UnsafeMatch do
+      SelectionLinker.link(
+        source: "see [beta](/old.html) end",
+        extension: ".md",
+        selected_text: "[beta](/old.html)",
+        occurrence: 0,
+        url: "/x.html"
+      )
+    end
+  end
+
+  test "rejects a markdown selection crossing an existing link" do
+    assert_raises SelectionLinker::UnsafeMatch do
+      SelectionLinker.link(
+        source: "see [beta](/old.html) and more",
+        extension: ".md",
+        selected_text: "[beta](/old.html) and",
+        occurrence: 0,
+        url: "/x.html"
+      )
+    end
+  end
+
   test "skips unsafe occurrences is not attempted; requested occurrence is judged as-is" do
     # occurrence 0 is inside an anchor -> unsafe, even though occurrence 1 is fine
     assert_raises SelectionLinker::UnsafeMatch do

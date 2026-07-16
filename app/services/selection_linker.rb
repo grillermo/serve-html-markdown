@@ -47,7 +47,7 @@ class SelectionLinker
     end
 
     def ensure_safe_html!(prefix, selection)
-      if selection.match?(/[<>]/)
+      if selection.match?(/<\s*\/?\s*[A-Za-z][^>]*(?:>|\z)/)
         raise UnsafeMatch, "Selection includes HTML markup."
       end
 

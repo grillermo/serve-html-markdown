@@ -25,6 +25,18 @@ class SelectionLinkerTest < ActiveSupport::TestCase
     assert_equal %(<p>Alpha <a href="/x.html">beta</a> gamma.</p>), result
   end
 
+  test "wraps an html selection containing ordinary greater-than text" do
+    result = SelectionLinker.link(
+      source: "<p>1 > 0</p>",
+      extension: ".html",
+      selected_text: ">",
+      occurrence: 1,
+      url: "/x.html"
+    )
+
+    assert_equal %(<p>1 <a href="/x.html">></a> 0</p>), result
+  end
+
   test "picks the requested occurrence" do
     result = SelectionLinker.link(
       source: "cat dog cat bird cat",

@@ -1,4 +1,5 @@
 require "test_helper"
+require "stringio"
 
 unless Object.method_defined?(:stub)
   class Object
@@ -94,12 +95,64 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
     assert_equal HTML, result
   end
 
-  test "raises Error when both CLIs fail" do
-    runner = ->(cmd) { ["", "boom", fake_status(false)] }
+  test "falls back to codex when claude command cannot launch" do
+    commands = []
+    runner = lambda do |cmd|
+      commands << cmd
+      if cmd.first == "claude"
+        raise Errno::ENOENT, "claude"
+      else
+        File.write(cmd[cmd.index("-o") + 1], HTML)
+        ["", "", fake_status(true)]
+      end
+    end
 
-    assert_raises ClaudeExpandService::Error do
+    result = @service.stub(:run_command, runner) { @service.expand(**@args) }
+
+    assert_equal HTML, result
+    assert_equal %w[claude codex], commands.map(&:first)
+  end
+
+  test "raises service Error without launch exception content when both commands cannot launch" do
+    secret = "TOP-SECRET-LAUNCH-DETAIL"
+    runner = ->(cmd) { raise Errno::ENOENT, secret }
+
+    error = assert_raises ClaudeExpandService::Error do
       @service.stub(:run_command, runner) { @service.expand(**@args) }
     end
+
+    assert_not_includes error.message, secret
+  end
+
+  test "does not log Claude result content when falling back" do
+    secret = "TOP-SECRET-CLAUDE-RESULT"
+    runner = lambda do |cmd|
+      if cmd.first == "claude"
+        [{ "is_error" => true, "result" => secret }.to_json, "", fake_status(true)]
+      else
+        File.write(cmd[cmd.index("-o") + 1], HTML)
+        ["", "", fake_status(true)]
+      end
+    end
+
+    logs = with_captured_logs do |output|
+      result = @service.stub(:run_command, runner) { @service.expand(**@args) }
+      assert_equal HTML, result
+      output.string
+    end
+
+    assert_not_includes logs, secret
+  end
+
+  test "raises Error when both CLIs fail" do
+    secret = "TOP-SECRET-STDERR"
+    runner = ->(cmd) { ["", secret, fake_status(false)] }
+
+    error = assert_raises ClaudeExpandService::Error do
+      @service.stub(:run_command, runner) { @service.expand(**@args) }
+    end
+
+    assert_not_includes error.message, secret
   end
 
   test "raises Error when output is not HTML" do
@@ -118,6 +171,15 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
   end
 
   private
+    def with_captured_logs
+      output = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(output)
+      yield output
+    ensure
+      Rails.logger = original_logger
+    end
+
     def fake_status(success)
       status = Object.new
       status.define_singleton_method(:success?) { success }

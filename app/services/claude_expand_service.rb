@@ -42,8 +42,8 @@ class ClaudeExpandService
     html = run_claude(prompt)
     Rails.logger.info "[ClaudeExpandService] claude succeeded bytes=#{html.bytesize}"
     html
-  rescue Error => error
-    Rails.logger.warn "[ClaudeExpandService] claude failed (#{error.message}), falling back to codex"
+  rescue Error
+    Rails.logger.warn "[ClaudeExpandService] claude failed, falling back to codex"
     html = run_codex(prompt)
     Rails.logger.info "[ClaudeExpandService] codex succeeded bytes=#{html.bytesize}"
     html
@@ -58,15 +58,17 @@ class ClaudeExpandService
         "--tools", ""
       ])
       unless status.success?
-        raise Error, "claude CLI failed (#{status.exitstatus}): #{stderr.strip[0, 500]}"
+        raise Error, "claude CLI failed"
       end
 
       parsed = JSON.parse(stdout)
-      raise Error, "claude returned error: #{parsed["result"].to_s[0, 500]}" if parsed["is_error"]
+      raise Error, "claude returned error" if parsed["is_error"]
 
       ensure_html(strip_fence(parsed["result"].to_s))
-    rescue JSON::ParserError => error
-      raise Error, "claude output was not JSON: #{error.message}"
+    rescue JSON::ParserError
+      raise Error, "claude output was not JSON"
+    rescue SystemCallError
+      raise Error, "claude CLI could not be started"
     end
 
     def run_codex(prompt)
@@ -81,11 +83,13 @@ class ClaudeExpandService
           prompt
         ])
         unless status.success?
-          raise Error, "codex CLI failed (#{status.exitstatus}): #{stderr.strip[0, 500]}"
+          raise Error, "codex CLI failed"
         end
 
         ensure_html(strip_fence(File.read(output.path)))
       end
+    rescue SystemCallError
+      raise Error, "codex CLI could not be started"
     end
 
     def run_command(cmd)

@@ -11,6 +11,45 @@ restores it automatically on the next load. Position is stored server-side,
 keyed by `(user, file_name)`, so it persists across devices/browsers for the
 same logged-in user.
 
+Position is tracked as an **anchor**: the `id` of the topmost element
+currently visible in the viewport, not a pixel offset or scroll-height
+fraction. Restoring scrolls that element back to the top of the viewport.
+This is more resilient to a document's content changing between visits
+(e.g. an expansion link rewriting a paragraph above the fold) than any
+purely numeric position, because the anchor identifies *what* the reader
+was looking at, not *where on the page* it happened to be.
+
+## Markdown heading IDs (prerequisite)
+
+`FilesController::MARKDOWN_OPTIONS` does not currently enable comrak's
+header-id extension, so rendered `.md`/`.markdown` headings have no `id`
+attributes to anchor to. Add `header_ids: ""` to the `extension` options:
+
+```ruby
+MARKDOWN_OPTIONS = {
+  render: { unsafe: true },
+  extension: { autolink: true, header_ids: "" },
+  parse: { smart: true }
+}.freeze
+```
+
+Verified against the installed `commonmarker` 1.1.5 gem: this renders each
+heading with a nested, empty, `aria-hidden` permalink anchor carrying the
+slugged `id`, e.g.
+
+```html
+<h2><a href="#sub-heading" aria-hidden="true" class="anchor" id="sub-heading"></a>Sub Heading!</h2>
+```
+
+Duplicate heading text is de-duplicated (`sub-heading`, `sub-heading-1`,
+`sub-heading-2`, …). This anchor tag's position in the DOM matches the
+heading's top, which is what the client-side "topmost visible" scan reads.
+
+Raw `.html` files are unaffected by this — they use whatever `id`
+attributes their author already wrote, if any. A document with zero `id`
+attributes anywhere (no headings, no other IDs) simply never has anything
+to save an anchor for; see Edge cases.
+
 ## Data model
 
 New table `scroll_positions`:
@@ -19,25 +58,29 @@ New table `scroll_positions`:
 create_table :scroll_positions do |t|
   t.references :user, null: false, foreign_key: true
   t.string :file_name, null: false
-  t.float :position, null: false
+  t.string :anchor, null: false
   t.timestamps
 end
 add_index :scroll_positions, [:user_id, :file_name], unique: true
 ```
 
-`ScrollPosition` model: `belongs_to :user`; validates `file_name` present,
-`position` numeric and `0.0..1.0`. `User` gets `has_many :scroll_positions,
-dependent: :destroy`.
+`ScrollPosition` model: `belongs_to :user`; validates `file_name` present;
+validates `anchor` present **and** format-restricted to
+`/\A[\w\-:.]+\z/` (word characters, hyphen, colon, period — covers every
+comrak-generated slug and any reasonable hand-written HTML `id`). `User`
+gets `has_many :scroll_positions, dependent: :destroy`.
 
-`position` is a **fraction of scrollable height** (`0.0` = top, `1.0` =
-bottom), not a raw pixel offset. Pixels drift when a document is edited
-(e.g. an expansion link rewrites a paragraph) or when web fonts/images
-change layout height between visits; a fraction degrades gracefully instead
-of landing at a wrong or out-of-bounds offset.
+The format restriction is a security control, not a UX one: `anchor` is
+client-submitted and gets echoed back into an inline `<script>` tag on
+every subsequent load of that document (see Restore path). Rejecting
+anything outside a safe identifier charset at write time means no
+quote/angle-bracket/backslash sequence a client sends can ever reach the
+embed point — this is the actual defense, not the JSON-encoding used at
+embed time (which is defense in depth, not the primary control).
 
 The table is keyed by `file_name` only — it does not resolve or validate
 the file exists (unlike `ResolvesServedFiles`). Scroll position is opaque
-per-key storage; no need to read the file to store or restore a number.
+per-key storage; no need to read the file to store or restore an anchor.
 
 ## Backend endpoint — `PATCH /scroll_position`
 
@@ -45,31 +88,39 @@ New `ScrollPositionsController`, behind the app's default
 `authenticate_user!` and standard CSRF protection (no `skip_forgery_protection`,
 unlike `FilesController#create`).
 
-Params: `file_name` (string, required), `position` (float, required).
+Params: `file_name` (string, required), `anchor` (string, required).
 
 ```ruby
 def update
   file_name = params[:file_name].to_s
-  position = params[:position]
+  anchor = params[:anchor].to_s
   raise ActionController::BadRequest, "Missing file_name." if file_name.blank?
+  raise ActionController::BadRequest, "Missing anchor." if anchor.blank?
 
-  clamped = position.to_f.clamp(0.0, 1.0)
   record = current_user.scroll_positions.find_or_initialize_by(file_name: file_name)
-  record.update!(position: clamped)
+  record.update!(anchor: anchor)
   head :no_content
 end
 ```
 
+A request whose `anchor` fails the model's format validation (see Data
+model) returns a validation error via `update!` → the controller should
+rescue `ActiveRecord::RecordInvalid` and respond 422, since this is the one
+case where the *value* (not just presence) determines validity — client JS
+should never generate an anchor outside the safe charset in practice (it
+only ever sends `id` attributes already present in the DOM), but a
+malicious or buggy client could.
+
 `rescue_from ActionController::BadRequest` → 400, same pattern as the other
-two controllers.
+two controllers. `rescue_from ActiveRecord::RecordInvalid` → 422.
 
 ## Restore path
 
-`FilesController#show` looks up the saved position for the current user and
+`FilesController#show` looks up the saved anchor for the current user and
 this file before rendering:
 
 ```ruby
-scroll_position = current_user.scroll_positions.find_by(file_name: file_path.basename.to_s)&.position
+scroll_anchor = current_user.scroll_positions.find_by(file_name: file_path.basename.to_s)&.anchor
 ```
 
 The value is embedded as an inline script right next to the existing CSRF
@@ -77,8 +128,15 @@ meta tag / `expand.js` script tag, so both delivery paths (markdown layout,
 raw `.html` injection) share one code path:
 
 ```html
-<script>window.__scrollPosition = 0.42;</script>
+<script>window.__scrollAnchor = "sub-heading";</script>
 ```
+
+The value is JSON-encoded before interpolation (`anchor.to_json`), and
+since it has already passed the model's `/\A[\w\-:.]+\z/` format
+validation, it can never contain a `"`, `<`, `>`, `/`, or `\` that would
+let it escape the string literal or the surrounding `<script>` tag —
+JSON-encoding here is redundant-but-cheap defense in depth on top of that
+validation, not the primary control.
 
 Omitted entirely when there's no saved record (JS treats `undefined` as "no
 restore").
@@ -96,44 +154,60 @@ restore").
 Extends the existing file (already loaded on every served page); no new
 asset.
 
-**Restore**, on `DOMContentLoaded`:
+**Finding the topmost visible anchor** — a scrollspy-style scan over every
+`id`-bearing element in document order: the last one whose top is at or
+above the viewport top is "topmost visible"; if none qualify (still above
+the first anchor, e.g. at the very top of the document), there is nothing
+to save.
 
 ```js
-if (typeof window.__scrollPosition === "number") {
-  const max = document.documentElement.scrollHeight - window.innerHeight;
-  if (max > 0) {
-    window.scrollTo(0, window.__scrollPosition * max);
+function topmostVisibleAnchor() {
+  const anchored = document.querySelectorAll("[id]");
+  let current = null;
+  for (const el of anchored) {
+    if (el.getBoundingClientRect().top <= 1) {
+      current = el.id;
+    } else {
+      break;
+    }
   }
+  return current;
 }
 ```
 
-No smooth-scroll — instant jump before first paint settles, to avoid a
-visible scroll animation on every load.
+**Restore**, on `DOMContentLoaded`:
+
+```js
+if (typeof window.__scrollAnchor === "string") {
+  const target = document.getElementById(window.__scrollAnchor);
+  if (target) target.scrollIntoView();
+}
+```
+
+`scrollIntoView()` with no options performs an instant (non-smooth) jump by
+default, aligning the element to the top of the viewport — no separate
+"no smooth-scroll" handling needed, unlike the fraction-based approach's
+manual `scrollTo` math.
 
 **Save**, on `scroll` (debounced ~500ms) and on `pagehide`:
 
 ```js
-function currentFraction() {
-  const max = document.documentElement.scrollHeight - window.innerHeight;
-  return max > 0 ? window.scrollY / max : null;
-}
-
 function saveScrollPosition() {
-  const fraction = currentFraction();
-  if (fraction === null) return; // page doesn't scroll, nothing meaningful to store
+  const anchor = topmostVisibleAnchor();
+  if (!anchor) return; // nothing anchored yet, or document has no id-bearing elements
 
   const body = JSON.stringify({
     file_name: decodeURIComponent(location.pathname.slice(1)),
-    position: fraction
+    anchor: anchor,
+    authenticity_token: CSRF()
   });
 
   if (navigator.sendBeacon) {
-    const blob = new Blob([body], { type: "application/json" });
-    navigator.sendBeacon(`/scroll_position?authenticity_token=${encodeURIComponent(CSRF())}`, blob);
+    navigator.sendBeacon("/scroll_position", new Blob([body], { type: "application/json" }));
   } else {
     fetch("/scroll_position", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF() },
+      headers: { "Content-Type": "application/json" },
       body,
       keepalive: true
     });
@@ -141,65 +215,89 @@ function saveScrollPosition() {
 }
 ```
 
-`sendBeacon` only does `POST`, so the beacon path uses
-`POST /scroll_position` with `_method=patch` override (Rails' standard
-`ActionDispatch::Request::HTTP_METHODS` override via
-`?_method=patch` query param) rather than a real `PATCH` — Rails' method
-override middleware handles this natively. Debounced scroll listener and
-`pagehide` listener both call `saveScrollPosition`; `pagehide` additionally
-cancels any pending debounce timer first so it doesn't double-fire.
+`navigator.sendBeacon` cannot set custom headers, so the CSRF token travels
+as an `authenticity_token` field inside the JSON body instead of an
+`X-CSRF-Token` header — Rails reads `params[:authenticity_token]` from a
+parsed JSON body exactly as it would a header, so one body shape covers
+both the `sendBeacon` and `fetch` send paths without needing a query-string
+method-override trick. `sendBeacon` only issues `POST`, so the route
+accepts both `PATCH` (normal `fetch` path) and `POST` (`sendBeacon` path)
+on the same action. Debounced scroll listener and `pagehide` listener both
+call `saveScrollPosition`; `pagehide` additionally cancels any pending
+debounce timer first so it doesn't double-fire.
 
-Route: `patch "/scroll_position", to: "scroll_positions#update"` (Rails
-already routes `POST … ?_method=patch` to a `patch` action via the built-in
-method-override middleware, so no separate `post` route is needed).
+Route: `match "/scroll_position", to: "scroll_positions#update", via:
+[:patch, :post]`.
 
 ## Edge cases
 
-- No saved position for this user+file → `window.__scrollPosition` omitted,
+- No saved position for this user+file → `window.__scrollAnchor` omitted,
   restore is a no-op.
-- Document too short to scroll (`scrollHeight <= innerHeight`) → save is
-  skipped (nothing meaningful to persist); restore's `max > 0` guard makes
-  it a no-op too, so no divide-by-zero either direction.
-- Stored position from a since-shortened document → still `0.0..1.0` by
-  construction (validated at write time), so restore math stays in bounds
-  even though the exact visual spot may have shifted.
+- Document has zero `id`-bearing elements anywhere (no headings — e.g. a
+  markdown file that's a single paragraph with no `#` headings at all — and
+  no manually-authored HTML ids) → `topmostVisibleAnchor()` always returns
+  `null`, nothing is ever saved for that file, restore is permanently a
+  no-op for it. Accepted; see Known trade-offs.
+- Reader is scrolled above the first anchor in the document (e.g. at the
+  very top, before any heading) → no anchor "qualifies" as topmost-visible
+  yet, so `saveScrollPosition` no-ops rather than saving a stale one. This
+  matches the natural expectation that reloading near the top lands near
+  the top.
+- An anchor's target element is later removed from the document (e.g. a
+  heading deleted, or an expansion link rewrites over it) →
+  `document.getElementById` returns `null` on restore, `target &&
+  target.scrollIntoView()` guard makes it a no-op; the reader lands at the
+  page's natural top instead of erroring.
+- Client somehow submits an anchor outside the safe charset → model
+  validation rejects it, controller responds 422, nothing is persisted (the
+  previous saved anchor for that file, if any, is left untouched since
+  `update!` raises before writing).
 - Unauthenticated request to `/scroll_position` → redirected/401 by the
   existing default `authenticate_user!`, same as every other route.
 - Rapid navigation away before the debounce fires → `pagehide` covers it.
 
 ## Testing
 
-- **Model** (`test/models/scroll_position_test.rb`): validates `position`
-  rejects values outside `0.0..1.0` (the controller clamps before saving,
-  but the model validation is the actual safety net and is tested directly,
-  independent of the controller); uniqueness scoped to `[user_id, file_name]`.
+- **Model** (`test/models/scroll_position_test.rb`): validates `anchor`
+  presence and charset (rejects e.g. `"</script>"`, spaces, quotes),
+  uniqueness scoped to `[user_id, file_name]`.
 - **Controller** (`test/controllers/scroll_positions_controller_test.rb`):
   first save creates a record; second save for same user+file upserts
-  rather than duplicating; position outside `0..1` gets clamped; missing
-  `file_name` → 400; unauthenticated → redirected.
+  rather than duplicating; missing `file_name`/`anchor` → 400;
+  charset-invalid `anchor` → 422; unauthenticated → 401.
 - **Files controller** (`test/controllers/files_controller_test.rb`):
-  `window.__scrollPosition` script present when a record exists for
+  `window.__scrollAnchor` script present when a record exists for
   `current_user` + the requested file, for both `.md` and `.html` files;
-  absent when no record exists.
+  absent when no record exists; markdown headings render with `id`
+  attributes now that `header_ids` is enabled.
 - JS untested (no JS test infra in repo, matches existing `expand.js`
   precedent).
 
 ## Known trade-offs (accepted)
 
-- Fraction-based position means a document edited between visits (e.g. an
-  expansion link inserted mid-page) restores to an approximately-right
-  spot, not an exactly-right one. Accepted — same spirit as the existing
-  occurrence-index trade-off in text expansion.
+- A document with no `id`-bearing elements at all never gets a saved
+  position, regardless of how much a reader scrolls in it. This is a
+  strictly narrower guarantee than a fraction/pixel-based approach (which
+  would work for every scrollable document). Accepted because it's the
+  direct consequence of the explicit anchor-based requirement, and every
+  markdown file with at least one heading is covered.
+- Anchor granularity is coarse — restoring lands at the top of whichever
+  heading/element was topmost, not the exact line the reader was on.
+  Accepted — same spirit as the existing occurrence-index trade-off in text
+  expansion.
 - `sendBeacon` requests aren't observable/debuggable the way a normal
   `fetch` is (no response handling); acceptable since save is fire-and-forget
   and a missed beacon just means next load doesn't restore as precisely.
 - No cleanup job for `scroll_positions` rows whose `file_name` no longer
-  exists on disk (file deleted/renamed). Rows are cheap and inert; out of
+  exists on disk (file deleted/renamed) or whose `anchor` no longer exists
+  in that file (heading removed/renamed). Rows are cheap and inert; out of
   scope for v1.
 
 ## Out of scope
 
 - Cross-user shared scroll position.
-- Scroll position for anchors/headings (semantic position) instead of raw
-  fraction.
-- Backfilling or migrating positions when a file is renamed.
+- Backfilling or migrating positions when a file is renamed, or when a
+  heading's text (and therefore its slug) changes.
+- Any anchor scheme for documents with no `id`-bearing elements (e.g.
+  generating synthetic paragraph-level ids). v1 relies entirely on
+  existing heading ids (markdown) or author-written ids (`.html`).

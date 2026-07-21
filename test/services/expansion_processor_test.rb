@@ -51,6 +51,33 @@ class ExpansionProcessorTest < ActiveSupport::TestCase
     assert_not @files_dir.join("notes--expand-2.html").exist?
   end
 
+  test "stamps source_read, lock_acquired, link_rewritten, and files_written" do
+    @files_dir.join("notes.md").write("Alpha beta gamma.")
+
+    with_expander(->(**) { HTML }) do
+      ExpansionProcessor.process(@expansion)
+    end
+
+    timings = @expansion.reload.timings
+    %w[source_read lock_acquired link_rewritten files_written].each do |stage|
+      assert_kind_of Integer, timings[stage], "expected #{stage} to be stamped"
+    end
+    assert_operator timings["source_read"], :<=, timings["lock_acquired"]
+    assert_operator timings["lock_acquired"], :<=, timings["link_rewritten"]
+    assert_operator timings["link_rewritten"], :<=, timings["files_written"]
+  end
+
+  test "passes the expansion to the expander" do
+    @files_dir.join("notes.md").write("Alpha beta gamma.")
+    received = nil
+
+    with_expander(->(expansion:, **) { received = expansion; HTML }) do
+      ExpansionProcessor.process(@expansion)
+    end
+
+    assert_equal @expansion, received
+  end
+
   private
 
   def with_expander(callable)

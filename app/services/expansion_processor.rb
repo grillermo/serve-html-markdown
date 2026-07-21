@@ -18,15 +18,19 @@ class ExpansionProcessor
   def process
     file_path = resolve_file_path(@expansion.file_name)
     source = file_path.read(encoding: "UTF-8")
+    @expansion.stamp!(:source_read)
+
     html = EXPANDER.expand(
       file_name: file_path.basename.to_s,
       document: source,
       selection: @expansion.selected_text,
       question: @expansion.question,
-      use_openai: @expansion.use_openai
+      use_openai: @expansion.use_openai,
+      expansion: @expansion
     )
 
     with_source_lock(file_path) do
+      @expansion.stamp!(:lock_acquired)
       latest_source = file_path.read(encoding: "UTF-8")
       expansion_path = unique_expansion_path(file_path)
       url = "/#{ERB::Util.url_encode(expansion_path.basename.to_s)}"
@@ -37,9 +41,11 @@ class ExpansionProcessor
         occurrence: @expansion.occurrence,
         url: url
       )
+      @expansion.stamp!(:link_rewritten)
 
       expansion_path.write(html, encoding: "UTF-8")
       file_path.write(rewritten, encoding: "UTF-8")
+      @expansion.stamp!(:files_written)
       url
     end
   end

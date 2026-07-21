@@ -61,6 +61,10 @@
     clearTimeout(scrollSaveTimer);
     saveScrollPosition();
   });
+  window.addEventListener("pagehide", () => {
+    jobs.forEach((record) => clearTimeout(record.timer));
+    jobs.clear();
+  });
 
   function removeUI() {
     if (button) { button.remove(); button = null; }
@@ -107,6 +111,104 @@
     button.addEventListener("mousedown", (event) => event.preventDefault());
     button.addEventListener("click", () => showPopover(rect));
     document.body.appendChild(button);
+  }
+
+  const POLL_INTERVAL_MS = 1500;
+  const jobs = new Map();
+
+  function statusContainer() {
+    let container = document.getElementById("expansion-statuses");
+    if (container) return container;
+
+    container = document.createElement("div");
+    container.id = "expansion-statuses";
+    Object.assign(container.style, {
+      position: "fixed", top: "0", left: "0", width: "100%",
+      boxSizing: "border-box", zIndex: "10000", display: "flex",
+      flexDirection: "column", font: "14px system-ui, sans-serif"
+    });
+    document.body.appendChild(container);
+    return container;
+  }
+
+  function addStatusBar(jobId, selection) {
+    const bar = document.createElement("div");
+    const content = document.createElement("span");
+    const close = document.createElement("button");
+    Object.assign(bar.style, {
+      width: "100%", boxSizing: "border-box", minWidth: "0", padding: "10px 12px",
+      background: "#1b1b1b", color: "#eee", borderBottom: "1px solid #555",
+      display: "flex", alignItems: "center", gap: "12px"
+    });
+    Object.assign(content.style, {
+      minWidth: "0", flex: "1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+    });
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Dismiss expansion");
+    Object.assign(close.style, {
+      flex: "0 0 auto", border: "0", background: "transparent", color: "inherit",
+      font: "24px/1 system-ui, sans-serif", cursor: "pointer", padding: "0 2px"
+    });
+    content.textContent = `Expanding text “${selection}”`;
+    bar.append(content, close);
+    statusContainer().appendChild(bar);
+
+    const record = { bar, content, timer: null };
+    jobs.set(jobId, record);
+    close.addEventListener("click", () => dismissJob(jobId));
+    return record;
+  }
+
+  function dismissJob(jobId) {
+    const record = jobs.get(jobId);
+    if (!record) return;
+    clearTimeout(record.timer);
+    record.bar.remove();
+    jobs.delete(jobId);
+    const container = document.getElementById("expansion-statuses");
+    if (container && !container.children.length) container.remove();
+  }
+
+  function schedulePoll(jobId) {
+    const record = jobs.get(jobId);
+    if (record) record.timer = setTimeout(() => pollJob(jobId), POLL_INTERVAL_MS);
+  }
+
+  function renderCompleted(record, url) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.textContent = "Expansion ready — open it";
+    link.style.color = "#bb86fc";
+    record.content.replaceChildren(link);
+  }
+
+  function renderFailure(record, detail) {
+    record.content.textContent = detail || "Expansion failed.";
+    record.bar.style.color = "#ffaaaa";
+  }
+
+  function pollJob(jobId) {
+    const record = jobs.get(jobId);
+    if (!record) return;
+
+    fetch(`/expansions/${encodeURIComponent(jobId)}`, { headers: { Accept: "application/json" } })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Unable to check expansion status.");
+        return data;
+      })
+      .then((data) => {
+        const current = jobs.get(jobId);
+        if (!current) return;
+        if (data.status === "completed") renderCompleted(current, data.url);
+        else if (data.status === "failed") renderFailure(current, data.detail);
+        else schedulePoll(jobId);
+      })
+      .catch((error) => {
+        const current = jobs.get(jobId);
+        if (current) renderFailure(current, error.message);
+      });
   }
 
   function showPopover(rect) {
@@ -184,7 +286,7 @@
     popover.addEventListener("submit", (event) => {
       event.preventDefault();
       submit.disabled = true;
-      submit.textContent = "Expanding… (may take a minute)";
+      submit.textContent = "Queue expansion";
       message.textContent = "";
 
       fetch("/expansions", {
@@ -206,7 +308,11 @@
           if (!response.ok) {
             throw new Error(data.detail || `Request failed (${response.status})`);
           }
-          location.reload();
+          const jobId = data.id;
+          if (!jobId) throw new Error("Expansion was not queued.");
+          addStatusBar(jobId, currentSelection.text);
+          removeUI();
+          pollJob(jobId);
         })
         .catch((error) => {
           message.textContent = error.message;

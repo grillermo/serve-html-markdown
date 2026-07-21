@@ -1,0 +1,200 @@
+#!/usr/bin/env ruby
+# Profiles the expansion pipeline against a running dev server.
+# Usage: bin/profile_expansion [--runs N] [--host URL]
+#   EXPANSION_CLAUDE_MODEL must be set on the SERVER process (not this script)
+#   before running the codex provider group.
+
+require "net/http"
+require "json"
+require "uri"
+require "optparse"
+require "fileutils"
+
+options = { runs: 4, host: "http://localhost:3000" }
+OptionParser.new do |opts|
+  opts.on("--runs N", Integer, "Runs per provider (default 4)") { |v| options[:runs] = v }
+  opts.on("--host URL", "Server host (default http://localhost:3000)") { |v| options[:host] = v }
+end.parse!(ARGV)
+
+APP_ROOT = File.expand_path("..", __dir__)
+FILE_NAME = "tech-lead-prep.html"
+SELECTED_TEXT = "leadership"
+QUESTION = "explain this word further"
+POLL_INTERVAL_S = 0.5
+POLL_TIMEOUT_S = 180
+
+PROVIDERS = {
+  "openai" => { use_openai: true },
+  "claude" => { use_openai: false },
+  "codex" => { use_openai: false }
+}.freeze
+
+STAGE_ORDER = %w[
+  client_clicked request_received job_enqueued job_started source_read
+  llm_request_start llm_first_failure llm_response lock_acquired
+  link_rewritten files_written completed
+].freeze
+
+class Driver
+  def initialize(host)
+    @uri = URI(host)
+    @cookie = nil
+  end
+
+  def login!
+    email = ENV.fetch("ADMIN_EMAIL")
+    password = ENV.fetch("ADMIN_PASSWORD")
+
+    get_response = request(Net::HTTP::Get, "/users/sign_in")
+    token = get_response.body[/name="authenticity_token" value="([^"]+)"/, 1]
+    raise "Could not find authenticity_token on sign-in page" unless token
+
+    post_response = request(Net::HTTP::Post, "/users/sign_in",
+      form: { "user[email]" => email, "user[password]" => password, "authenticity_token" => token })
+    # This app sets config.responder.redirect_status = :see_other (303) per Devise's
+    # Hotwire/Turbo defaults, rather than Devise's classic 302 Found.
+    raise "Login failed (#{post_response.code})" unless [302, 303].include?(post_response.code.to_i)
+  end
+
+  def create_expansion(use_openai:)
+    csrf_response = request(Net::HTTP::Get, "/#{FILE_NAME}")
+    token = csrf_response.body[/name="csrf-token" content="([^"]+)"/, 1]
+    raise "Could not find csrf-token meta tag" unless token
+
+    clicked_at = (Time.now.to_f * 1000).round
+    response = request(Net::HTTP::Post, "/expansions",
+      json: {
+        file_name: FILE_NAME, selected_text: SELECTED_TEXT, occurrence: 0,
+        question: QUESTION, use_openai: use_openai, client_clicked_at: clicked_at
+      },
+      headers: { "X-CSRF-Token" => token })
+    raise "Create failed (#{response.code}): #{response.body}" unless response.code.to_i == 202
+
+    JSON.parse(response.body).fetch("id")
+  end
+
+  def poll_until_terminal(id)
+    deadline = Time.now + POLL_TIMEOUT_S
+    loop do
+      response = request(Net::HTTP::Get, "/expansions/#{id}", headers: { "Accept" => "application/json" })
+      data = JSON.parse(response.body)
+      poll_seen_ms = (Time.now.to_f * 1000).round
+      return [data, poll_seen_ms] if %w[completed failed].include?(data["status"])
+      raise "Timed out polling expansion #{id}" if Time.now > deadline
+
+      sleep POLL_INTERVAL_S
+    end
+  end
+
+  private
+
+  def request(method_class, path, form: nil, json: nil, headers: {})
+    uri = @uri.dup
+    uri.path = path
+    req = method_class.new(uri)
+    req["Cookie"] = @cookie if @cookie
+    headers.each { |k, v| req[k] = v }
+    if form
+      req.form_data = form
+    elsif json
+      req["Content-Type"] = "application/json"
+      req.body = json.to_json
+    end
+
+    Net::HTTP.start(uri.host, uri.port) do |http|
+      http.request(req).tap do |response|
+        set_cookie = response["Set-Cookie"]
+        @cookie = set_cookie.split(";").first if set_cookie
+      end
+    end
+  end
+end
+
+def timings_for(expansion_id)
+  script = <<~RUBY
+    e = Expansion.find(#{expansion_id})
+    puts({ timings: e.timings, provider_used: e.provider_used, status: e.status, error_detail: e.error_detail }.to_json)
+  RUBY
+  output = IO.popen(["bin/rails", "runner", script], chdir: APP_ROOT, &:read)
+  JSON.parse(output.lines.last)
+end
+
+def reset_state!
+  Dir.chdir(APP_ROOT) do
+    system("git", "checkout", "--", "files/#{FILE_NAME}", exception: true)
+    Dir.glob("files/#{File.basename(FILE_NAME, '.*')}--expand-*.html").each { |f| FileUtils.rm_f(f) }
+  end
+end
+
+def print_run_table(provider, run_number, timings, poll_seen_ms)
+  puts "\n--- #{provider} run #{run_number} ---"
+  ordered = STAGE_ORDER.filter_map { |stage| [stage, timings[stage]] if timings[stage] }
+  ordered = ordered.sort_by { |_, ms| ms }
+  base = ordered.first&.last || 0
+  previous = nil
+  ordered.each do |stage, ms|
+    delta = previous ? ms - previous : 0
+    puts format("%-20s %8dms  (cumulative %8dms)", stage, delta, ms - base)
+    previous = ms
+  end
+  if poll_seen_ms && previous
+    puts format("%-20s %8dms  (cumulative %8dms)", "poll_discovery", poll_seen_ms - previous, poll_seen_ms - base)
+  end
+end
+
+def median(values)
+  return nil if values.empty?
+
+  sorted = values.sort
+  mid = sorted.length / 2
+  sorted.length.odd? ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2.0
+end
+
+DELTA_PAIRS = [
+  ["click -> request received", "client_clicked", "request_received"],
+  ["request received -> job started", "request_received", "job_started"],
+  ["job started -> llm request", "job_started", "llm_request_start"],
+  ["llm request -> response", "llm_request_start", "llm_response"],
+  ["response -> files written", "llm_response", "files_written"],
+  ["files written -> completed", "files_written", "completed"]
+].freeze
+
+driver = Driver.new(options[:host])
+driver.login!
+
+results = Hash.new { |h, k| h[k] = [] }
+
+PROVIDERS.each do |provider, params|
+  puts "\n=== Provider: #{provider} ==="
+  if provider == "codex"
+    print "Restart the server with EXPANSION_CLAUDE_MODEL=<invalid-model> then press Enter: "
+    $stdin.gets
+  end
+
+  options[:runs].times do |i|
+    reset_state!
+    id = driver.create_expansion(use_openai: params[:use_openai])
+    data, poll_seen_ms = driver.poll_until_terminal(id)
+    record = timings_for(id)
+
+    if data["status"] == "failed"
+      puts "\n--- #{provider} run #{i + 1}: FAILED (#{record['error_detail']}) ---"
+      puts record["timings"].to_json
+      next
+    end
+
+    print_run_table(provider, i + 1, record["timings"], poll_seen_ms)
+    results[provider] << record["timings"].merge("poll_discovery" => poll_seen_ms)
+  end
+end
+
+puts "\n\n=== Aggregate medians (ms) ==="
+results.each do |provider, runs|
+  puts "\n#{provider} (n=#{runs.length}):"
+  DELTA_PAIRS.each do |label, from_stage, to_stage|
+    deltas = runs.filter_map { |t| t[to_stage] - t[from_stage] if t[from_stage] && t[to_stage] }
+    puts format("  %-32s %s", label, median(deltas)&.round || "n/a")
+  end
+  poll_deltas = runs.filter_map { |t| t["poll_discovery"] - t["completed"] if t["completed"] }
+  puts format("  %-32s %s", "completed -> poll discovery", median(poll_deltas)&.round || "n/a")
+end

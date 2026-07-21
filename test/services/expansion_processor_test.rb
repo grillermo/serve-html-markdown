@@ -39,14 +39,14 @@ class ExpansionProcessorTest < ActiveSupport::TestCase
   end
 
   test "uses the next suffix and leaves source unchanged when latest source cannot be linked" do
-    @files_dir.join("notes.md").write("Alpha **be**ta gamma.")
+    @files_dir.join("notes.md").write("Alpha gamma.")
     @files_dir.join("notes--expand-1.html").write("taken")
 
     with_expander(->(**) { HTML }) do
       assert_raises(SelectionLinker::NotFound) { ExpansionProcessor.process(@expansion) }
     end
 
-    assert_equal "Alpha **be**ta gamma.", @files_dir.join("notes.md").read
+    assert_equal "Alpha gamma.", @files_dir.join("notes.md").read
     assert_equal "taken", @files_dir.join("notes--expand-1.html").read
     assert_not @files_dir.join("notes--expand-2.html").exist?
   end

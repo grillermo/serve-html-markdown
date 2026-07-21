@@ -3,6 +3,10 @@ require "active_support/core_ext/integer/time"
 Rails.application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
 
+  config.active_job.queue_adapter = ActiveJob::QueueAdapters::AsyncAdapter.new(
+    min_threads: 1, max_threads: 2, max_queue: 100
+  )
+
   # Code is not reloaded between requests.
   config.enable_reloading = false
 

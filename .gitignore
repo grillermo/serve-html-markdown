@@ -43,3 +43,8 @@ files/**
 !files/.gitkeep
 
 .DS_Store
+
+# rtk runtime state (sqlite db + journal files), not source.
+.tokensave/tokensave.db
+.tokensave/tokensave.db-shm
+.tokensave/tokensave.db-wal

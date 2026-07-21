@@ -109,8 +109,8 @@ class SelectionLinkerTest < ActiveSupport::TestCase
     end
   end
 
-  test "rejects an html match inside a tag" do
-    assert_raises SelectionLinker::UnsafeMatch do
+  test "does not find text that only appears inside a tag" do
+    assert_raises SelectionLinker::NotFound do
       SelectionLinker.link(
         source: %(<p class="beta">x</p>),
         extension: ".html",
@@ -121,8 +121,8 @@ class SelectionLinkerTest < ActiveSupport::TestCase
     end
   end
 
-  test "rejects an html match inside a script block" do
-    assert_raises SelectionLinker::UnsafeMatch do
+  test "does not find text that only appears inside a script block" do
+    assert_raises SelectionLinker::NotFound do
       SelectionLinker.link(
         source: "<script>var beta = 1;</script><p>x</p>",
         extension: ".html",
@@ -145,8 +145,8 @@ class SelectionLinkerTest < ActiveSupport::TestCase
     end
   end
 
-  test "rejects an html selection containing an existing anchor" do
-    assert_raises SelectionLinker::UnsafeMatch do
+  test "does not find a selection containing raw anchor markup" do
+    assert_raises SelectionLinker::NotFound do
       SelectionLinker.link(
         source: %(<p>before <a href="/old.html">beta</a> after</p>),
         extension: ".html",
@@ -157,8 +157,8 @@ class SelectionLinkerTest < ActiveSupport::TestCase
     end
   end
 
-  test "rejects an html selection crossing an existing anchor" do
-    assert_raises SelectionLinker::UnsafeMatch do
+  test "does not find a selection containing raw closing-anchor markup" do
+    assert_raises SelectionLinker::NotFound do
       SelectionLinker.link(
         source: %(<p>before <a href="/old.html">beta</a> after</p>),
         extension: ".html",
@@ -216,5 +216,92 @@ class SelectionLinkerTest < ActiveSupport::TestCase
         url: "/x.html"
       )
     end
+  end
+
+  test "wraps a selection spanning an inline span" do
+    result = SelectionLinker.link(
+      source: "this is <span> some </span> code",
+      extension: ".html",
+      selected_text: "some code",
+      occurrence: 0,
+      url: "/x.html"
+    )
+
+    assert_equal %(this is <a href="/x.html"><span> some </span> code</a>), result
+  end
+
+  test "matches across differing whitespace" do
+    result = SelectionLinker.link(
+      source: "<p>some\ncode here</p>",
+      extension: ".html",
+      selected_text: "some code",
+      occurrence: 0,
+      url: "/x.html"
+    )
+
+    assert_equal %(<p><a href="/x.html">some\ncode</a> here</p>), result
+  end
+
+  test "matches text containing entities and preserves them" do
+    result = SelectionLinker.link(
+      source: "<p>A &amp; B here</p>",
+      extension: ".html",
+      selected_text: "A & B",
+      occurrence: 0,
+      url: "/x.html"
+    )
+
+    assert_equal %(<p><a href="/x.html">A &amp; B</a> here</p>), result
+  end
+
+  test "snaps to cover a partially selected emphasis element" do
+    result = SelectionLinker.link(
+      source: "<p>x <em>alpha beta</em> gamma</p>",
+      extension: ".html",
+      selected_text: "beta gamma",
+      occurrence: 0,
+      url: "/x.html"
+    )
+
+    assert_equal %(<p>x <a href="/x.html"><em>alpha beta</em> gamma</a></p>), result
+  end
+
+  test "segments around an existing anchor" do
+    result = SelectionLinker.link(
+      source: %(<p>before <a href="/old.html">beta</a> after</p>),
+      extension: ".html",
+      selected_text: "before beta after",
+      occurrence: 0,
+      url: "/x.html"
+    )
+
+    expected = %(<p><a href="/x.html">before</a> <a href="/old.html">beta</a> <a href="/x.html">after</a></p>)
+    assert_equal expected, result
+  end
+
+  test "rejects a selection spanning two paragraphs" do
+    error = assert_raises SelectionLinker::UnsafeMatch do
+      SelectionLinker.link(
+        source: "<p>one</p><p>two</p>",
+        extension: ".html",
+        selected_text: "one two",
+        occurrence: 0,
+        url: "/x.html"
+      )
+    end
+
+    assert_equal "Selection spans multiple paragraphs — select within one.", error.message
+  end
+
+  test "counts occurrences in rendered text, not raw source" do
+    result = SelectionLinker.link(
+      source: %(<p class="beta">beta one beta two</p>),
+      extension: ".html",
+      selected_text: "beta",
+      occurrence: 1,
+      url: "/x.html"
+    )
+
+    assert_equal %(<p class="beta">beta one <a href="/x.html">beta</a> two</p>), result
   end
 end

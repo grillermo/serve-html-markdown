@@ -114,7 +114,7 @@
     document.body.appendChild(button);
   }
 
-  const POLL_INTERVAL_MS = 1500;
+  const POLL_INTERVAL_MS = 500;
   const jobs = new Map();
 
   function statusContainer() {
@@ -325,7 +325,8 @@
           selected_text: currentSelection.text,
           occurrence: currentSelection.occurrence,
           question: textarea.value,
-          use_openai: openaiCheckbox.checked
+          use_openai: openaiCheckbox.checked,
+          client_clicked_at: Date.now()
         })
       })
         .then(async (response) => {

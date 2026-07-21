@@ -37,6 +37,33 @@ class ExpansionsControllerTest < ActionDispatch::IntegrationTest
       expansion.attributes.values_at("file_name", "selected_text", "occurrence", "question", "use_openai")
   end
 
+  test "stamps client_clicked from the request body and request_received unconditionally" do
+    write_file "notes.md", "Alpha beta gamma."
+    clicked_at = 1_700_000_000_000
+
+    post "/expansions", params: {
+      file_name: "notes.md", selected_text: "beta", occurrence: 0,
+      question: "why?", client_clicked_at: clicked_at
+    }, as: :json
+
+    expansion = @user.expansions.find(response.parsed_body.fetch("id"))
+    assert_equal clicked_at, expansion.timings["client_clicked"]
+    assert_kind_of Integer, expansion.timings["request_received"]
+    assert_kind_of Integer, expansion.timings["job_enqueued"]
+  end
+
+  test "omits client_clicked when client_clicked_at is not sent" do
+    write_file "notes.md", "Alpha beta gamma."
+
+    post "/expansions", params: {
+      file_name: "notes.md", selected_text: "beta", occurrence: 0, question: "why?"
+    }, as: :json
+
+    expansion = @user.expansions.find(response.parsed_body.fetch("id"))
+    assert_not expansion.timings.key?("client_clicked")
+    assert_kind_of Integer, expansion.timings["request_received"]
+  end
+
   test "returns the current user's status and only terminal fields" do
     expansion = @user.expansions.create!(file_name: "notes.md", selected_text: "beta", occurrence: 0, question: "why?")
 

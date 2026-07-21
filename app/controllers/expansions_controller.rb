@@ -4,6 +4,7 @@ class ExpansionsController < ApplicationController
   end
 
   def create
+    request_received_ms = Expansion.now_ms
     file_name = params[:file_name].to_s
     selected_text = params[:selected_text].to_s
     question = params[:question].to_s
@@ -19,7 +20,13 @@ class ExpansionsController < ApplicationController
       question: question,
       use_openai: ActiveModel::Type::Boolean.new.cast(params[:use_openai]) || false
     )
+
+    client_clicked_ms = params[:client_clicked_at].presence&.to_i
+    expansion.stamp!(:client_clicked, client_clicked_ms) if client_clicked_ms
+    expansion.stamp!(:request_received, request_received_ms)
+
     GenerateExpansionJob.perform_later(expansion.id)
+    expansion.stamp!(:job_enqueued)
 
     render json: status_payload(expansion), status: :accepted
   end

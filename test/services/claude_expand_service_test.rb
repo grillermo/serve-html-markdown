@@ -47,6 +47,71 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
     assert_includes prompt, "<question>\nwhy?\n</question>"
   end
 
+  test "stamps llm_request_start and llm_response and records provider_used/html_bytes on claude success" do
+    runner = ->(cmd) { [{ "is_error" => false, "result" => HTML }.to_json, "", fake_status(true)] }
+    expansion = fake_expansion
+
+    @service.stub(:run_command, runner) { @service.expand(**@args, expansion: expansion) }
+
+    assert_equal %i[llm_request_start llm_response], expansion.stamped_stages
+    assert_equal ["claude", HTML.bytesize], [expansion.provider_used, expansion.html_bytes]
+  end
+
+  test "stamps llm_first_failure before falling back to codex" do
+    runner = lambda do |cmd|
+      if cmd.first == "claude"
+        ["", "boom", fake_status(false)]
+      else
+        File.write(cmd[cmd.index("-o") + 1], HTML)
+        ["", "", fake_status(true)]
+      end
+    end
+    expansion = fake_expansion
+
+    @service.stub(:run_command, runner) { @service.expand(**@args, expansion: expansion) }
+
+    assert_equal %i[llm_request_start llm_first_failure llm_response], expansion.stamped_stages
+    assert_equal ["codex", HTML.bytesize], [expansion.provider_used, expansion.html_bytes]
+  end
+
+  test "records openai as provider_used when use_openai is true" do
+    ENV["EXPANSION_LLM_API_KEY"] = "test-key"
+    response = fake_http_response(200, {
+      "output" => [
+        { "type" => "message", "content" => [{ "type" => "output_text", "text" => HTML }] }
+      ]
+    }.to_json)
+    expansion = fake_expansion
+
+    Net::HTTP.stub(:start, ->(*_args, **_opts, &blk) {
+      fake_http = Object.new
+      fake_http.define_singleton_method(:request) { |_req| response }
+      blk.call(fake_http)
+    }) do
+      @service.expand(**@args, use_openai: true, expansion: expansion)
+    end
+
+    assert_equal %i[llm_request_start llm_response], expansion.stamped_stages
+    assert_equal "openai", expansion.provider_used
+  ensure
+    ENV.delete("EXPANSION_LLM_API_KEY")
+  end
+
+  test "works with no expansion given" do
+    runner = ->(cmd) { [{ "is_error" => false, "result" => HTML }.to_json, "", fake_status(true)] }
+
+    result = @service.stub(:run_command, runner) { @service.expand(**@args) }
+
+    assert_equal HTML, result
+  end
+
+  test "CLAUDE_MODEL is overridable via EXPANSION_CLAUDE_MODEL" do
+    ENV["EXPANSION_CLAUDE_MODEL"] = "haiku"
+    assert_equal "haiku", ClaudeExpandService::CLAUDE_MODEL.call
+  ensure
+    ENV.delete("EXPANSION_CLAUDE_MODEL")
+  end
+
   test "strips a wrapping markdown code fence" do
     fenced = "```html\n#{HTML}\n```"
     runner = ->(cmd) { [{ "is_error" => false, "result" => fenced }.to_json, "", fake_status(true)] }
@@ -249,5 +314,24 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
       status.define_singleton_method(:success?) { success }
       status.define_singleton_method(:exitstatus) { success ? 0 : 1 }
       status
+    end
+
+    def fake_expansion
+      Class.new do
+        attr_reader :stamped_stages, :provider_used, :html_bytes
+
+        def initialize
+          @stamped_stages = []
+        end
+
+        def stamp!(stage, *)
+          @stamped_stages << stage
+        end
+
+        def update_columns(provider_used:, html_bytes:)
+          @provider_used = provider_used
+          @html_bytes = html_bytes
+        end
+      end.new
     end
 end

@@ -6,7 +6,7 @@ require "tempfile"
 class ClaudeExpandService
   Error = Class.new(StandardError)
 
-  CLAUDE_MODEL = "sonnet"
+  CLAUDE_MODEL = -> { ENV.fetch("EXPANSION_CLAUDE_MODEL", "sonnet") }
   CODEX_MODEL = "earth"
   OPENAI_MODEL = "gpt-5.6-terra"
   OPENAI_REASONING_EFFORT = "medium"
@@ -39,29 +39,37 @@ class ClaudeExpandService
 
   def self.expand(**kwargs) = new.expand(**kwargs)
 
-  def expand(file_name:, document:, selection:, question:, use_openai: false)
+  def expand(file_name:, document:, selection:, question:, use_openai: false, expansion: nil)
     prompt = format(PROMPT_TEMPLATE, file_name:, document:, selection:, question:)
     Rails.logger.info "[ClaudeExpandService] expanding file=#{file_name} selection_bytes=#{selection.bytesize} question_bytes=#{question.bytesize} use_openai=#{use_openai}"
+    expansion&.stamp!(:llm_request_start)
 
     if use_openai
       html = run_openai(prompt)
-      Rails.logger.info "[ClaudeExpandService] openai succeeded bytes=#{html.bytesize}"
+      record_response(expansion, "openai", html)
       return html
     end
 
     html = run_claude(prompt)
-    Rails.logger.info "[ClaudeExpandService] claude succeeded bytes=#{html.bytesize}"
+    record_response(expansion, "claude", html)
     html
   rescue Error => error
     raise error if use_openai
 
     Rails.logger.warn "[ClaudeExpandService] claude failed, falling back to codex"
+    expansion&.stamp!(:llm_first_failure)
     html = run_codex(prompt)
-    Rails.logger.info "[ClaudeExpandService] codex succeeded bytes=#{html.bytesize}"
+    record_response(expansion, "codex", html)
     html
   end
 
   private
+    def record_response(expansion, provider, html)
+      Rails.logger.info "[ClaudeExpandService] #{provider} succeeded bytes=#{html.bytesize}"
+      expansion&.stamp!(:llm_response)
+      expansion&.update_columns(provider_used: provider, html_bytes: html.bytesize)
+    end
+
     def run_openai(prompt)
       api_key = ENV["EXPANSION_LLM_API_KEY"]
       raise Error, "EXPANSION_LLM_API_KEY is not configured." if api_key.blank?
@@ -102,7 +110,7 @@ class ClaudeExpandService
     def run_claude(prompt)
       stdout, stderr, status = run_command([
         "claude", "-p", prompt,
-        "--model", CLAUDE_MODEL,
+        "--model", CLAUDE_MODEL.call,
         "--output-format", "json",
         "--tools", ""
       ])

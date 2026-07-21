@@ -5,6 +5,7 @@ class GenerateExpansionJob < ApplicationJob
     expansion = Expansion.find_by(id: expansion_id)
     return unless expansion&.claim!
 
+    expansion.stamp!(:job_started)
     expansion.complete!(ExpansionProcessor.process(expansion))
   rescue ClaudeExpandService::Error
     Rails.logger.error("Expansion generation failed for job #{expansion_id}")

@@ -15,6 +15,14 @@ class GenerateExpansionJobTest < ActiveJob::TestCase
     assert_equal ["completed", "/notes--expand-1.html"], @expansion.reload.attributes.values_at("status", "url")
   end
 
+  test "stamps job_started after claiming the expansion" do
+    with_processor(->(_) { "/notes--expand-1.html" }) do
+      GenerateExpansionJob.perform_now(@expansion.id)
+    end
+
+    assert_kind_of Integer, @expansion.reload.timings["job_started"]
+  end
+
   test "stores safe details for known and unexpected failures" do
     with_processor(->(_) { raise ClaudeExpandService::Error, "token leaked" }) do
       GenerateExpansionJob.perform_now(@expansion.id)

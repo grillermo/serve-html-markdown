@@ -4,7 +4,7 @@ A minimal Rails 8 application that serves trusted HTML and Markdown files from
 the `files/` directory.
 
 - `GET /name.html` serves HTML with a small expansion script injected.
-- Select text on any page to ask a question and generate a linked AI answer page (requires the `claude` CLI; falls back to `codex`).
+- Select text on any page to queue a linked AI answer page. Multiple expansions run in the background; fixed status bars remain only while the current page is open (requires the `claude` CLI; falls back to `codex`).
 - `GET /name.md` and `GET /name.markdown` render Markdown with a dark theme.
 - `GET /` and `GET /last` redirect to the most recently modified supported file.
 - `HEAD /health` returns `200 OK`.

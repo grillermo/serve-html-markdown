@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_21_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_21_130000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -18,10 +18,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_21_120000) do
     t.datetime "created_at", null: false
     t.string "error_detail"
     t.string "file_name", null: false
+    t.integer "html_bytes"
     t.integer "occurrence", default: 0, null: false
+    t.string "provider_used"
     t.text "question", null: false
     t.text "selected_text", null: false
     t.string "status", default: "pending", null: false
+    t.text "timings", default: "{}", null: false
     t.datetime "updated_at", null: false
     t.string "url"
     t.boolean "use_openai", default: false, null: false

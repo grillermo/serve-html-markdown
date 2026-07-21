@@ -1,0 +1,1350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tech Lead Interview Prep — Ruby on Rails</title>
+<style>
+  :root {
+    --ink: #1a202c;
+    --muted: #4a5568;
+    --accent: #c53030;
+    --accent2: #2b6cb0;
+    --bg-code: #f7fafc;
+    --border: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    color: var(--ink);
+    line-height: 1.65;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+    background: #fff;
+  }
+  h1, h2, h3, h4 { font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.25; }
+  h1 { font-size: 2.1rem; border-bottom: 4px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.6rem; color: var(--accent); margin-top: 3rem; border-bottom: 2px solid var(--border); padding-bottom: .3rem; }
+  h3 { font-size: 1.25rem; color: var(--accent2); margin-top: 2rem; }
+  h4 { font-size: 1.05rem; margin-top: 1.5rem; }
+  code {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: .85em;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: .1em .35em;
+  }
+  pre {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent2);
+    border-radius: 4px;
+    padding: 1rem;
+    overflow-x: auto;
+    line-height: 1.45;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: .82rem; }
+  table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .55rem .75rem; text-align: left; vertical-align: top; }
+  th { background: var(--bg-code); font-family: 'Helvetica Neue', Arial, sans-serif; }
+  .callout {
+    background: #fffaf0;
+    border: 1px solid #fbd38d;
+    border-left: 5px solid #dd6b20;
+    border-radius: 4px;
+    padding: .9rem 1.1rem;
+    margin: 1.5rem 0;
+  }
+  .callout strong:first-child { color: #9c4221; }
+  .interview-q {
+    background: #ebf8ff;
+    border: 1px solid #90cdf4;
+    border-left: 5px solid var(--accent2);
+    border-radius: 4px;
+    padding: .9rem 1.1rem;
+    margin: 1.5rem 0;
+  }
+  .interview-q strong:first-child { color: #2c5282; }
+  .toc { background: var(--bg-code); border: 1px solid var(--border); border-radius: 6px; padding: 1.25rem 2rem; margin: 2rem 0; }
+  .toc a { color: var(--accent2); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .interview-q .q { font-weight: 600; color: #2c5282; }
+  .topic-break { page-break-before: always; }
+  .subtitle { color: var(--muted); font-size: 1.1rem; margin-top: -.5rem; }
+  @media print {
+    body { max-width: none; padding: 0; font-size: 11pt; }
+    pre { white-space: pre-wrap; }
+    .toc { page-break-after: always; }
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #fff; } /* keep print-style document light for readability */
+  }
+</style>
+</head>
+<body>
+
+<h1 id="tech-lead-interview-prep-ruby-on-rails">Tech Lead Interview Prep — Ruby on Rails</h1>
+<p class="subtitle">Deep technical fluency + leadership judgment. Three battlegrounds, prepared in depth.</p>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#topic1">Databases &amp; Redis for Rails Teams</a>
+      <ul>
+        <li><a href="#pg-vs-mysql">PostgreSQL vs MySQL</a></li>
+        <li><a href="#indexing">Indexing &amp; Query Performance</a></li>
+        <li><a href="#replication">Replication</a></li>
+        <li><a href="#sharding">Partitioning &amp; Sharding</a></li>
+        <li><a href="#bottlenecks">Database Bottleneck Playbook</a></li>
+        <li><a href="#redis">Redis: Caching, Sidekiq &amp; Choosing the Right Store</a></li>
+      </ul>
+    </li>
+    <li><a href="#topic2">Advanced Ruby &amp; Deep Rails Internals</a>
+      <ul>
+        <li><a href="#ar-perf">ActiveRecord Performance</a></li>
+        <li><a href="#concurrency">Concurrency &amp; Memory</a></li>
+        <li><a href="#metaprogramming">Metaprogramming</a></li>
+      </ul>
+    </li>
+    <li><a href="#topic3">The "Code Review" &amp; Technical Alignment</a>
+      <ul>
+        <li><a href="#patterns">Design Patterns &amp; Code Smells</a></li>
+        <li><a href="#testing">Testing Philosophy</a></li>
+        <li><a href="#upgrades">Upgrade &amp; Maintenance Strategies</a></li>
+      </ul>
+    </li>
+    <li><a href="#topic4">Engineering Leadership &amp; Team Delivery</a>
+      <ul>
+        <li><a href="#debt">Handling Technical Debt</a></li>
+        <li><a href="#mentorship">Mentorship &amp; Growth</a></li>
+        <li><a href="#conflict">Conflict Resolution</a></li>
+      </ul>
+    </li>
+    <li><a href="#quiz">Knowledge Check — 60-Question Interactive Quiz</a></li>
+  </ol>
+</nav>
+
+<!-- ==================================================================== -->
+<h2 id="topic1" class="topic-break">Topic 1 — Databases &amp; Redis for Rails Teams</h2>
+
+<h3 id="pg-vs-mysql">1.1 PostgreSQL vs MySQL: architecture and operational trade-offs</h3>
+
+<h4 id="why-interviewers-ask-this">Why interviewers ask this</h4>
+<p>For a tech lead role, the interviewer is rarely testing whether you have memorized configuration flags. They want to see that you understand <em>why</em> the two engines behave differently under load, that you can predict failure modes before they happen, and that you can guide a team's decisions with reasoning rather than folklore. Every answer in this section should end with an operational consequence — that is what separates a senior engineer's answer from a lead's answer.</p>
+
+<h4 id="the-core-architectural-differences">The core architectural differences</h4>
+<table>
+  <tr><th></th><th>PostgreSQL</th><th>MySQL (InnoDB)</th></tr>
+  <tr>
+    <td><b>MVCC model</b></td>
+    <td>Old row versions are kept <em>inside the table</em> as dead tuples. <code>VACUUM</code> must run to reclaim the space. Table and index bloat is the classic operational pain point.</td>
+    <td>Old versions live in the <em>undo log</em> and are purged automatically. There is no vacuum, but long-running transactions grow the undo history and slow everything down.</td>
+  </tr>
+  <tr>
+    <td><b>Connection model</b></td>
+    <td>One OS process per connection, each costing several MB of memory. At scale this practically requires an external pooler such as PgBouncer.</td>
+    <td>One thread per connection — far cheaper. MySQL tolerates thousands of direct connections that would sink a Postgres server.</td>
+  </tr>
+  <tr>
+    <td><b>Storage layout</b></td>
+    <td>Heap tables. Every index — including the primary key — points to a physical row location, so any secondary index lookup is a single hop.</td>
+    <td>The table <em>is</em> the primary key B-tree (a clustered index). Secondary indexes store the primary key, so every secondary lookup is two B-tree traversals, and a fat primary key bloats every index.</td>
+  </tr>
+  <tr>
+    <td><b>Replication default</b></td>
+    <td>Physical WAL streaming (byte-level, whole cluster, same major version). Logical replication is available for selective or cross-version needs.</td>
+    <td>Logical binlog replication (row or statement based). GTIDs make failover and topology changes much simpler than they used to be.</td>
+  </tr>
+  <tr>
+    <td><b>Feature depth</b></td>
+    <td>Transactional DDL, partial and expression indexes, <code>JSONB</code> with GIN indexes, rich types, extensions (PostGIS, pg_stat_statements, pgvector).</td>
+    <td>Simpler operational story, extremely fast primary-key lookups, a huge pool of operators who understand its replication.</td>
+  </tr>
+</table>
+
+<h4 id="consequences-worth-stating-out-loud">Consequences worth stating out loud</h4>
+<ul>
+  <li><b>Random UUIDs as primary keys hurt MySQL badly.</b> Because InnoDB clusters rows by primary key, random inserts land in random pages, causing page splits and cache churn. If you need UUIDs on MySQL, use time-ordered ones (UUIDv7). On Postgres the damage is smaller but index locality still suffers.</li>
+  <li><b><a href="/tech-lead-prep--expand-3.html">Transactional DDL</a> is a real developer-experience difference.</b> A failed Postgres migration rolls back cleanly; a failed MySQL migration can leave the schema half-changed, which matters when you are coaching a team on safe deploys.</li>
+  <li><b>Long transactions are poison in both engines, for different reasons.</b> In Postgres they block vacuum from reclaiming dead tuples (bloat grows); in MySQL they pin the undo log (purge lag grows). Either way, a lead should enforce short transactions and set alerts on transaction age.</li>
+  <li><b>Postgres connection cost shapes your whole architecture.</b> Puma threads &times; web dynos + Sidekiq concurrency &times; worker dynos must fit within <code>max_connections</code>. This single arithmetic problem is behind a large fraction of production incidents in Rails shops.</li>
+</ul>
+
+<div class="interview-q">
+  <p class="q">Q: “Would you pick PostgreSQL or MySQL for a new Rails product?”</p>
+  <p>A: “Both are excellent and Rails treats them almost identically, so the decision is organizational as much as technical. I default to PostgreSQL for its feature depth — JSONB, partial indexes, transactional DDL, and the extension ecosystem — which pays off as the product grows. I would choose MySQL when the team already has deep MySQL operational expertise or the platform team standardizes on it, because operational familiarity prevents more incidents than any feature difference. What matters more than the choice is that the team understands its engine's failure modes: vacuum and connection limits on Postgres, clustered-index and replication-topology implications on MySQL.”</p>
+</div>
+
+<div class="callout"><b>Framing habit for the whole interview:</b> answer database questions in the shape <em>mechanism → consequence → what I would do about it as a lead</em>. For example: “Postgres keeps dead tuples in the heap (mechanism), so unindexed churn causes bloat and slow scans (consequence), so I make sure autovacuum is tuned per hot table and we alert on dead-tuple ratios (leadership action).”</div>
+
+<h3 id="indexing">1.2 Indexing &amp; Query Performance</h3>
+
+<h4 id="index-fundamentals-you-should-be-able-to-teach">Index fundamentals you should be able to teach</h4>
+<ul>
+  <li><b>B-tree is the default</b> and handles equality, ranges, and sorting. Composite indexes obey the <em>leftmost-prefix rule</em>: an index on <code>(account_id, created_at)</code> serves <code>WHERE account_id = ?</code> and <code>WHERE account_id = ? AND created_at &gt; ?</code>, but not a query filtering on <code>created_at</code> alone.</li>
+  <li><b>Column order:</b> equality-filtered columns first, then the range or sort column. “Most selective first” is a common half-truth — the access pattern of your real queries decides the order.</li>
+  <li><b>Partial indexes</b> (Postgres): <code>CREATE INDEX ... WHERE deleted_at IS NULL</code>. They are small, fast to scan, and cheap to maintain — ideal for soft deletes and state-machine columns like <code>WHERE status = 'pending'</code> where only a sliver of rows ever match.</li>
+  <li><b>Expression indexes:</b> if a query wraps a column in a function — <code>LOWER(email)</code> — a plain index on <code>email</code> is unusable. Index the expression itself, or better, normalize on write (or use <code>citext</code>).</li>
+  <li><b>Covering indexes / index-only scans:</b> Postgres <code>INCLUDE (col)</code>, or in MySQL putting every selected column in the index, lets the engine answer from the index without touching the table. In Postgres this depends on the visibility map, which is another reason vacuum health matters.</li>
+  <li><b>GIN indexes</b> (Postgres) serve JSONB containment queries, array membership, and full-text search. Mention them when the conversation turns to “we store flexible attributes.”</li>
+  <li><b>Indexes are not free:</b> each one slows every write and consumes RAM that competes with your working set. Audit for unused indexes with <code>pg_stat_user_indexes</code> and drop them deliberately.</li>
+</ul>
+
+<h4 id="reading-a-query-plan-under-pressure">Reading a query plan under pressure</h4>
+<pre><code>EXPLAIN (ANALYZE, BUFFERS) SELECT ...;</code></pre>
+<ul>
+  <li><b>Seq Scan on a large table</b> under a selective filter usually means a missing or unusable index. Check for functions wrapping the column, type mismatches (string compared to integer), or an <code>OR</code> that defeats the planner.</li>
+  <li><b>Estimated rows wildly different from actual rows</b> means stale statistics. Run <code>ANALYZE</code>, and for skewed columns raise the statistics target. Bad estimates cascade into bad join choices.</li>
+  <li><b>Nested Loop joins</b> over large row counts often follow from those bad estimates; a <b>Hash Join</b> is usually what you want for bulk work.</li>
+  <li><b>BUFFERS output</b> tells you whether the query is hitting shared memory or disk — a query can be “fast” in a warm cache and terrible after a restart or failover.</li>
+  <li>Fleet-wide, do not guess: rank real production queries by total time with <code>pg_stat_statements</code> (Postgres) or the slow query log and <code>performance_schema</code> (MySQL), then fix the top of the list.</li>
+</ul>
+
+<h4 id="rails-specific-performance-gotchas">Rails-specific performance gotchas</h4>
+<ul>
+  <li><b>N+1 queries</b> — the eternal one. Fix with <code>includes</code> / <code>preload</code> / <code>eager_load</code>; prevent regressions with <code>strict_loading</code> on hot models and query-count assertions in tests. Know the difference: <code>preload</code> always issues separate queries, <code>eager_load</code> always joins, <code>includes</code> lets Rails decide.</li>
+  <li><b><code>COUNT(*)</code> on large tables</b> is a full-index scan every time. Use counter caches for exact per-parent counts, or an estimate from <code>pg_class.reltuples</code> when “about how many” is acceptable.</li>
+  <li><b>Deep OFFSET pagination</b> reads and discards every skipped row; page 5,000 is a table scan. Switch to keyset (cursor) pagination ordered by an indexed, unique column.</li>
+  <li><b><code>first_or_create</code> races</b> under concurrency produce duplicates. The database is the only reliable referee: unique index plus rescue-and-retry, or an <code>upsert</code>/<code>insert ... on conflict</code>.</li>
+  <li><b>Ordering without an index</b> — an <code>ORDER BY created_at</code> on a filtered set can force a sort node; a composite index ending in the sort column removes it.</li>
+</ul>
+
+<div class="interview-q">
+  <p class="q">Q: “A page went from 50 ms to 3 seconds after a deploy. Walk me through your process.”</p>
+  <p>A: “First reproduce it and confirm scope — one page or sitewide, one tenant or all. Then I go to the APM trace or slow-query log to find the offending SQL rather than reading the diff line by line. I run <code>EXPLAIN ANALYZE</code> on that query and compare the plan against expectations: is the index still being used, are the row estimates sane? The usual culprits are a new N+1 from a changed association, a query that lost its index because a new filter column or function was introduced, or lock contention from a long transaction or migration that shipped in the same deploy. Once fixed, I add a guard so it cannot silently return — a query-count assertion in tests and a dashboard on that endpoint's p95.”</p>
+</div>
+
+<div class="callout"><b>One-liner that lands well:</b> “I treat <code>pg_stat_statements</code> as the to-do list and <code>EXPLAIN ANALYZE</code> as the debugger. Optimizing queries nobody runs is a hobby, not engineering.”</div>
+
+<h3 id="replication">1.3 Replication</h3>
+
+<h4 id="replication-modes-and-their-trade-offs">Replication modes and their trade-offs</h4>
+<ul>
+  <li><b>Asynchronous (the default everywhere):</b> the primary commits without waiting for replicas. Writes stay fast, but replicas lag behind, which means stale reads — and if the primary dies before a replica catches up, the un-replicated transactions are lost on failover.</li>
+  <li><b>Synchronous:</b> the commit waits for at least one replica to acknowledge. You trade write latency for a zero-data-loss guarantee. In Postgres this is <code>synchronous_standby_names</code>; MySQL offers semi-synchronous replication. Most teams run one synchronous standby at most, because every additional one compounds latency and availability risk.</li>
+  <li><b>Physical vs logical (Postgres):</b> physical replication streams the WAL byte-for-byte — the whole cluster, same major version, replicas are exact copies. Logical replication publishes row changes per table — it can cross major versions and replicate selectively, which is why it powers near-zero-downtime major upgrades.</li>
+  <li><b>MySQL specifics worth naming:</b> row-based binlog format is the safe default (statement-based can drift on non-deterministic statements); GTIDs give every transaction a global ID so replicas can be repointed without binlog-position archaeology.</li>
+</ul>
+
+<h4 id="read-replicas-in-rails-know-this-cold">Read replicas in Rails — know this cold</h4>
+<pre><code># config/database.yml defines primary and replica entries
+class ApplicationRecord &lt; ActiveRecord::Base
+  connects_to database: { writing: :primary, reading: :replica }
+end
+
+# Explicit routing for heavy read work:
+ActiveRecord::Base.connected_to(role: :reading) do
+  Report.heavy_aggregation
+end</code></pre>
+<ul>
+  <li><b>Automatic role switching</b> (Rails 6+): GET and HEAD requests read from the replica; anything that writes goes to the primary. After a write, the middleware pins that user's session to the primary for a configurable delay (2 seconds by default) — the built-in mitigation for read-your-own-writes.</li>
+  <li><b>Replication lag is the number one gotcha.</b> A user creates a record, the next request reads the replica, and the record is “missing.” Beyond session pinning, mitigations include reading the primary for the specific model involved in the flow, monitoring lag and disabling replica reads past a threshold, and designing flows so the response carries the data the next page needs.</li>
+  <li><b>What causes lag spikes:</b> large writes and backfills, vacuum activity on the primary, long-running queries on the replica that conflict with WAL replay, and under-provisioned replica I/O. Batch backfills with sleeps between batches, and know that <code>hot_standby_feedback</code> trades replica query cancellation for primary-side bloat.</li>
+  <li><b>Replicas scale reads only.</b> Every replica still replays every write. If the write path is the bottleneck, replicas do nothing for you — that is the segue into sharding.</li>
+</ul>
+
+<h4 id="failover-and-the-lead-s-responsibilities">Failover and the lead's responsibilities</h4>
+<ul>
+  <li>Managed platforms (RDS, Aurora, Cloud SQL) or Patroni handle promotion mechanics, but <b>a failover that has never been rehearsed is a hypothesis, not a capability</b>. Schedule game days; measure the real RTO.</li>
+  <li>Know your <b>RPO</b> (how much data you can lose — decided by sync vs async) and <b>RTO</b> (how long promotion plus DNS/proxy cutover takes) and make sure the business has agreed to those numbers.</li>
+  <li>After failover, the application layer matters: connection pools must reconnect cleanly, in-flight transactions will fail and must be retried or surfaced honestly, and Sidekiq jobs should be idempotent precisely because they will be re-run around such events.</li>
+  <li>Backups are a separate discipline from replication: replication happily replicates a <code>DELETE</code> of your users table. Point-in-time recovery via WAL archiving is the safety net; test restores, not backups.</li>
+</ul>
+
+<div class="interview-q">
+  <p class="q">Q: “When do you add a read replica versus a cache versus a bigger box?”</p>
+  <p>A: “In order of cheapness. First fix queries and indexes — the biggest wins are almost always there. Second, cache what is genuinely cacheable, because a cache hit is cheaper than any database read. Third, scale vertically; it is boring and buys time with zero added complexity. Fourth, add read replicas when read volume truly saturates the primary and the product can tolerate staleness. Sharding comes last, only when write volume or data size exceeds a single primary. Each step adds a failure mode — lag, invalidation, topology — so I do not let the team skip ahead for excitement.”</p>
+</div>
+
+<h3 id="sharding">1.4 Partitioning &amp; Sharding</h3>
+
+<h4 id="before-you-shard-the-escalation-ladder">Before you shard: the escalation ladder</h4>
+<ol>
+  <li><b>Partitioning</b> (Postgres declarative partitioning, typically by time or tenant): one logical table split into physical children inside the same database. Queries that hit the partition key prune to one child; old partitions can be dropped instantly instead of running a months-long <code>DELETE</code>. This solves “the table is huge” without any of sharding's distributed-systems costs.</li>
+  <li><b>Archiving:</b> move cold rows to cheap storage or a warehouse. Many “we need to shard” conversations end when someone notices 90% of the table is never queried.</li>
+  <li><b>Functional decomposition:</b> move a hot, self-contained domain (analytics events, audit logs, notifications) into its own database. Rails multi-database support makes this nearly free, and it isolates the noisy workload's I/O and vacuum behavior from the core schema.</li>
+  <li><b>Horizontal sharding</b> — only when a single primary cannot absorb the write volume or hold the data set even after all of the above.</li>
+</ol>
+
+<h4 id="sharding-strategies">Sharding strategies</h4>
+<table>
+  <tr><th>Strategy</th><th>How it works</th><th>Strengths / weaknesses</th></tr>
+  <tr>
+    <td><b>Tenant / hash</b></td>
+    <td>Shard key is something like <code>account_id</code>; a hash or explicit assignment maps each tenant to a shard.</td>
+    <td>Natural fit for B2B SaaS — each tenant's data is colocated, so most queries stay single-shard. Weakness: one whale tenant can outgrow its shard, so you need a plan for moving tenants.</td>
+  </tr>
+  <tr>
+    <td><b>Range</b></td>
+    <td>Split by ranges of the key, commonly time.</td>
+    <td>Trivial to add new shards for new ranges. Weakness: the newest range is where all the writes go — a built-in hot spot.</td>
+  </tr>
+  <tr>
+    <td><b>Directory / lookup</b></td>
+    <td>A mapping service or table records which shard owns each key.</td>
+    <td>Maximum flexibility — tenants can be moved by updating the map. Weakness: an extra hop on every request, and the directory becomes critical infrastructure with its own availability story.</td>
+  </tr>
+</table>
+
+<h4 id="rails-native-horizontal-sharding">Rails-native horizontal sharding</h4>
+<pre><code>class ApplicationRecord &lt; ActiveRecord::Base
+  connects_to shards: {
+    default: { writing: :primary, reading: :primary_replica },
+    shard_two: { writing: :shard_two, reading: :shard_two_replica }
+  }
+end
+
+ActiveRecord::Base.connected_to(shard: :shard_two) do
+  Account.find(id)   # runs against shard_two
+end</code></pre>
+<p>Rails 6.1+ supports this natively, and Rails 7's <code>ShardSelector</code> middleware can resolve the shard per request (from subdomain, session, or token). The framework routes connections; <em>choosing</em> the shard key and living with its consequences is still entirely your problem.</p>
+
+<h4 id="the-costs-volunteer-these-before-being-asked">The costs — volunteer these before being asked</h4>
+<ul>
+  <li><b>No cross-shard joins or transactions.</b> Anything that spans shards becomes application-level orchestration, with all the partial-failure handling that implies.</li>
+  <li><b>Cross-shard reporting</b> needs scatter-gather queries or, more realistically, an ETL pipeline into a warehouse. Budget for this on day one.</li>
+  <li><b>Global uniqueness:</b> auto-increment IDs collide across shards. Use UUIDv7 or <a href="/tech-lead-prep--expand-1.html">Snowflake-style IDs</a> — time-ordered, so they stay index-friendly.</li>
+  <li><b>Choosing the wrong shard key is a company-level mistake.</b> Resharding live data is a migration project measured in quarters. Pick the key that matches how the product actually queries data — almost always the tenant.</li>
+  <li><b>Every migration now runs N times</b>, and observability must be per-shard: one hot shard hides comfortably inside healthy averages.</li>
+  <li><b>Middleware alternatives:</b> Citus (Postgres extension), Vitess (MySQL), and PlanetScale push shard routing below the application. App-level sharding keeps you in control but smears complexity across every query path — a genuine trade-off to discuss, not a default.</li>
+</ul>
+
+<div class="interview-q">
+  <p class="q">Q: “<a href="/tech-lead-prep--expand-2.html">Your primary is at 90% write capacity and growing 10% a month. What is your plan?</a>”</p>
+  <p>A: “That growth rate gives me roughly a year of runway, so the plan has parallel tracks. Immediately: verify the writes are real — eliminate redundant updates, batch counters, move ephemeral write-heavy data like sessions or view counts out of Postgres entirely. Short term: vertical headroom and partitioning of the largest tables. In parallel, because sharding takes quarters, I would start the design now: pick the shard key (almost certainly tenant), introduce it into every table and query path, build the routing layer behind a flag, and migrate tenants gradually — dual-writing during the transition. The worst outcome is starting that project with three weeks of runway left.”</p>
+</div>
+
+<h3 id="bottlenecks">1.5 <a href="/tech-lead-prep--expand-4.html">Database Bottleneck Playbook</a></h3>
+
+<h4 id="symptom-cause-fix">Symptom → cause → fix</h4>
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+  <tr>
+    <td>High CPU on the database</td>
+    <td>Missing indexes forcing sequential scans; N+1 storms multiplying cheap queries into expensive aggregate load</td>
+    <td>Rank by total time in <code>pg_stat_statements</code>; index or rewrite the top offenders; fix N+1 in the app layer</td>
+  </tr>
+  <tr>
+    <td>Connection errors, checkout timeouts</td>
+    <td>Pool exhaustion: (Puma threads &times; web processes) + (Sidekiq concurrency &times; workers) exceeds <code>max_connections</code></td>
+    <td>Do the arithmetic explicitly; right-size the Rails <code>pool</code>; put PgBouncer in transaction mode in front of Postgres</td>
+  </tr>
+  <tr>
+    <td>Writes stalling, lock wait timeouts</td>
+    <td>Lock contention: long transactions, DDL without <code>CONCURRENTLY</code>, hot rows such as shared counters</td>
+    <td>Inspect <code>pg_locks</code> joined to <code>pg_stat_activity</code>; shorten transactions; set <code>lock_timeout</code> in migrations; move hot counters to Redis or batch them</td>
+  </tr>
+  <tr>
+    <td>Postgres gradually slower; tables far larger on disk than their data</td>
+    <td>Bloat — autovacuum falling behind churn, often abetted by long idle-in-transaction sessions</td>
+    <td>Tune autovacuum per hot table (lower scale factors); <code>pg_repack</code> to rebuild without long locks; alert on idle-in-transaction age</td>
+  </tr>
+  <tr>
+    <td>Replica lag spikes</td>
+    <td>Bulk writes or backfills, vacuum on the primary, long replica-side queries conflicting with WAL replay</td>
+    <td>Batch backfills with pauses; throttle jobs on measured lag; weigh <code>hot_standby_feedback</code> trade-offs</td>
+  </tr>
+  <tr>
+    <td>Periodic latency spikes at regular intervals</td>
+    <td>Checkpoints, autovacuum runs, or scheduled jobs</td>
+    <td>Correlate spike timing with server activity; spread checkpoints out; move heavy cron work off-peak</td>
+  </tr>
+  <tr>
+    <td>One endpoint slow only for the biggest customers</td>
+    <td>Data skew: plans and indexes that work at median cardinality collapse at the 99th percentile tenant</td>
+    <td>Test against production-scale data for the largest tenant; add composite indexes for their access pattern; consider partitioning by tenant</td>
+  </tr>
+</table>
+
+<h4 id="migrations-at-scale-a-signature-tech-lead-topic">Migrations at scale — a signature tech-lead topic</h4>
+<ul>
+  <li><b>Adding an index:</b> plain <code>CREATE INDEX</code> blocks writes for the duration. Always <code>algorithm: :concurrently</code> in Postgres, which requires <code>disable_ddl_transaction!</code> in the Rails migration. MySQL 8 does most index builds online.</li>
+  <li><b>Adding a column:</b> safe and instant in modern versions — including with a constant default (Postgres 11+ stores the default in metadata). Adding a column with a <em>volatile</em> default or backfilling in the same migration rewrites the table under lock: never do it.</li>
+  <li><b>Backfills</b> belong in batched background jobs (find_in_batches, sleep between batches, resumable), never inline in the migration that deploys the schema.</li>
+  <li><b>NOT NULL / constraints on big tables:</b> add the constraint as <code><a href="/tech-lead-prep--expand-5.html">NOT VALID</a></code>, backfill, then <code>VALIDATE CONSTRAINT</code> — validation takes a much weaker lock.</li>
+  <li><b>Set <code>lock_timeout</code></b> so a migration that cannot get its lock fails fast instead of queueing behind a long transaction while every other query queues behind <em>it</em> — that pile-up is the classic “the migration took the site down” incident.</li>
+  <li><b>Institutionalize it:</b> the <code>strong_migrations</code> gem turns all of the above from tribal knowledge into an automatic lint. Recommending it is a leadership answer, not a tooling trivia answer.</li>
+</ul>
+
+<h4 id="prevention-what-a-lead-puts-in-place">Prevention — what a lead puts in place</h4>
+<ul>
+  <li>Dashboards and alerts on: p95 query time, connection count vs limit, replica lag, oldest transaction age, dead-tuple ratio, queue latency.</li>
+  <li>CI guards: query-count assertions on hot endpoints, <code>strict_loading</code> on core models, strong_migrations.</li>
+  <li>A written runbook per symptom above — during an incident nobody should be composing <code>pg_stat_activity</code> queries from memory.</li>
+  <li>Load-test with production-shaped data. Almost every “it was fine in staging” story is a cardinality story.</li>
+</ul>
+
+<div class="callout"><b>Interview framing:</b> always answer bottleneck questions with the loop <em>measure → hypothesize → fix → verify → prevent</em>, and name real tools at each step (APM, <code>pg_stat_statements</code>, <code>EXPLAIN ANALYZE</code>, <code>pg_locks</code>). The “prevent” step is what distinguishes a lead from a strong senior.</div>
+
+<h3 id="redis">1.6 Redis: Caching, Sidekiq, and Choosing the Right Store</h3>
+
+<h4 id="the-decision-framework-lead-with-this">The decision framework — lead with this</h4>
+<table>
+  <tr><th>Use PostgreSQL/MySQL when…</th><th>Use Redis when…</th></tr>
+  <tr>
+    <td>The data is the <b>source of truth</b>: you need durability, transactions, constraints, joins, and the ability to query it in ways you haven't thought of yet.</td>
+    <td>The data is <b>derived, ephemeral, or reconstructible</b>, and you need sub-millisecond latency or atomic operations on shared state (counters, queues, locks, leaderboards).</td>
+  </tr>
+  <tr>
+    <td>Losing it is an incident: orders, accounts, money, anything you would have to apologize for.</td>
+    <td>Losing it is degraded performance (a cold cache) or bounded rework (re-enqueued jobs — with caveats below).</td>
+  </tr>
+</table>
+<p><b>Sound-bite:</b> “Redis is memory-speed shared state; the relational database is durable truth. If I can't cheaply rebuild the data, it doesn't belong only in Redis.” Redis persistence (RDB snapshots, AOF) exists, but it is a safety net — not a durability guarantee on par with a WAL-based RDBMS, and managed cache offerings often run with eviction enabled.</p>
+
+<h4 id="caching-in-rails">Caching in Rails</h4>
+<ul>
+  <li><b>Cache in layers, highest first:</b> HTTP caching (CDN, <code>stale?</code>, ETags) → fragment caching → <code>Rails.cache</code> object caching → per-request memoization. A CDN hit costs you nothing; a memoized value still cost a request.</li>
+  <li><b>Key-based expiration is the Rails idiom:</b> cache keys embed <code>updated_at</code> (<code>cache [post, current_user]</code>), so you never explicitly invalidate — a change produces a new key and old entries age out via LRU. <b>Russian-doll caching</b> nests fragments, with <code>touch: true</code> on associations cascading key changes upward so an updated comment busts its post's fragment.</li>
+  <li><b>Explicit invalidation is where the bugs live.</b> Prefer key-based expiration; treat every <code>Rails.cache.delete</code> in a code review as a question to answer.</li>
+  <li><b>Cache stampede:</b> a hot key expires and hundreds of requests recompute it simultaneously, sometimes hard enough to take the database down. Mitigations: <code>race_condition_ttl</code>, jittered TTLs, lock-and-recompute, serve-stale-while-revalidate.</li>
+  <li><b>Eviction policy is a configuration decision with teeth:</b> a cache Redis should run <code>allkeys-lru</code> (or LFU); a Sidekiq Redis must run <code>noeviction</code>, because an evicted key there is a lost job. <b>This is why cache and queues get separate Redis instances</b> — a classic interview checkpoint.</li>
+  <li><b>Worth mentioning:</b> Rails 7.1+ ships Solid Cache and Solid Queue, database-backed alternatives — the “do we even need Redis?” trend. A balanced take: fine for many apps and one less system to operate; Redis still wins on latency and rich data structures.</li>
+</ul>
+
+<h4 id="sidekiq-and-redis-as-a-queue">Sidekiq and Redis as a queue</h4>
+<ul>
+  <li><b>Mechanics:</b> jobs are JSON pushed onto Redis lists; workers block-pop them. The scheduled and retry sets are sorted sets scored by timestamp.</li>
+  <li><b>Delivery is at-least-once.</b> A worker can complete the work and die before acknowledging, so the job runs again. Therefore <b>jobs must be idempotent</b> — the single most important sentence in this section. Techniques: uniqueness checks on natural keys, upserts, state-machine guards, idempotency keys for external side effects like charges and emails.</li>
+  <li><b>Reliability tiers:</b> open-source Sidekiq can lose a job that was fetched but unfinished when a process is hard-killed; Sidekiq Pro's <code>super_fetch</code> recovers such orphans. Knowing this trade-off exists is the point.</li>
+  <li><b>The classic race:</b> enqueue a job inside a transaction; the job runs before the commit and raises <code>RecordNotFound</code>. Fix: enqueue in <code>after_commit</code>, or rely on Rails 7.2's <code>enqueue_after_transaction_commit</code>. The heavyweight relative is the transactional outbox pattern.</li>
+  <li><b>Queue design:</b> organize queues by latency SLO (<code>critical</code>, <code>default</code>, <code>low</code>), not by domain. Monitor queue <em>latency</em> (age of the oldest job), not queue size — a million-job queue draining fast is healthier than a ten-job queue stuck for an hour. Alert on the dead set.</li>
+  <li><b>Sizing gotcha:</b> every Sidekiq thread holds a database connection. Sidekiq concurrency must fit the ActiveRecord pool, and total workers &times; concurrency counts against <code>max_connections</code> — the connection arithmetic from section 1.1 again.</li>
+</ul>
+
+<h4 id="other-legitimate-redis-uses-and-the-traps">Other legitimate Redis uses — and the traps</h4>
+<ul>
+  <li><b>Good:</b> rate limiting (INCR with EXPIRE, or sliding windows), distributed locks (<code>SET NX PX</code> — mention Redlock's caveats if pressed), leaderboards and counters via sorted sets, ActionCable pub/sub, ephemeral sessions, presence tracking.</li>
+  <li><b>Traps to call out unprompted:</b> using a cache Redis as a source of truth; sharing one Redis between cache and queues (eviction eats jobs); unbounded keys with no TTL; <code>KEYS *</code> in production (use <code>SCAN</code>); assuming Redis Cluster gives you multi-key transactions across slots.</li>
+</ul>
+
+<div class="interview-q">
+  <p class="q">Q: “Checkout is slow. Would you cache it in Redis?”</p>
+  <p>A: “Not the money path — correctness beats speed there. First I would profile: is it N+1 queries, an unindexed lookup, a synchronous external call to a payment or tax API? Slow side effects — email, webhooks, analytics — move to Sidekiq. The read-mostly inputs, like the product catalog or tax tables, are safe to cache with key-based expiration. The mutable order and payment state never is. Then verify with p95 before and after.”</p>
+</div>
+
+<div class="interview-q">
+  <p class="q">Q: “How do you keep the job queue healthy during a traffic spike?”</p>
+  <p>A: “Alert on queue latency per SLO tier, not size. Autoscale workers within the database connection budget. Shed or delay low-priority queues so critical work drains first. Keep jobs small and idempotent so we can drain aggressively and retry safely. And watch Redis memory — under <code>noeviction</code>, a full Redis means enqueues start failing, so the alert has to fire well before that.”</p>
+</div>
+
+<div class="callout"><b>Closing themes to project throughout:</b> (1) measure before optimizing; (2) the simplest thing that scales — indexes → cache → vertical → replicas → shard, in that order; (3) durability boundaries decide the store, not fashion; (4) name the failure modes unprompted — replica lag, cache stampede, at-least-once delivery, connection exhaustion. Leads get hired for knowing where things break.</div>
+
+<!-- ==================================================================== -->
+<h2 id="topic2" class="topic-break">Topic 2 — Advanced Ruby &amp; Deep Rails Internals</h2>
+
+<h3 id="ar-perf">2.1 ActiveRecord Performance</h3>
+
+<h4 id="the-n-1-problem-precisely-stated">The N+1 problem, precisely stated</h4>
+<p>An N+1 occurs when you load a collection of N records with one query, then trigger one additional query per record while iterating — usually by touching an association that was never loaded. The insidious part is that each individual query is fast, so nothing shows up in slow-query logs; the damage is aggregate latency and connection-pool pressure.</p>
+
+<pre><code># 1 query for posts, then N queries — one per post — for authors
+Post.limit(50).each { |post| puts post.author.name }
+# SELECT * FROM posts LIMIT 50
+# SELECT * FROM users WHERE id = 1
+# SELECT * FROM users WHERE id = 2
+# ... 48 more</code></pre>
+
+<h4 id="includes-vs-preload-vs-eager-load-the-canonical-answer">includes vs. preload vs. eager_load — the canonical answer</h4>
+<p>All three eliminate N+1s by eager-loading associations, but they generate fundamentally different SQL:</p>
+
+<table>
+  <tr><th>Method</th><th>SQL strategy</th><th>Can you reference the association in <code>where</code>/<code>order</code>?</th><th>When to use</th></tr>
+  <tr>
+    <td><code>preload</code></td>
+    <td><strong>Always two (or more) separate queries.</strong> One for the parent, one <code>WHERE id IN (...)</code> per association.</td>
+    <td>No — raises <code>StatementInvalid</code> if you try, because the joined table isn't in the query.</td>
+    <td>Default choice. Cheapest for <code>has_many</code>, avoids row multiplication and wide result sets.</td>
+  </tr>
+  <tr>
+    <td><code>eager_load</code></td>
+    <td><strong>Always a single query with <code>LEFT OUTER JOIN</code></strong> and aliased columns for every table.</td>
+    <td>Yes — the association's table is present in the query.</td>
+    <td>When you must filter or sort the parent by the association's columns and still want it loaded.</td>
+  </tr>
+  <tr>
+    <td><code>includes</code></td>
+    <td><strong>Delegates.</strong> Uses the <code>preload</code> strategy by default, but silently switches to <code>eager_load</code> (LEFT JOIN) if it detects a reference to the association — via <code>references(:assoc)</code> or a string/hash condition mentioning it.</td>
+    <td>Yes, if combined with <code>references</code>.</td>
+    <td>Fine as a general-purpose tool, but its adaptive behavior means the SQL can change under your feet when someone adds a <code>where</code> clause later.</td>
+  </tr>
+</table>
+
+<pre><code># preload: two queries, cannot filter on authors
+Post.preload(:author).where(published: true)
+
+# eager_load: one LEFT OUTER JOIN, can filter on authors
+Post.eager_load(:author).where(users: { admin: true })
+
+# includes: preload by default...
+Post.includes(:author)                                # 2 queries
+# ...but flips to eager_load when referenced:
+Post.includes(:author).where(users: { admin: true }).references(:author)  # 1 JOIN query</code></pre>
+
+<div class="callout">
+<strong>The tech-lead-level nuance:</strong> <code>eager_load</code> on a <code>has_many</code> multiplies rows (a post with 20 comments returns 20 rows that ActiveRecord must de-duplicate in Ruby), and it selects every column of every joined table, inflating the result set and object allocation. That's why <code>preload</code> is usually faster for one-to-many associations even though it issues more queries. Also mention <code>joins</code>: it produces an <code>INNER JOIN</code> for <em>filtering only</em> — it does <strong>not</strong> load the association, so <code>Post.joins(:author).each { |p| p.author }</code> is still an N+1. A common bug is "fixing" an N+1 with <code>joins</code> and wondering why Bullet still complains.</div>
+
+<h4 id="detecting-and-preventing-n-1s-systematically">Detecting and preventing N+1s systematically</h4>
+<ul>
+  <li><strong>Bullet gem</strong> in development/test — flags both N+1s and <em>unused</em> eager loading (over-fetching is also a smell). Can be configured to raise in CI so regressions fail the build.</li>
+  <li><strong>Prosopite</strong> — a newer alternative that detects N+1s by fingerprinting query patterns rather than instrumenting associations; fewer false negatives, and it can be scoped to request middleware and test suites.</li>
+  <li><strong>Strict loading (Rails 6.1+)</strong> — the framework-native guardrail. <code>has_many :comments, strict_loading: true</code>, per-record <code>post.strict_loading!</code>, per-query <code>Post.strict_loading</code>, or globally via <code>config.active_record.strict_loading_by_default = true</code>. Lazy-loading then raises <code>ActiveRecord::StrictLoadingViolationError</code> (or logs, with <code>strict_loading_mode = :log</code>) instead of silently querying. As a lead I'd advocate enabling it by default in new apps and per-association in legacy ones.</li>
+  <li><strong>APM (Datadog, Scout, Skylight, rack-mini-profiler)</strong> in production — N+1s that only manifest with production data shapes show up as repeated similar queries within one trace.</li>
+</ul>
+
+<h4 id="pluck-vs-select-and-their-relatives">pluck vs. select — and their relatives</h4>
+<pre><code># select: returns AR model instances with only those attributes populated.
+# Stays a Relation — chainable, lazy, usable as a subquery.
+User.select(:id, :email).where(active: true)
+
+# pluck: fires SQL immediately, returns raw values (Array), no AR objects built.
+User.where(active: true).pluck(:email)   # =&gt; ["a@x.com", "b@x.com"]</code></pre>
+<table>
+  <tr><th></th><th><code>select</code></th><th><code>pluck</code></th></tr>
+  <tr><td>Return value</td><td><code>ActiveRecord::Relation</code> of models</td><td><code>Array</code> of raw values</td></tr>
+  <tr><td>Instantiates AR objects?</td><td>Yes (partial — beware <code>MissingAttributeError</code> on unselected columns)</td><td>No — dramatically less allocation/GC pressure</td></tr>
+  <tr><td>Lazy / chainable?</td><td>Yes</td><td>No — executes immediately, terminal</td></tr>
+  <tr><td>Typical use</td><td>Trimming wide tables when you still need model behavior, subqueries: <code>Order.where(user_id: User.select(:id).where(...))</code></td><td>Feeding IDs/values to another query, CSV exports, dropdowns</td></tr>
+</table>
+<p>Related tools worth naming unprompted: <code>pick(:email)</code> (pluck limited to one row), <code>ids</code> (shorthand for <code>pluck(:id)</code>), <code>exists?</code> (<code>SELECT 1 ... LIMIT 1</code> — never use <code>.count &gt; 0</code> or <code>.present?</code> which loads records), <code>find_each</code>/<code>in_batches</code> for iterating large tables without loading everything into memory, <code>update_all</code>/<code>insert_all</code>/<code>upsert_all</code> for bulk writes that skip callbacks and validations (say explicitly that skipping callbacks is both the feature and the danger), and <code>counter_cache</code> / <code>size</code> vs <code>count</code> vs <code>length</code> (<code>size</code> uses the counter cache or loaded collection; <code>count</code> always queries; <code>length</code> always loads).</p>
+
+<div class="interview-q">
+<strong>Likely follow-up:</strong> "A page is slow. Walk me through diagnosing it." — Answer in layers: reproduce with production-like data; read the request trace in <a href="/tech-lead-prep--expand-6.html">APM</a> or <code>rack-mini-profiler</code>; check query count first (N+1s), then individual query cost (<code>EXPLAIN ANALYZE</code>, missing indexes, sequential scans), then allocation volume (are we instantiating 50k AR objects to render 20 rows?); only then reach for caching. Caching an N+1 is hiding a defect.</div>
+
+<h3 id="concurrency">2.2 Concurrency &amp; Memory</h3>
+
+<h4 id="the-gvl-global-vm-lock-the-modern-name-for-the-gil">The GVL (Global VM Lock — the modern name for the GIL)</h4>
+<p>CRuby allows only one thread to execute Ruby bytecode at a time per process. Threads therefore give you <strong>concurrency but not parallelism</strong> for CPU-bound Ruby code. The crucial exception: the GVL is <strong>released during blocking I/O</strong> — database calls, HTTP requests, file reads — and inside many C extensions. Since a typical Rails request spends most of its wall time waiting on the database and external services, threads still deliver real throughput gains for web workloads.</p>
+
+<table>
+  <tr><th><a href="/tech-lead-prep--expand-7.html">Primitive</a></th><th>Scheduling</th><th>Parallel Ruby execution?</th><th>Memory model</th><th>Sweet spot</th></tr>
+  <tr><td><strong>Thread</strong></td><td>Preemptive (OS thread, GVL-arbitrated, ~100ms quantum)</td><td>No (GVL) — parallel only during I/O / C-ext</td><td>Shared everything; needs Mutex etc.</td><td>I/O-bound concurrency: web servers, background jobs</td></tr>
+  <tr><td><strong>Fiber</strong></td><td>Cooperative — yields only where told, or at blocking ops via the Fiber Scheduler (Ruby 3.0+, e.g. the <code>async</code> gem)</td><td>No</td><td>Shared everything, but no preemption → far fewer race conditions</td><td>Massive I/O concurrency (thousands of sockets) with tiny per-unit cost; Falcon server</td></tr>
+  <tr><td><strong>Ractor</strong> (the shipped name for "Guilds")</td><td>Each Ractor has its own GVL</td><td><strong>Yes</strong> — true parallelism in one process</td><td>No shared mutable state; objects must be frozen/shareable or moved/copied via message passing</td><td>CPU-bound work. Still <a href="/tech-lead-prep--expand-8.html">practically off-limits for Rails</a>: much of the ecosystem (and Rails itself) isn't Ractor-safe</td></tr>
+  <tr><td><strong>Process</strong> (fork)</td><td>OS</td><td>Yes</td><td>Isolated; copy-on-write shared pages after fork</td><td>The battle-tested parallelism story: Puma workers, Sidekiq swarm mode, parallel tests</td></tr>
+</table>
+
+<h4 id="how-this-shapes-puma-configuration">How this shapes Puma configuration</h4>
+<p>Puma is a hybrid: <strong>worker processes</strong> (forked, true parallelism, COW memory sharing) each running a <strong>thread pool</strong> (concurrency during I/O wait). The classic reasoning an interviewer wants to hear:</p>
+<ul>
+  <li>More threads per worker → better utilization while requests wait on I/O, but: higher peak latency for CPU-bound requests (they queue behind the GVL), more DB connections needed (<strong>pool size must be ≥ threads per process</strong> or you get <code>ConnectionTimeoutError</code>), and more memory-arena fragmentation.</li>
+  <li>Rails 7.2 changed the default from 5 threads to <strong>3 threads per worker</strong>, following measurements (largely from Shopify/basecamp discussions, GitHub issue #50450) that high thread counts hurt p95 latency more than they helped throughput for typical apps.</li>
+  <li><a href="/tech-lead-prep--expand-9.html">Workers ≈ number of cores (adjusted for memory budget).</a> Use <code>preload_app!</code> so the app is loaded before forking, maximizing copy-on-write sharing; pair with <code>before_fork</code>/<code>on_worker_boot</code> to disconnect/reconnect the database, since file descriptors and sockets must not be shared across fork.</li>
+</ul>
+
+<h4 id="ruby-s-garbage-collector-what-to-actually-say">Ruby's Garbage Collector — what to actually say</h4>
+<ul>
+  <li><strong>Mark-and-sweep, generational (RGenGC, Ruby 2.1+):</strong> objects that survive some minor GCs are promoted to the old generation; minor GCs scan only the young generation plus a "remembered set" of old objects that reference young ones (tracked via write barriers). Major GCs scan everything and are the expensive ones.</li>
+  <li><strong>Incremental marking (2.2+):</strong> major-GC mark phases are sliced into short steps interleaved with execution to cut pause times.</li>
+  <li><strong>Compaction (<code>GC.compact</code>, 2.7+; auto-compaction option 3.0+):</strong> defragments the heap by moving objects, improving copy-on-write friendliness across Puma forks.</li>
+  <li><strong>Structure:</strong> the heap is made of fixed-size slots (RVALUE, historically 40 bytes) in heap pages; Variable Width Allocation (3.2+) lets objects occupy multiple slot sizes, reducing off-heap malloc for things like short strings.</li>
+  <li><strong><a href="/tech-lead-prep--expand-10.html">Observability</a>:</strong> <code>GC.stat</code> (watch <code>major_gc_count</code>, <code>heap_live_slots</code>, <code>old_objects</code>), <code>GC::Profiler</code>, <code>ObjectSpace.memsize_of_all</code>, and gems like <code>memory_profiler</code>, <code>derailed_benchmarks</code> (<code>bundle exec derailed bundle:mem</code> to find gem bloat at boot), and <code>stackprof</code>/<code>vernier</code> for CPU.</li>
+</ul>
+
+<h4 id="memory-bloat-the-classic-production-narrative">Memory bloat: the classic production narrative</h4>
+<p>Rails processes commonly grow from ~300&nbsp;MB to 1&nbsp;GB+ over hours and plateau — usually <strong>not a leak</strong> but <strong>heap fragmentation</strong>. glibc malloc creates per-thread memory arenas; multi-threaded Puma workers scatter allocations across <a href="/tech-lead-prep--expand-11.html">arenas</a>, and freed memory can't be returned to the OS because pages are partially occupied. The standard remediations, in the order I'd try them:</p>
+<ol>
+  <li><code>MALLOC_ARENA_MAX=2</code> — caps glibc arenas; cheap, often a 10–30% resident-memory win.</li>
+  <li><strong>jemalloc</strong> (<code>LD_PRELOAD</code> or compiling Ruby with <code>--with-jemalloc</code>) — dramatically better fragmentation behavior for multithreaded Ruby; commonly halves memory. This is the well-known "one weird trick."</li>
+  <li>Distinguish <em>bloat</em> (one request allocating a huge working set — e.g., loading 200k AR objects for a report; fix the query, stream, or batch) from a true <em>leak</em> (monotonic growth without plateau — bisect with <code>memory_profiler</code>, look at C extensions, thread-locals, and ever-growing memoized caches).</li>
+  <li><a href="/tech-lead-prep--expand-12.html">Mitigations while root-causing: worker recycling (<code>puma_worker_killer</code>), horizontal capacity headroom. Be explicit that this is a tourniquet, not a fix, and schedule the real investigation</a>.</li>
+</ol>
+<p>Bonus points: mention <strong>YJIT</strong> (production-ready since 3.2, big wins in 3.3/3.4) — pay a modest memory cost per process (<code>--yjit-exec-mem-size</code>) for 15–30% latency improvements on typical Rails workloads.</p>
+
+<h3 id="metaprogramming">2.3 Metaprogramming</h3>
+
+<h4 id="the-mechanics-know-them-cold-state-them-briefly">The mechanics (know them cold, state them briefly)</h4>
+<pre><code>class Settings
+  def initialize(data) = @data = data
+
+  # Lazy interception. MUST pair with respond_to_missing?
+  def method_missing(name, *args, &amp;block)
+    key = name.to_s
+    @data.key?(key) ? @data[key] : super   # always call super for unknowns
+  end
+
+  def respond_to_missing?(name, include_private = false)
+    @data.key?(name.to_s) || super
+  end
+end
+
+class Event
+  STATES = %w[draft published archived].freeze
+
+  # Eager definition: real methods, visible to respond_to?, tools, and profilers
+  STATES.each do |state|
+    define_method("#{state}?") { status == state }
+  end
+end</code></pre>
+<ul>
+  <li><code>method_missing</code> — invoked as the last stop of method lookup. Failing to call <code>super</code> swallows NoMethodErrors; failing to define <code>respond_to_missing?</code> breaks <code>respond_to?</code>, <code>method(:x)</code>, and anything that introspects.</li>
+  <li><code>define_method</code> — defines a genuine method whose body is a closure; slightly slower to call than a <code>def</code>, but eager, greppable-ish, and doesn't hijack dispatch.</li>
+  <li><code>class_eval</code> / <code>instance_eval</code> — reopen a class vs. change <code>self</code> for one object; the backbone of DSLs.</li>
+  <li><code>instance_variable_get/set</code>, <code>send</code>/<code>public_send</code> — prefer <code>public_send</code> when the method name is dynamic to preserve visibility rules.</li>
+</ul>
+
+<h4 id="when-to-use-it-and-the-maintenance-cost-argument">When to use it — and the maintenance-cost argument</h4>
+<p>The tech-lead framing: metaprogramming trades <strong>write-time convenience for read-time cost</strong>, and a team reads code far more often than it writes it. My decision rules:</p>
+<ul>
+  <li><strong>Legitimate uses:</strong> framework/library-level DSLs where the pattern repeats hundreds of times and is documented (this is exactly what Rails does — <code>has_many</code> generates ~a dozen methods via modules and <code>class_eval</code>; ActiveModel attributes; <code>delegate</code>), reducing genuinely mechanical duplication (state predicate methods above), test support, adapters over dynamic external schemas.</li>
+  <li><strong>Prefer <code>define_method</code> over <code>method_missing</code></strong> whenever the method set is enumerable up front: real methods appear in <code>respond_to?</code>, <code>methods</code>, stack traces, and profilers. <code>method_missing</code> is for genuinely open-ended interfaces (e.g., <code>OpenStruct</code>-likes, dynamic finders of old).</li>
+  <li><strong>The nightmare scenarios to volunteer:</strong> (1) <em>grep-ability</em> — <code>define_method("#{prefix}_#{suffix}")</code> means a developer searching for <code>archived_at_changed?</code> finds nothing; (2) debugging — stack traces point into eval'd strings or generic dispatchers; (3) <code>method_missing</code> on a hot path is slow (full lookup miss every call) and hides typos as silent nil-ish behavior; (4) monkey-patching core classes or gems creates upgrade landmines — if unavoidable, isolate patches in clearly named files (<code>lib/core_ext/</code>), comment the gem version they target, and prefer <code>Module#prepend</code> over alias-method chains so <code>super</code> still works.</li>
+  <li><strong>Team policy:</strong> metaprogramming in application code needs a justification in review; in a shared internal gem with docs and tests, the bar is lower. If a new hire can't trace where a method comes from within a minute (<code>method(:foo).source_location</code> should work!), it's too clever.</li>
+</ul>
+
+<div class="interview-q">
+<strong>Likely follow-up:</strong> "How does Rails itself use metaprogramming?" — Associations generate methods into an anonymous module included in the model (so you can override and call <code>super</code>); <code>ActiveSupport::Concern</code> manages dependency ordering of included modules; attribute methods are lazily defined on first use via <code>define_attribute_methods</code>; routing helpers are generated methods; <code>delegate</code> compiles a real method with <code>module_eval</code> for speed. Knowing that Rails <em>generates real methods in modules</em> rather than relying on <code>method_missing</code> (it only uses that as a first-call fallback) is exactly the under-the-hood detail this question fishes for.</div>
+
+<!-- ==================================================================== -->
+<h2 id="topic3" class="topic-break">Topic 3 — The "Code Review" &amp; Technical Alignment</h2>
+
+<h3 id="patterns">3.1 Design Patterns &amp; Code Smells</h3>
+
+<h4 id="how-to-run-the-live-code-review-exercise">How to run the live code-review exercise</h4>
+<p>They're evaluating <em>how you elevate engineers</em>, not just whether you spot flaws. Structure your critique:</p>
+<ol>
+  <li><strong>Orient first:</strong> "Let me read this end-to-end before commenting." Say what the code is trying to do — proves comprehension before criticism.</li>
+  <li><strong>Triage by severity:</strong> correctness/security bugs → performance issues → design concerns → style. Explicitly say "the style points I'd leave to RuboCop, not humans."</li>
+  <li><strong>Ask questions instead of decreeing:</strong> "What happens if the payment succeeds but this second save fails?" beats "this is wrong."</li>
+  <li><strong>Praise something genuine.</strong> Leads who only find faults create review-averse cultures.</li>
+</ol>
+
+<h4 id="the-messy-controller-smells-to-name-on-sight">The messy controller — smells to name on sight</h4>
+<pre><code>class OrdersController &lt; ApplicationController
+  def create
+    @order = Order.new(params[:order].permit!)                 # 1. permit! = mass assignment hole
+    @order.total = @order.items.sum { |i| i.price * i.qty }    # 2. domain logic in controller
+    if @order.save
+      Payment.charge!(current_user.card_token, @order.total)   # 3. external call after save,
+      OrderMailer.confirmation(@order).deliver_now             #    no transaction, deliver_now blocks
+      current_user.update(order_count: current_user.order_count + 1) # 4. race condition
+      redirect_to @order
+    else
+      render :new
+    end
+  rescue Payment::Error
+    render :new                                                # 5. order saved but payment failed —
+  end                                                          #    inconsistent state, swallowed error
+end</code></pre>
+<p>Named smells: fat controller, feature envy (controller computing order math), missing transactional boundary, non-atomic increment (<code>update_counters</code> / <code>increment_counter</code> exists), synchronous side effects in the request cycle (mail should be <code>deliver_later</code>; payment ideally goes through an idempotent job or an outbox), <code>permit!</code>, exception swallowed without user feedback or observability.</p>
+
+<h4 id="where-the-logic-goes-the-extraction-toolbox">Where the logic goes — the extraction toolbox</h4>
+<table>
+  <tr><th>Pattern</th><th>Use for</th><th>Watchouts</th></tr>
+  <tr><td><strong>Service Object</strong> (e.g., <code>Orders::Place</code>)</td><td>A multi-step business process with a clear verb: validate → transact → enqueue side effects. One public method (<code>call</code>), returns a result object (success/failure + errors), owns the transaction boundary.</td><td>The junk-drawer failure mode: 400-line "services" that are just relocated fat controllers, or a <code>services/</code> dir with 300 unrelated classes. Namespace by domain; keep them composed of smaller objects.</td></tr>
+  <tr><td><strong>Form Object</strong></td><td>Forms spanning multiple models, or validations that are contextual to one flow (signup wizard step 2) and don't belong on the model forever. Built on <code>ActiveModel::Model</code>/<code>Attributes</code>.</td><td>Duplicated validations drifting from model ones — decide which layer owns each rule.</td></tr>
+  <tr><td><strong>Query Object</strong> (e.g., <code>AbandonedCartsQuery</code>)</td><td>Complex, reusable, or business-meaningful queries; keeps scopes from metastasizing and makes them independently testable.</td><td>Return relations (chainable), not arrays, unless terminal.</td></tr>
+  <tr><td><strong>Presenter / Decorator</strong></td><td>View-specific formatting (display names, badge colors, date formats) — keeps both models and helpers clean. SimpleDelegator or Draper.</td><td>Don't let presenters grow query logic; they format, they don't fetch.</td></tr>
+  <tr><td><strong>Concern</strong></td><td>Genuinely shared, cohesive behavior with its own tests (<code>Archivable</code>, <code>Searchable</code>).</td><td>The most abused tool in Rails: concerns used to slice a god model into files ("junk drawers by another name") hide coupling instead of removing it. If a concern is only included once, it's not a concern.</td></tr>
+  <tr><td><strong>POROs / domain objects</strong></td><td>Everything else. Money, date ranges, state machines, calculators. The most underused pattern in Rails apps.</td><td>—</td></tr>
+</table>
+<div class="callout">
+<strong>Positioning statement worth rehearsing:</strong> "I don't mandate a pattern zoo. The default is vanilla Rails — thin controllers, meaningful models. I reach for a service object when a workflow has more than one step and a transactional boundary; a form object when a form doesn't map 1:1 to a model; a query object when a scope needs its own tests. The pattern earns its file by being more testable and more discoverable than the inline version, and the team's conventions doc says when to use which, so reviews argue about the domain, not about taste."</div>
+
+<h3 id="testing">3.2 Testing Philosophy</h3>
+
+<h4 id="opinionated-but-pragmatic-a-defensible-position">Opinionated but pragmatic — a defensible position</h4>
+<ul>
+  <li><strong>Shape:</strong> roughly a pyramid — lots of fast unit/model tests, a solid layer of request/integration specs (in Rails these are the workhorse: they cover routing, controller, model, and serialization cheaply), and a <em>thin</em> set of system/browser tests for critical money paths only (signup, checkout). System tests are slow and flaky-prone; every one must pay rent.</li>
+  <li><strong>TDD:</strong> I use it where it shines — pure logic, bug fixes (write the failing test first; it proves you understood the bug and pins the regression), and API design (the test is the first client). I don't demand test-first for exploratory UI work; I demand tests <em>with</em> the PR. Dogma loses teams; the discipline of "no behavior change without a test" is the actual invariant.</li>
+  <li><strong>RSpec vs. Minitest:</strong> both fine; consistency beats preference. RSpec has richer matchers, better failure output, and dominates hiring familiarity; Minitest is faster to boot, plain Ruby, less DSL magic. I'd never migrate an existing suite between them — negative ROI.</li>
+</ul>
+
+<h4 id="mocks-and-stubs-the-trade-off-answer">Mocks and stubs — the trade-off answer</h4>
+<ul>
+  <li><strong>Detroit/classicist school:</strong> use real objects, assert on state. Tests survive refactoring; slower, and failures can be non-local.</li>
+  <li><strong>London/mockist school:</strong> isolate the unit, assert on interactions. Fast, pinpoint failures; but tests couple to implementation — refactor a collaborator's API and 40 tests break while behavior is unchanged. Worst case: heavily mocked suites that pass while production is broken, because mocks encode your <em>assumptions</em> about collaborators rather than their behavior.</li>
+  <li><strong>My working rules:</strong> mock at <strong>system boundaries you don't own</strong> (HTTP APIs — via WebMock/VCR or better, a hand-written fake client with its own contract tests; payment gateways; the clock via <code>travel_to</code>). Don't mock what you own and can cheaply instantiate; <em>never</em> mock the object under test; avoid stubbing ActiveRecord internals (<code>allow(User).to receive(:find)</code> is a suite that tests nothing). <code>verify_partial_doubles = true</code> so stubs of nonexistent methods fail loudly.</li>
+  <li><strong>Factories:</strong> FactoryBot over fixtures for clarity, but the lead-level concern is factory bloat — a default factory dragging five associations means "unit" tests hit the DB 30 times per example. Keep default factories minimal; use traits for elaboration; consider <code>build_stubbed</code> where persistence isn't needed.</li>
+</ul>
+
+<h4 id="fast-ci-cd-as-a-leadership-responsibility">Fast CI/CD as a leadership responsibility</h4>
+<p>CI time is a team-productivity multiplier and it's the lead's job to defend it. Concrete levers, roughly in ROI order:</p>
+<ol>
+  <li><strong>Parallelize:</strong> split the suite across containers (Knapsack Pro, or CI-native splitting balanced by historical timings), and use Rails' native <code>parallelize(workers: :number_of_processors)</code> within a node.</li>
+  <li><strong>Profile the suite</strong> like production code: <code>--profile</code> for slowest examples; the top 10 are usually system tests or factory cascades.</li>
+  <li><strong>Kill flakes with process:</strong> quarantine tag + tracked issue + weekly triage; a retry-until-green culture destroys trust in CI and eventually ships real regressions. Most Rails flakes are time (<code>travel_to</code>), order dependence (run with random seed <em>always</em>, keep the seed in the failure output), leaked state, or Capybara wait misuse (<code>sleep</code> in tests is a code smell — use matchers' built-in waiting).</li>
+  <li><strong>Structural:</strong> cache gems/assets, fail fast on lint before the heavy suite starts, and keep the pipeline under ~10 minutes to merge — beyond that, developers batch changes and quality drops.</li>
+</ol>
+
+<h3 id="upgrades">3.3 Upgrade &amp; Maintenance Strategies</h3>
+
+<h4 id="the-playbook-for-upgrading-a-legacy-rails-app-e-g-6-1-7-x-8">The playbook for upgrading a legacy Rails app (e.g., 6.1 → 7.x → 8)</h4>
+<ol>
+  <li><strong>Preconditions:</strong> green, trustworthy test suite (invest here first if coverage is thin — request specs over critical flows give the most upgrade confidence per hour), deprecation warnings at zero on the current version (treat deprecations as failing CI; they are the next version's errors), Ruby version compatible with the target Rails.</li>
+  <li><strong>One minor version at a time.</strong> Never leapfrog. 6.1 → 7.0 → 7.1 → 7.2 → 8.0. Each hop: read the upgrade guide + CHANGELOG, run <code>rails app:update</code> and diff every config choice consciously.</li>
+  <li><strong>Dual boot</strong> with the <code>next_rails</code> gem (Shopify's approach): a <code>Gemfile.next</code> lets CI run the suite against current <em>and</em> next Rails on every PR. The team fixes incompatibilities incrementally on main — no long-lived, ever-rotting upgrade branch, no big-bang merge. This is the single most important technique to name.</li>
+  <li><strong><code>new_framework_defaults_X_Y.rb</code>:</strong> upgrade with old defaults first, ship, then flip defaults one at a time — each flag is its own small, revertable change (e.g., <code>cache_format_version</code>, cookie serializer changes need rolling-deploy-safe handling).</li>
+  <li><strong>Known landmines per era:</strong> 6.x→7.0: Zeitwerk becomes mandatory (fix autoloading violations with <code>zeitwerk:check</code> beforehand), Spring/listen changes, <code>button_to</code>/UJS → Turbo migration decisions; 7.x: Sprockets → importmap/esbuild/Propshaft asset story, <code>ActiveRecord::Base.connection</code> deprecations; 8.0: Sprockets fully out (Propshaft default), the Solid trifecta (Queue/Cache/Cable) as optional infra simplifications, built-in authentication generator.</li>
+  <li><strong>Rollout:</strong> canary deploy the upgraded version to a slice of traffic, watch error rates and latency, keep the revert path one deploy away.</li>
+</ol>
+
+<h4 id="dependency-and-cve-management-as-an-ongoing-system">Dependency and CVE management as an ongoing system</h4>
+<ul>
+  <li><strong>Automate detection:</strong> <code>bundler-audit</code> in CI (fails builds on known CVEs), Dependabot/Renovate for continuous small bumps — 40 one-line bump PRs over a year beat one terrifying "update everything" PR. GitHub security advisories + the <code>ruby-advisory-db</code>.</li>
+  <li><strong>Patch-severity triage:</strong> a critical Rails/Rack CVE is a drop-everything same-day patch (Rails maintains security releases for the supported series — being on an EOL Rails means <em>no patches exist</em>, which is the strongest business argument for staying current). Frame it that way to non-technical stakeholders: staying upgraded is security posture, not developer vanity.</li>
+  <li><strong>Deprecated/abandoned gems:</strong> quarterly dependency review; for each risky gem, decide — replace, vendor + own it, or PR upstream. Check pulse before adopting anything new (maintainers, release cadence, issue responsiveness). Wrap third-party APIs behind your own adapter class so a gem swap touches one file.</li>
+  <li><strong>Ratchet, don't boil the ocean:</strong> RuboCop's <code>--auto-gen-config</code> TODO file to freeze current violations and forbid new ones; same idea for deprecation counts and coverage — metrics may only improve.</li>
+</ul>
+
+<!-- ==================================================================== -->
+<h2 id="topic4" class="topic-break">Topic 4 — Engineering Leadership &amp; Team Delivery</h2>
+
+<p>Prepare every answer here as a <strong>STAR story</strong> (Situation → Task → Action → Result) with a real example, real numbers where possible, and a closing "what I learned / what I'd do differently." Below: the position to take, plus story scaffolds to fill with your own history before the interview.</p>
+
+<h3 id="debt">4.1 Handling Technical Debt</h3>
+
+<h4 id="the-position">The position</h4>
+<ul>
+  <li><strong>Translate debt into product language.</strong> PMs don't fund "refactoring"; they fund outcomes. "The checkout module's defect rate means every feature there takes 3× estimate and causes ~2 incidents/quarter; six weeks of restructuring makes the Q3 roadmap in that area 40% cheaper" is a negotiable proposition. "The code is ugly" is not.</li>
+  <li><strong>Make debt visible and priced:</strong> a lightweight debt registry (tagged tickets, one-line cost/impact each), reviewed at planning — debt items compete for capacity with features <em>using the same currency</em> (risk, velocity, incidents).</li>
+  <li><strong>Prefer continuous payment over big rewrites:</strong> a standing capacity allocation (~15–20% of each cycle) plus the Boy-Scout rule for opportunistic cleanup, and <strong>attach refactors to feature work in the same area</strong> ("while we're building discounts in checkout, we pay down these two items — it de-risks the feature"). Big-bang rewrites are almost always the wrong answer; say so, and name strangler-fig incremental replacement as the alternative.</li>
+  <li><strong>Not all debt is worth paying.</strong> Debt in code you're about to delete or that changes once a year can sit. Prioritize by <em>interest rate</em>: how often the team touches it × how much it hurts each time.</li>
+  <li><strong>Some debt is a good trade</strong> — taken knowingly, to hit a market window, with the payback scheduled. The failure mode is unknowing or unrecorded debt.</li>
+</ul>
+<div class="interview-q">
+<strong>Story to prepare:</strong> a time you negotiated refactoring time with a PM — include the metric that made the case (cycle time, incident count, estimate misses), how you scoped it into shippable slices, and the measured result.</div>
+
+<h3 id="mentorship">4.2 Mentorship &amp; Growth</h3>
+
+<h4 id="the-position-2">The position</h4>
+<ul>
+  <li><strong>Grow people by delegating real ownership</strong>, sized one notch beyond comfort, with safety nets (design review before code, checkpoints, you as escalation) — not by handing them the easy tickets. Measure yourself as a lead by what the team ships when you're on vacation.</li>
+  <li><strong>Code review as the primary teaching channel:</strong> explain the <em>why</em> behind every suggestion, distinguish blocking from optional comments (nit: prefixes), review with questions not verdicts, and move recurring debates into automation (RuboCop) or the team conventions doc so humans stop re-litigating style. On RuboCop adoption in a legacy app: adopt a community baseline (standard or rubocop-rails-omakase), <code>--auto-gen-config</code> the existing violations into the TODO file so day one is green, autocorrect the safe cops in one mechanical PR, ratchet the rest. The goal is ending style debates, not maximal strictness — a rule the team resents gets disabled or ignored.</li>
+  <li><strong>Deliberate skill-building:</strong> pairing rotations (especially on incidents and gnarly bugs — debugging is the least-taught skill), lightweight design docs for anything over a few days (writing forces clarity, review spreads context), internal tech talks, and giving mid-level engineers the lead on scoped projects with you as consultant.</li>
+  <li><strong>Blameless post-mortems that actually work:</strong> timeline, contributing factors (plural — never a single "root cause: human error"; if a human could break it, the system lacked a guardrail), action items with owners and dates, and — the part most teams skip — <em>reviewing whether past action items were done</em>. A post-mortem whose actions evaporate teaches the team the ritual is theater.</li>
+</ul>
+<div class="interview-q">
+<strong>Stories to prepare:</strong> (1) a specific junior/mid engineer you grew — what gap you saw, what you delegated, the checkpoint structure, where they are now; (2) a post-mortem you ran that changed something durable (a guardrail, a process), not just "we'll be more careful."</div>
+
+<h3 id="conflict">4.3 Conflict Resolution</h3>
+
+<h4 id="the-scenario-two-senior-engineers-fiercely-disagree-on-architecture">The scenario: two senior engineers fiercely disagree on architecture</h4>
+<p>The answer that lands is a <em>process</em>, not a personality claim:</p>
+<ol>
+  <li><strong>Separate the people from the decision, early.</strong> If it's turned heated in public channels, talk to each privately first — often the technical dispute is carrying something else (ownership anxiety, past decisions being relitigated, one person feeling unheard).</li>
+  <li><strong>Force shared criteria before comparing solutions.</strong> Get both to agree on what the decision is optimizing for — latency? operational simplicity? time-to-market? team skill fit? Most "fierce" disagreements are two people optimizing different unstated objectives; making the objectives explicit resolves half of them outright.</li>
+  <li><strong>Make it concrete and cheap:</strong> each writes a one-page proposal against those criteria (writing dissolves rhetorical advantage), and if genuinely close, timebox a spike — a week of prototype data beats a month of meetings.</li>
+  <li><strong>Decide, record, commit.</strong> Consensus is the goal but not a requirement; stalemates are the lead's job to break. Record it as an <strong>ADR (Architecture Decision Record)</strong> — context, options, decision, consequences — so it isn't re-argued in six months and the "losing" author's option is documented as seriously considered. Then explicitly invoke <em>disagree and commit</em>, and give the engineer whose proposal lost a meaningful role in the chosen path (they're the best-placed critic to make it robust).</li>
+  <li><strong>Watch the aftermath.</strong> Quiet disengagement from the "loser" is the real cost of badly resolved conflict; a 1:1 two weeks later ("you pushed hard for X — how's Y feeling in practice?") signals the dissent was valued. And if reality proves the decision wrong, reverse it publicly and cheerfully — that's what makes people willing to commit to decisions they disagreed with next time.</li>
+</ol>
+<div class="callout">
+<strong>General conflict framing to reuse:</strong> healthy teams argue about ideas; my job is keeping arguments (a) evidence-based, (b) bounded in time, and (c) ending in a recorded decision someone owns. The anti-patterns I actively prevent: decisions by attrition (loudest/most persistent wins), decisions by silence (nobody decides, architecture accretes), and permanent relitigation.</div>
+
+<h4 id="rapid-fire-behavioral-prompts-to-have-stories-for">Rapid-fire behavioral prompts to have stories for</h4>
+<ul>
+  <li>A technical decision you made that turned out wrong — and how you handled discovering it. (Owning it quickly and publicly is the entire point of the question.)</li>
+  <li>A time you pushed back on a deadline — and a time you accepted one you disliked and made it work.</li>
+  <li>An underperforming teammate: how you diagnosed (skill vs. clarity vs. motivation vs. life circumstances) before acting, what support you set up, and the honest outcome either way.</li>
+  <li>How you balance your own IC coding time against unblocking the team (the classic tech-lead tension — good answer: your code goes on the non-critical path; the team's throughput is your output metric).</li>
+  <li>Disagreeing with your own manager or a strong PM — showing you can advocate upward with data and still commit.</li>
+</ul>
+
+<hr>
+<p style="color:var(--muted); font-size:.9rem;">Prep checklist: rehearse the <code>includes/preload/eager_load</code> table until it's automatic · be able to sketch Puma's worker/thread model on a whiteboard · fill every STAR scaffold in Topic 4 with a real, specific story including numbers · prepare 3 questions to ask <em>them</em> about team maturity, incident culture, and how technical decisions get made.</p>
+
+<!-- ==================================================================== -->
+<h2 id="quiz" class="topic-break">Knowledge Check — 60-Question Interactive Quiz</h2>
+<p>Sixty multiple-choice questions covering all four topics. Questions and answer order are shuffled on every run. You get instant feedback per question, and a full score breakdown at the end.</p>
+
+<style>
+  #quiz-app { font-family: 'Helvetica Neue', Arial, sans-serif; }
+  #quiz-app .qz-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  }
+  #quiz-app .qz-topic {
+    display: inline-block;
+    font-size: .75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: #fff;
+    background: var(--accent2);
+    border-radius: 999px;
+    padding: .2rem .7rem;
+    margin-bottom: .75rem;
+  }
+  #quiz-app .qz-progress-track {
+    height: 8px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: .4rem;
+  }
+  #quiz-app .qz-progress-fill { height: 100%; background: var(--accent2); width: 0; transition: width .25s; }
+  #quiz-app .qz-progress-label { font-size: .8rem; color: var(--muted); margin-bottom: 1rem; }
+  #quiz-app .qz-question { font-size: 1.05rem; font-weight: 600; margin: 0 0 1rem; line-height: 1.5; }
+  #quiz-app .qz-opt {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    font-size: .95rem;
+    line-height: 1.45;
+    background: #fff;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    padding: .7rem 1rem;
+    margin: .5rem 0;
+    cursor: pointer;
+    transition: border-color .12s, background .12s;
+  }
+  #quiz-app .qz-opt:hover:not(:disabled) { border-color: var(--accent2); background: #f0f7ff; }
+  #quiz-app .qz-opt:disabled { cursor: default; }
+  #quiz-app .qz-opt.qz-correct { border-color: #2f855a; background: #f0fff4; }
+  #quiz-app .qz-opt.qz-wrong { border-color: #c53030; background: #fff5f5; }
+  #quiz-app .qz-feedback {
+    border-radius: 6px;
+    padding: .8rem 1rem;
+    margin-top: 1rem;
+    font-size: .92rem;
+    line-height: 1.5;
+  }
+  #quiz-app .qz-feedback.ok { background: #f0fff4; border: 1px solid #9ae6b4; }
+  #quiz-app .qz-feedback.bad { background: #fff5f5; border: 1px solid #feb2b2; }
+  #quiz-app .qz-btn {
+    font: inherit;
+    font-size: .95rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent2);
+    border: none;
+    border-radius: 6px;
+    padding: .65rem 1.6rem;
+    margin-top: 1.1rem;
+    cursor: pointer;
+  }
+  #quiz-app .qz-btn:hover { background: #2c5282; }
+  #quiz-app .qz-score-big { font-size: 2.6rem; font-weight: 800; margin: .5rem 0 0; }
+  #quiz-app .qz-verdict { font-size: 1.1rem; margin: .25rem 0 1.25rem; color: var(--muted); }
+  #quiz-app .qz-bar-row { display: flex; align-items: center; gap: .75rem; margin: .45rem 0; font-size: .88rem; }
+  #quiz-app .qz-bar-name { flex: 0 0 15rem; }
+  #quiz-app .qz-bar-track { flex: 1; height: 12px; background: var(--bg-code); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+  #quiz-app .qz-bar-fill { height: 100%; background: var(--accent2); }
+  #quiz-app .qz-miss { border-left: 4px solid #c53030; background: #fff5f5; border-radius: 0 6px 6px 0; padding: .7rem 1rem; margin: .7rem 0; font-size: .9rem; }
+  #quiz-app .qz-miss b { display: block; margin-bottom: .2rem; }
+  @media print { #quiz-section-note, #quiz-app { display: none; } }
+</style>
+
+<div id="quiz-app">
+  <div class="qz-card" id="qz-root">
+    <p class="qz-question">Ready to test yourself across Databases &amp; Redis, Ruby &amp; Rails internals, Code Review &amp; Testing, and Leadership?</p>
+    <button class="qz-btn" onclick="qzStart()">Start the quiz</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  // t: 1 Databases & Redis, 2 Ruby & Rails internals, 3 Code review & testing, 4 Leadership
+  // a: index of the correct option in opts (pre-shuffle)
+  const QUESTIONS = [
+    // ---------- Topic 1: Databases & Redis (18) ----------
+    { t: 1, q: "Why does PostgreSQL need VACUUM while MySQL (InnoDB) does not?", opts: [
+      "Postgres keeps old row versions as dead tuples inside the table itself; InnoDB keeps them in the undo log, purged automatically",
+      "Postgres has no transaction log, so it must periodically rebuild tables",
+      "MySQL does not support MVCC, so there are never old row versions to clean",
+      "VACUUM is only needed when Postgres replication is enabled"
+    ], a: 0, exp: "Postgres MVCC leaves dead tuples in the heap; VACUUM reclaims them. InnoDB stores old versions in the undo log and purges automatically — but long transactions grow undo history instead." },
+    { t: 1, q: "Why are random UUIDv4 primary keys especially harmful on MySQL/InnoDB?", opts: [
+      "InnoDB clusters the table by primary key, so random inserts cause page splits and cache churn",
+      "MySQL cannot index UUID columns at all",
+      "UUIDs are not unique enough at MySQL's scale",
+      "InnoDB stores UUIDs as text, which disables the query planner"
+    ], a: 0, exp: "The InnoDB table IS the primary-key B-tree. Random keys scatter inserts across pages. Use time-ordered UUIDv7 if you need UUIDs." },
+    { t: 1, q: "Why does PostgreSQL practically require a pooler like PgBouncer at scale, while MySQL often doesn't?", opts: [
+      "Postgres uses one OS process per connection, costing several MB each; MySQL uses cheap threads",
+      "Postgres limits every database to 20 connections by design",
+      "MySQL has a built-in connection pooler that Postgres lacks",
+      "PgBouncer is required for Postgres replication to work"
+    ], a: 0, exp: "Process-per-connection makes Postgres connections expensive; the Puma-threads × processes + Sidekiq arithmetic must fit max_connections, and PgBouncer stretches that budget." },
+    { t: 1, q: "What advantage does transactional DDL give a Rails team on PostgreSQL?", opts: [
+      "A failed migration rolls back cleanly instead of leaving the schema half-changed",
+      "Migrations run twice as fast because they skip the WAL",
+      "It allows two migrations to run simultaneously without locks",
+      "It removes the need to write down migrations at all"
+    ], a: 0, exp: "On MySQL a failed multi-statement migration can leave the schema in a half-applied state; Postgres DDL participates in transactions." },
+    { t: 1, q: "You have a composite index on (account_id, created_at). Which query can NOT use it?", opts: [
+      "WHERE created_at > '2026-01-01' (no account_id filter)",
+      "WHERE account_id = 5",
+      "WHERE account_id = 5 AND created_at > '2026-01-01'",
+      "WHERE account_id = 5 ORDER BY created_at"
+    ], a: 0, exp: "The leftmost-prefix rule: the index serves queries that constrain account_id first; a filter on created_at alone can't use it." },
+    { t: 1, q: "What is the ideal indexing tool for a soft-delete pattern where 99% of rows have deleted_at IS NULL queries?", opts: [
+      "A partial index: CREATE INDEX ... WHERE deleted_at IS NULL",
+      "A full-table GIN index on deleted_at",
+      "Two identical B-tree indexes for redundancy",
+      "A hash index on the primary key"
+    ], a: 0, exp: "Partial indexes only contain matching rows — small, fast, cheap to maintain. Ideal for soft deletes and state columns like status = 'pending'." },
+    { t: 1, q: "A query filters WHERE LOWER(email) = ? but the plain index on email is ignored. Why?", opts: [
+      "The function wrapping the column makes the plain index unusable; you need an expression index on LOWER(email)",
+      "Postgres never uses indexes on string columns",
+      "LOWER() disables the query planner entirely",
+      "Indexes only work with the = operator on numbers"
+    ], a: 0, exp: "Index the expression itself, normalize on write, or use citext. Function-wrapped columns are a classic 'lost index' cause." },
+    { t: 1, q: "EXPLAIN ANALYZE shows estimated rows = 100 but actual rows = 2,000,000. What is the first fix?", opts: [
+      "Run ANALYZE to refresh table statistics (and raise the statistics target for skewed columns)",
+      "Add more RAM to the database server",
+      "Drop and recreate all indexes",
+      "Switch the join type manually with a hint"
+    ], a: 0, exp: "Wildly wrong estimates mean stale statistics, which cascade into bad join strategies. ANALYZE refreshes them." },
+    { t: 1, q: "Why is deep OFFSET pagination (page 5,000) slow, and what replaces it?", opts: [
+      "The database reads and discards every skipped row; use keyset (cursor) pagination on an indexed unique column",
+      "OFFSET disables all indexes permanently; use LIMIT alone",
+      "It's a network problem; use HTTP/2 to fix it",
+      "OFFSET is fine; the slowness comes from rendering"
+    ], a: 0, exp: "OFFSET N walks past N rows every time. Keyset pagination (WHERE id > last_seen ORDER BY id) stays fast at any depth." },
+    { t: 1, q: "Two concurrent requests both run first_or_create and produce duplicate rows. What is the reliable fix?", opts: [
+      "A unique index in the database, plus rescue-and-retry or an upsert (INSERT ... ON CONFLICT)",
+      "Wrap the Ruby code in a Mutex",
+      "Add a uniqueness validation in the Rails model",
+      "Retry the request three times with sleeps"
+    ], a: 0, exp: "Application-level checks (including AR validations) race under concurrency. The database is the only reliable referee for uniqueness." },
+    { t: 1, q: "What is the key risk of asynchronous replication?", opts: [
+      "Stale reads on replicas, and losing un-replicated transactions if the primary dies before a replica catches up",
+      "It doubles write latency on the primary",
+      "Replicas can accept writes and cause split-brain by default",
+      "It only works within a single availability zone"
+    ], a: 0, exp: "Async keeps writes fast but replicas lag — that's both the stale-read problem and the RPO (data loss on failover) problem." },
+    { t: 1, q: "How does Rails' automatic database role switching handle read-your-own-writes?", opts: [
+      "After a write, the middleware pins that user's session to the primary for a configurable delay (2s default)",
+      "It re-reads every record from the primary to verify replica results",
+      "It blocks all reads until every replica confirms replay",
+      "It doesn't — Rails always reads from the primary"
+    ], a: 0, exp: "GET/HEAD go to the replica; writes go to the primary; recent writers are pinned to the primary briefly so they see their own data." },
+    { t: 1, q: "Your biggest table is huge and old rows are rarely queried. What should you try BEFORE sharding?", opts: [
+      "Partitioning, archiving cold data, and functional decomposition into a separate database",
+      "Nothing — sharding is the only fix for large tables",
+      "Rewrite the app in a faster language",
+      "Turn off indexes to speed up writes"
+    ], a: 0, exp: "The escalation ladder: partition (prune + instant drops), archive, split hot domains into their own DB. Shard only when a single primary can't absorb writes." },
+    { t: 1, q: "Why is choosing the shard key described as a 'company-level' decision?", opts: [
+      "Resharding live data is a migration project measured in quarters, so a wrong key is extremely expensive to undo",
+      "Only the CEO is allowed to approve schema changes",
+      "Shard keys are hard-coded into the database engine",
+      "The shard key determines the company's cloud provider"
+    ], a: 0, exp: "Pick the key that matches how the product queries data — almost always the tenant. Getting it wrong means dual-writes and quarters of migration." },
+    { t: 1, q: "How do you add an index to a large, busy Postgres table without downtime in Rails?", opts: [
+      "algorithm: :concurrently in the migration, which requires disable_ddl_transaction!",
+      "Plain add_index is always safe in Postgres",
+      "Take the site down briefly — there is no other way",
+      "Add the index on a replica and promote it"
+    ], a: 0, exp: "Plain CREATE INDEX blocks writes for the duration. CONCURRENTLY builds without the write lock but can't run inside a transaction." },
+    { t: 1, q: "Why must a Sidekiq Redis run with the noeviction policy — and what follows from that?", opts: [
+      "An evicted key is a lost job, so queues need noeviction — which is why cache and queues get separate Redis instances",
+      "noeviction makes Redis faster for all workloads",
+      "Sidekiq refuses to boot under any other policy",
+      "Eviction only matters for Redis Cluster deployments"
+    ], a: 0, exp: "A cache Redis wants allkeys-lru; a queue Redis must never evict. Sharing one instance between the two is the classic trap." },
+    { t: 1, q: "A hot cache key expires and hundreds of requests recompute it at once, hammering the database. What is this and one mitigation?", opts: [
+      "Cache stampede — mitigate with race_condition_ttl, jittered TTLs, or lock-and-recompute",
+      "Cache poisoning — mitigate with input sanitization",
+      "Replica lag — mitigate with synchronous replication",
+      "A thundering shard — mitigate by adding more shards"
+    ], a: 0, exp: "Stampedes can take the database down. race_condition_ttl serves the stale value briefly while one process recomputes." },
+    { t: 1, q: "Sidekiq's delivery guarantee is at-least-once. What is the single most important consequence for job design?", opts: [
+      "Jobs must be idempotent — safe to run twice (upserts, state guards, idempotency keys for charges/emails)",
+      "Jobs must complete in under one second",
+      "Jobs may never touch the database",
+      "Every job needs its own dedicated queue"
+    ], a: 0, exp: "A worker can finish the work and die before acknowledging; the job re-runs. Design so a re-run is harmless." },
+
+    // ---------- Topic 2: Ruby & Rails internals (16) ----------
+    { t: 2, q: "What SQL strategy does Post.includes(:author) use by default?", opts: [
+      "Separate queries (the preload strategy), switching to a LEFT JOIN only if the association is referenced in conditions",
+      "Always a single LEFT OUTER JOIN",
+      "Always an INNER JOIN",
+      "A UNION of both tables"
+    ], a: 0, exp: "includes delegates: preload by default, eager_load (LEFT JOIN) when you reference the association via references() or string conditions." },
+    { t: 2, q: "What SQL does eager_load always generate?", opts: [
+      "A single query with LEFT OUTER JOIN and aliased columns for every table",
+      "Two separate queries with WHERE id IN (...)",
+      "An INNER JOIN that filters but loads nothing",
+      "One query per associated record"
+    ], a: 0, exp: "eager_load is always one LEFT JOIN query — which is why it multiplies rows on has_many and selects every column of every joined table." },
+    { t: 2, q: "Post.joins(:author).each { |p| p.author.name } — is the N+1 fixed?", opts: [
+      "No — joins produces an INNER JOIN for filtering only; it does not load the association, so each p.author still queries",
+      "Yes — joins loads the association into memory",
+      "Yes, but only for belongs_to associations",
+      "No, because joins is lazy and never executes"
+    ], a: 0, exp: "This is the classic trap: 'fixing' an N+1 with joins. Filtering ≠ loading. Use includes/preload/eager_load to load." },
+    { t: 2, q: "Post.preload(:author).where(users: { admin: true }) — what happens?", opts: [
+      "It raises an error — preload issues separate queries, so the users table is not in the SQL to filter on",
+      "It works and filters correctly",
+      "It silently ignores the where clause",
+      "It falls back to a LEFT JOIN automatically"
+    ], a: 0, exp: "preload never joins, so referencing the association's table in conditions raises StatementInvalid. That's eager_load's (or includes+references) job." },
+    { t: 2, q: "What is the key difference between pluck and select?", opts: [
+      "pluck executes immediately and returns raw values with no AR objects; select returns a chainable Relation of model instances",
+      "They are aliases with identical behavior",
+      "select is faster because it skips the database",
+      "pluck can only ever return a single column"
+    ], a: 0, exp: "pluck: terminal, raw arrays, minimal allocation. select: lazy, chainable, partial AR objects — usable as subqueries." },
+    { t: 2, q: "What is the most efficient way to check whether any matching record exists?", opts: [
+      "relation.exists? — it issues SELECT 1 ... LIMIT 1",
+      "relation.count > 0",
+      "relation.present?",
+      "relation.to_a.any?"
+    ], a: 0, exp: "count runs a full COUNT; present?/to_a load records into memory. exists? asks the cheapest possible question." },
+    { t: 2, q: "With strict loading enabled, what happens when code lazily touches an unloaded association?", opts: [
+      "It raises ActiveRecord::StrictLoadingViolationError (or logs, in :log mode) instead of silently querying",
+      "Rails automatically converts it to an eager load",
+      "The association returns nil",
+      "The query runs but is tagged in the slow log"
+    ], a: 0, exp: "Strict loading (Rails 6.1+) turns hidden N+1s into loud failures — enable per association, per query, or globally." },
+    { t: 2, q: "For a loaded has_many collection with a counter cache, what do size, count, and length each do?", opts: [
+      "size uses the counter cache or loaded collection; count always queries the DB; length always loads the collection",
+      "All three always query the database",
+      "count is always free; size always queries",
+      "length uses the counter cache; size loads everything"
+    ], a: 0, exp: "size is the smart one. count fires SQL every time; length forces a full load. Choosing wrong wastes queries or memory." },
+    { t: 2, q: "Why do threads still improve Rails throughput despite the GVL?", opts: [
+      "The GVL is released during blocking I/O (DB calls, HTTP, file reads), and web requests spend most time waiting on I/O",
+      "The GVL was removed in Ruby 3.0",
+      "Rails runs each thread in a separate process secretly",
+      "They don't — threads never help under the GVL"
+    ], a: 0, exp: "One thread runs Ruby at a time, but waiting on the database releases the lock — so I/O-bound workloads overlap well." },
+    { t: 2, q: "Which Ruby primitive provides TRUE parallel execution of Ruby code within one process?", opts: [
+      "Ractors — each has its own GVL, but objects must be shareable/frozen or passed by message",
+      "Threads — the OS schedules them on separate cores",
+      "Fibers — they yield cooperatively across cores",
+      "Mutexes — they unlock parallelism when used correctly"
+    ], a: 0, exp: "Ractors (née Guilds) give per-Ractor GVLs and no shared mutable state. Still impractical for Rails — the ecosystem isn't Ractor-safe." },
+    { t: 2, q: "How do Fibers differ from Threads in scheduling?", opts: [
+      "Fibers are cooperative — they yield only where told or at blocking ops via the Fiber Scheduler; threads are preemptively scheduled",
+      "Fibers are preemptive; threads are cooperative",
+      "Fibers run in parallel; threads cannot",
+      "There is no difference since Ruby 3"
+    ], a: 0, exp: "No preemption means far fewer race conditions and tiny per-unit cost — which is why the async gem can juggle thousands of sockets." },
+    { t: 2, q: "Puma runs 4 workers × 5 threads. What must be true of the ActiveRecord connection pool?", opts: [
+      "pool must be at least 5 (threads per process), or threads will hit ConnectionTimeoutError waiting for a connection",
+      "pool must be exactly 20 (workers × threads)",
+      "pool must be 4 (one per worker)",
+      "The pool size is irrelevant to Puma configuration"
+    ], a: 0, exp: "The pool is per process, so it must cover the threads in that process. Total DB connections ≈ workers × pool (+ Sidekiq) vs max_connections." },
+    { t: 2, q: "A Rails process grows from 300MB to 1GB and plateaus. The usual cause and first cheap fixes?", opts: [
+      "Heap fragmentation from glibc malloc arenas — try MALLOC_ARENA_MAX=2, then jemalloc",
+      "A guaranteed memory leak — restart every 10 minutes forever",
+      "The GC is disabled by default in production",
+      "Rails caches every response in process memory"
+    ], a: 0, exp: "Plateau = fragmentation/bloat, not a leak (leaks grow monotonically). Arena capping and jemalloc commonly halve resident memory." },
+    { t: 2, q: "In Ruby's generational GC, what makes minor GCs cheap?", opts: [
+      "They scan only the young generation plus a remembered set of old objects that reference young ones (tracked by write barriers)",
+      "They run on a separate CPU core in parallel",
+      "They only run when the process is idle",
+      "They compress memory instead of freeing it"
+    ], a: 0, exp: "Objects surviving a few minor GCs get promoted to the old generation; only major GCs scan everything — those are the expensive ones." },
+    { t: 2, q: "What TWO things must accompany a method_missing implementation?", opts: [
+      "Call super for unhandled names, and define respond_to_missing? so introspection works",
+      "A rescue block and a logging statement",
+      "freeze the class and disable inheritance",
+      "Nothing — method_missing is self-contained"
+    ], a: 0, exp: "Skipping super swallows real NoMethodErrors; skipping respond_to_missing? breaks respond_to?, method(:x), and tooling." },
+    { t: 2, q: "When the set of dynamic methods is enumerable up front, why prefer define_method over method_missing?", opts: [
+      "It creates real methods — visible to respond_to?, methods, stack traces, and profilers — and doesn't hijack dispatch on every call",
+      "define_method is the only one that accepts blocks",
+      "method_missing was removed in Ruby 3.2",
+      "define_method methods cannot be overridden"
+    ], a: 0, exp: "method_missing pays a full lookup miss per call and hides typos. Rails itself generates real methods in modules, using method_missing only as a first-call fallback." },
+
+    // ---------- Topic 3: Code review & testing (14) ----------
+    { t: 3, q: "In a code review you see params[:order].permit! — what is the problem?", opts: [
+      "It whitelists EVERY parameter — a mass-assignment vulnerability letting clients set any attribute",
+      "It is deprecated syntax that raises in Rails 7",
+      "It is slower than permit(:all)",
+      "It only works with JSON requests"
+    ], a: 0, exp: "permit! defeats strong parameters entirely. An attacker can set admin: true or any other attribute. Always permit an explicit list." },
+    { t: 3, q: "OrderMailer.confirmation(order).deliver_now inside a controller action — why flag it?", opts: [
+      "It blocks the request on SMTP/API latency; side effects should go through deliver_later / background jobs",
+      "deliver_now silently drops emails in production",
+      "Mailers can only be called from models",
+      "It sends the email twice"
+    ], a: 0, exp: "Synchronous external calls in the request cycle add latency and couple request success to a third-party service. Enqueue instead." },
+    { t: 3, q: "Which is the strongest description of a well-designed service object?", opts: [
+      "One clear verb, a single public call method, a result object for success/failure, and ownership of the transaction boundary",
+      "A class holding all methods that didn't fit in the model",
+      "Any class located in the app/services directory",
+      "A controller subclass without routing"
+    ], a: 0, exp: "The failure mode is the junk drawer: 400-line 'services' that are relocated fat controllers. A service is a workflow with a boundary." },
+    { t: 3, q: "When does a Rails concern become an anti-pattern?", opts: [
+      "When it's used to slice a god model into files — hiding coupling instead of removing it — or is only included in one class",
+      "Whenever it includes ActiveSupport::Concern",
+      "When it contains more than one method",
+      "Concerns are always an anti-pattern"
+    ], a: 0, exp: "Concerns are for genuinely shared, cohesive behavior with its own tests (Archivable, Searchable). A once-included concern is just a hidden partial class." },
+    { t: 3, q: "What should a query object generally return, and why?", opts: [
+      "An ActiveRecord::Relation, so it stays chainable and lazy",
+      "An Array, so callers can't add more conditions",
+      "A JSON string for API convenience",
+      "A raw SQL string"
+    ], a: 0, exp: "Returning relations keeps query objects composable — callers can paginate, merge, or further scope them." },
+    { t: 3, q: "In a healthy Rails test suite shape, why is the system/browser test layer kept THIN?", opts: [
+      "System tests are slow and flaky-prone, so they're reserved for critical money paths; request specs cover most integration cheaply",
+      "System tests can't run in CI at all",
+      "Browsers can't execute JavaScript in test mode",
+      "Rails deprecated system tests in 7.0"
+    ], a: 0, exp: "Every system test must pay rent. Request specs exercise routing, controllers, models, and serialization at a fraction of the cost." },
+    { t: 3, q: "What is the core risk of heavily mocked (London-school) test suites?", opts: [
+      "Tests couple to implementation and encode your assumptions about collaborators — they can pass while production is broken",
+      "Mocks leak memory between examples",
+      "They are slower than integration tests",
+      "RSpec cannot verify mocked methods exist"
+    ], a: 0, exp: "Refactor a collaborator's API and 40 tests break with unchanged behavior — or worse, mocks drift from reality and green tests lie." },
+    { t: 3, q: "What is the sane boundary rule for mocking?", opts: [
+      "Mock at system boundaries you don't own (HTTP APIs, payment gateways, the clock); don't mock what you own and can cheaply instantiate; never mock the object under test",
+      "Mock everything for speed",
+      "Never mock anything under any circumstances",
+      "Only mock ActiveRecord finders like User.find"
+    ], a: 0, exp: "Stubbing AR internals (allow(User).to receive(:find)) tests nothing. verify_partial_doubles catches stubs of nonexistent methods." },
+    { t: 3, q: "Your 'unit' tests are slow because the default factory creates five associated records. What's the lead-level fix?", opts: [
+      "Keep default factories minimal, elaborate with traits, and use build_stubbed where persistence isn't needed",
+      "Switch from FactoryBot to fixtures immediately",
+      "Delete the associations from the schema",
+      "Run the suite less often"
+    ], a: 0, exp: "Factory bloat means every 'unit' test hits the DB dozens of times. Minimal defaults + traits is the cure." },
+    { t: 3, q: "What is the healthy team process for flaky tests?", opts: [
+      "Quarantine tag + tracked issue + regular triage; always run with a random seed and keep it in failure output",
+      "Add automatic retries until green and move on",
+      "Delete any test that fails twice",
+      "Pin the seed so order never changes"
+    ], a: 0, exp: "Retry-until-green destroys trust in CI and eventually ships real regressions. Most Rails flakes: time, order dependence, leaked state, Capybara sleep misuse." },
+    { t: 3, q: "Upgrading a legacy app from Rails 6.1 to 8 — what is the correct path?", opts: [
+      "One minor version at a time (6.1 → 7.0 → 7.1 → 7.2 → 8.0), reading each upgrade guide and running rails app:update",
+      "Jump straight to 8.0 and fix whatever breaks",
+      "Rewrite the application from scratch on 8.0",
+      "Stay on 6.1 forever; upgrades are optional"
+    ], a: 0, exp: "Never leapfrog. Each hop has its own deprecations-then-removals cycle; skipping versions means debugging several migrations at once. EOL Rails also means no security patches." },
+    { t: 3, q: "What is 'dual booting' with the next_rails gem, and why is it the key upgrade technique?", opts: [
+      "CI runs the suite against current AND next Rails via Gemfile.next on every PR, so fixes land incrementally on main — no rotting upgrade branch",
+      "Running two production clusters on different Rails versions permanently",
+      "Booting the app twice to warm caches",
+      "A way to skip writing tests during upgrades"
+    ], a: 0, exp: "The long-lived upgrade branch that rots for months is the anti-pattern. Dual boot makes the upgrade a stream of small mainline changes." },
+    { t: 3, q: "After rails app:update, what is the right way to handle new_framework_defaults_X_Y.rb?", opts: [
+      "Ship on old defaults first, then flip each default one at a time as its own small, revertable change",
+      "Enable all new defaults at once and deploy",
+      "Delete the file — it is optional",
+      "Ask each developer to choose their own defaults locally"
+    ], a: 0, exp: "Some defaults (cookie serializers, cache formats) need rolling-deploy-safe handling. One flag per change keeps every step revertable." },
+    { t: 3, q: "What does bundler-audit do in a mature CI pipeline?", opts: [
+      "Fails the build when a dependency has a known CVE, using the ruby-advisory-db",
+      "Measures test coverage of the Gemfile",
+      "Removes unused gems automatically",
+      "Pins every gem to its oldest version"
+    ], a: 0, exp: "Pair it with Dependabot/Renovate for continuous small bumps — 40 one-line PRs beat one terrifying 'update everything' PR." },
+
+    // ---------- Topic 4: Leadership (12) ----------
+    { t: 4, q: "What is the effective way to get a product manager to fund refactoring work?", opts: [
+      "Translate debt into product language — defect rates, estimate multipliers, incident counts — and price the payoff for the roadmap",
+      "Insist that clean code is a professional obligation and refuse features until it's done",
+      "Refactor secretly by padding feature estimates without telling anyone",
+      "Escalate to the CTO every time"
+    ], a: 0, exp: "'The code is ugly' isn't negotiable; 'features in this module take 3× estimate and cause 2 incidents/quarter' is." },
+    { t: 4, q: "How should technical debt items be prioritized?", opts: [
+      "By interest rate: how often the team touches that code × how much it hurts each time",
+      "Oldest debt first, always",
+      "Whatever the most senior engineer finds most annoying",
+      "All debt must be paid before any features ship"
+    ], a: 0, exp: "Debt in code you rarely touch can sit. Debt in the path of every sprint compounds daily — that's what you pay down first." },
+    { t: 4, q: "The team wants to rewrite a legacy module from scratch. What is the usually-better alternative?", opts: [
+      "Strangler-fig incremental replacement — new code takes over piece by piece while the old keeps running",
+      "A six-month feature freeze for the big-bang rewrite",
+      "Outsource the rewrite to a contractor team",
+      "Duplicate the module and maintain both forever"
+    ], a: 0, exp: "Big-bang rewrites are almost always the wrong answer: no incremental value, high risk, and the old system keeps changing underneath." },
+    { t: 4, q: "Adopting RuboCop in a large legacy codebase without a team revolt — what's the play?", opts: [
+      "Adopt a community baseline, freeze existing violations with --auto-gen-config into the TODO file, autocorrect safe cops in one mechanical PR, then ratchet",
+      "Enable every cop at maximum strictness and fix the 40,000 offenses over a month",
+      "Only run RuboCop on the tech lead's machine",
+      "Skip linting; style debates keep the team engaged"
+    ], a: 0, exp: "Day one must be green. The goal is ending style debates in review, not maximal strictness — a resented rule gets disabled or ignored." },
+    { t: 4, q: "A post-mortem concludes 'root cause: human error — engineer was careless.' What's wrong?", opts: [
+      "If a human could break it, the system lacked a guardrail; blameless post-mortems find plural contributing factors and produce systemic fixes",
+      "Nothing — accountability requires naming the person at fault",
+      "The wording — it should say 'operator error' instead",
+      "Post-mortems shouldn't identify causes at all"
+    ], a: 0, exp: "Blame teaches people to hide mistakes. Also: review whether past action items were actually done — otherwise the ritual is theater." },
+    { t: 4, q: "Two senior engineers fiercely disagree on architecture. What should you establish FIRST?", opts: [
+      "Shared decision criteria — what the choice is optimizing for (latency? operational simplicity? time-to-market?)",
+      "A vote among the whole team",
+      "Which engineer has more tenure",
+      "A coin flip to keep things fair"
+    ], a: 0, exp: "Most fierce disagreements are two people optimizing different unstated objectives. Making the objectives explicit resolves half of them outright." },
+    { t: 4, q: "What is an ADR (Architecture Decision Record) for?", opts: [
+      "Recording context, options considered, the decision, and consequences — so it isn't re-litigated and the losing option is documented as seriously considered",
+      "A legal document for compliance audits",
+      "The deployment log kept by operations",
+      "A performance review artifact for engineers"
+    ], a: 0, exp: "ADRs stop permanent relitigation and preserve the 'why' for future engineers who inherit the decision." },
+    { t: 4, q: "After deciding against a senior engineer's proposal, what does a good lead do?", opts: [
+      "Invoke disagree-and-commit explicitly, give them a meaningful role in the chosen path, and check in later — they're the best-placed critic to make it robust",
+      "Avoid assigning them to that project so they can't sabotage it",
+      "Re-open the debate weekly to keep them happy",
+      "Ask them to publicly endorse the decision as their own idea"
+    ], a: 0, exp: "Quiet disengagement from the 'loser' is the real cost of badly resolved conflict. And if reality proves the decision wrong, reverse it publicly and cheerfully." },
+    { t: 4, q: "What is the most effective way to grow a mid-level engineer toward senior?", opts: [
+      "Delegate real ownership sized one notch beyond comfort, with safety nets: design review first, checkpoints, and you as escalation",
+      "Hand them the easy tickets so they build confidence",
+      "Send them to a conference once a year",
+      "Have them shadow you without owning anything"
+    ], a: 0, exp: "People grow by owning outcomes, not tasks. The safety nets make the stretch safe without removing the ownership." },
+    { t: 4, q: "How should a tech lead measure their own success?", opts: [
+      "By the team's throughput and what it ships when the lead is on vacation — keeping their own code off the critical path",
+      "By personal lines of code committed",
+      "By the number of meetings attended",
+      "By being the only person who can fix production"
+    ], a: 0, exp: "Being a single point of failure is a leadership bug, not a badge. The team's output is the lead's output metric." },
+    { t: 4, q: "Which review-culture practice most reduces friction in code review?", opts: [
+      "Ask questions instead of decreeing, mark nits as non-blocking, and move recurring style debates into automation (RuboCop) and a conventions doc",
+      "Require every comment to be resolved before merge, including nits",
+      "Have only the tech lead review all PRs",
+      "Skip reviews for senior engineers' code"
+    ], a: 0, exp: "'What happens if the payment succeeds but this save fails?' beats 'this is wrong.' Humans should argue about the domain, not taste." },
+    { t: 4, q: "When is taking on technical debt actually a GOOD decision?", opts: [
+      "When it's taken knowingly to hit a market window, recorded, and has a scheduled payback",
+      "Never — debt is always a failure",
+      "Whenever the deadline is tight, no records needed",
+      "Only in code that will never be touched again"
+    ], a: 0, exp: "Debt is a financial instrument: fine when priced and scheduled. The failure mode is unknowing or unrecorded debt." }
+  ];
+
+  const TOPIC_NAMES = {
+    1: "Databases & Redis",
+    2: "Ruby & Rails Internals",
+    3: "Code Review & Testing",
+    4: "Leadership & Delivery"
+  };
+
+  let order = [], idx = 0, answers = [], root = null;
+
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  window.qzStart = function () {
+    root = document.getElementById("qz-root");
+    order = shuffle(QUESTIONS.map((q, i) => i));
+    idx = 0;
+    answers = [];
+    renderQuestion();
+  };
+
+  function renderQuestion() {
+    const q = QUESTIONS[order[idx]];
+    const optIdx = shuffle(q.opts.map((_, i) => i));
+    const pct = Math.round((idx / QUESTIONS.length) * 100);
+
+    root.innerHTML =
+      '<div class="qz-progress-track"><div class="qz-progress-fill" style="width:' + pct + '%"></div></div>' +
+      '<div class="qz-progress-label">Question ' + (idx + 1) + ' of ' + QUESTIONS.length + '</div>' +
+      '<span class="qz-topic">' + TOPIC_NAMES[q.t] + '</span>' +
+      '<p class="qz-question"></p>' +
+      '<div class="qz-opts"></div>' +
+      '<div class="qz-after"></div>';
+
+    root.querySelector(".qz-question").textContent = q.q;
+    const optsBox = root.querySelector(".qz-opts");
+
+    optIdx.forEach(function (oi) {
+      const btn = document.createElement("button");
+      btn.className = "qz-opt";
+      btn.textContent = q.opts[oi];
+      btn.onclick = function () { answer(q, oi, btn, optsBox); };
+      optsBox.appendChild(btn);
+    });
+  }
+
+  function answer(q, chosen, chosenBtn, optsBox) {
+    const correct = chosen === q.a;
+    answers.push({ qi: order[idx], correct: correct });
+
+    Array.prototype.forEach.call(optsBox.children, function (b) {
+      b.disabled = true;
+      if (b.textContent === q.opts[q.a]) b.classList.add("qz-correct");
+    });
+    if (!correct) chosenBtn.classList.add("qz-wrong");
+
+    const fb = document.createElement("div");
+    fb.className = "qz-feedback " + (correct ? "ok" : "bad");
+    fb.innerHTML = "<b>" + (correct ? "Correct." : "Not quite.") + "</b> " + q.exp;
+    root.querySelector(".qz-after").appendChild(fb);
+
+    const next = document.createElement("button");
+    next.className = "qz-btn";
+    next.textContent = idx + 1 < QUESTIONS.length ? "Next question →" : "See my score";
+    next.onclick = function () {
+      idx++;
+      idx < QUESTIONS.length ? renderQuestion() : renderScore();
+    };
+    root.querySelector(".qz-after").appendChild(next);
+    next.focus();
+  }
+
+  function renderScore() {
+    const total = QUESTIONS.length;
+    const score = answers.filter(a => a.correct).length;
+    const pct = Math.round((score / total) * 100);
+
+    let verdict;
+    if (pct >= 90)      verdict = "Outstanding — you're interview-ready. Focus remaining time on rehearsing your STAR stories out loud.";
+    else if (pct >= 75) verdict = "Strong. Review the missed questions below — they're likely your interview blind spots.";
+    else if (pct >= 60) verdict = "Solid foundation, but re-read the sections behind your misses before interview day.";
+    else                verdict = "Time for another full pass through the document — focus on your weakest topics below.";
+
+    const perTopic = {};
+    answers.forEach(function (a) {
+      const t = QUESTIONS[a.qi].t;
+      perTopic[t] = perTopic[t] || { right: 0, total: 0 };
+      perTopic[t].total++;
+      if (a.correct) perTopic[t].right++;
+    });
+
+    let html =
+      '<p class="qz-question" style="margin-bottom:0">Your score</p>' +
+      '<p class="qz-score-big">' + score + ' / ' + total + ' <span style="font-size:1.4rem;color:var(--muted)">(' + pct + '%)</span></p>' +
+      '<p class="qz-verdict"></p><h4 style="margin-top:1.5rem">By topic</h4>';
+
+    Object.keys(perTopic).sort().forEach(function (t) {
+      const s = perTopic[t];
+      const p = Math.round((s.right / s.total) * 100);
+      html +=
+        '<div class="qz-bar-row"><span class="qz-bar-name">' + TOPIC_NAMES[t] + ' — ' + s.right + '/' + s.total + '</span>' +
+        '<div class="qz-bar-track"><div class="qz-bar-fill" style="width:' + p + '%"></div></div>' +
+        '<span style="width:3rem;text-align:right">' + p + '%</span></div>';
+    });
+
+    const missed = answers.filter(a => !a.correct);
+    if (missed.length) {
+      html += '<h4 style="margin-top:1.5rem">Review your ' + missed.length + ' missed question' + (missed.length > 1 ? 's' : '') + '</h4>';
+      missed.forEach(function (a) {
+        const q = QUESTIONS[a.qi];
+        html += '<div class="qz-miss"><b></b><span class="qz-miss-ans"></span></div>';
+      });
+    }
+    html += '<button class="qz-btn" onclick="qzStart()">Retake the quiz</button>';
+
+    root.innerHTML = html;
+    root.querySelector(".qz-verdict").textContent = verdict;
+
+    const missNodes = root.querySelectorAll(".qz-miss");
+    missed.forEach(function (a, i) {
+      const q = QUESTIONS[a.qi];
+      missNodes[i].querySelector("b").textContent = "[" + TOPIC_NAMES[q.t] + "] " + q.q;
+      missNodes[i].querySelector(".qz-miss-ans").textContent = "Answer: " + q.opts[q.a] + " — " + q.exp;
+    });
+  }
+})();
+</script>
+
+</body>
+</html>

@@ -87,7 +87,8 @@
     const rect = range.getBoundingClientRect();
     currentSelection = {
       text: text,
-      occurrence: occurrenceIndex(range, text)
+      occurrence: occurrenceIndex(range, text),
+      range: range.cloneRange()
     };
 
     button = document.createElement("button");
@@ -131,7 +132,7 @@
     return container;
   }
 
-  function addStatusBar(jobId, selection) {
+  function addStatusBar(jobId, selection, range) {
     const bar = document.createElement("div");
     const content = document.createElement("span");
     const close = document.createElement("button");
@@ -154,7 +155,7 @@
     bar.append(content, close);
     statusContainer().appendChild(bar);
 
-    const record = { bar, content, timer: null };
+    const record = { bar, content, timer: null, range: range };
     jobs.set(jobId, record);
     close.addEventListener("click", () => dismissJob(jobId));
     return record;
@@ -181,6 +182,30 @@
     link.textContent = "Expansion ready — open it";
     link.style.color = "#bb86fc";
     record.content.replaceChildren(link);
+
+    const anchor = linkOriginalSelection(record.range, url);
+    if (anchor) anchor.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function linkOriginalSelection(range, url) {
+    if (!range) return null;
+
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.style.color = "#bb86fc";
+
+    try {
+      range.surroundContents(anchor);
+    } catch (e) {
+      try {
+        const fragment = range.extractContents();
+        anchor.appendChild(fragment);
+        range.insertNode(anchor);
+      } catch (e2) {
+        return null;
+      }
+    }
+    return anchor;
   }
 
   function renderFailure(record, detail) {
@@ -310,7 +335,7 @@
           }
           const jobId = data.id;
           if (!jobId) throw new Error("Expansion was not queued.");
-          addStatusBar(jobId, currentSelection.text);
+          addStatusBar(jobId, currentSelection.text, currentSelection.range);
           removeUI();
           pollJob(jobId);
         })

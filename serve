@@ -1,3 +1,11 @@
 #!/usr/bin/env sh
 
+set -eu
+
+# Assets carry a content digest in their filename and are served with a one-year
+# cache-control, so a stale build is pinned in browsers until the digest changes.
+# Clobber before precompiling to drop digests that no longer match any source.
+bin/rails assets:clobber
+bin/rails assets:precompile
+
 exec bin/rails server -p 8009 "$@"

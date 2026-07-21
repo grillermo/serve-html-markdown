@@ -10,6 +10,58 @@
     return meta ? meta.content : "";
   };
 
+  function topmostVisibleAnchor() {
+    const anchored = document.querySelectorAll("[id]");
+    let current = null;
+    for (const el of anchored) {
+      if (el.getBoundingClientRect().top <= 1) {
+        current = el.id;
+      } else {
+        break;
+      }
+    }
+    return current;
+  }
+
+  function saveScrollPosition() {
+    const anchor = topmostVisibleAnchor();
+    if (!anchor) return;
+
+    const body = JSON.stringify({
+      file_name: decodeURIComponent(location.pathname.slice(1)),
+      anchor: anchor,
+      authenticity_token: CSRF()
+    });
+
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon("/scroll_position", new Blob([body], { type: "application/json" }));
+    } else {
+      fetch("/scroll_position", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: body,
+        keepalive: true
+      });
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (typeof window.__scrollAnchor !== "string") return;
+
+    const target = document.getElementById(window.__scrollAnchor);
+    if (target) target.scrollIntoView();
+  });
+
+  let scrollSaveTimer = null;
+  window.addEventListener("scroll", () => {
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = setTimeout(saveScrollPosition, 500);
+  }, { passive: true });
+  window.addEventListener("pagehide", () => {
+    clearTimeout(scrollSaveTimer);
+    saveScrollPosition();
+  });
+
   function removeUI() {
     if (button) { button.remove(); button = null; }
     if (popover) { popover.remove(); popover = null; }
@@ -41,7 +93,7 @@
     Object.assign(button.style, {
       position: "absolute",
       left: `${window.scrollX + rect.left + rect.width / 2 - 16}px`,
-      top: `${window.scrollY + rect.top - 40}px`,
+      top: `${window.scrollY + rect.bottom + 8}px`,
       width: "32px",
       height: "32px",
       borderRadius: "6px",
@@ -167,7 +219,7 @@
     textarea.focus();
   }
 
-  document.addEventListener("mouseup", (event) => {
+  function handleSelectionEnd(event) {
     if (popover && popover.contains(event.target)) return;
     if (button && button.contains(event.target)) return;
 
@@ -180,6 +232,27 @@
       }
       showButton(selection.getRangeAt(0), text);
     }, 0);
+  }
+
+  document.addEventListener("mouseup", handleSelectionEnd);
+  document.addEventListener("touchend", handleSelectionEnd);
+
+  // iOS never fires mouseup/touchend when a selection is made or adjusted by
+  // dragging the native selection handles, so selectionchange is the only
+  // reliable signal there. Debounce since it fires continuously mid-drag.
+  let selectionChangeTimer = null;
+  document.addEventListener("selectionchange", () => {
+    if (popover) return;
+    clearTimeout(selectionChangeTimer);
+    selectionChangeTimer = setTimeout(() => {
+      const selection = window.getSelection();
+      const text = selection ? selection.toString().trim() : "";
+      if (!text || selection.rangeCount === 0) {
+        if (!popover) removeUI();
+        return;
+      }
+      showButton(selection.getRangeAt(0), text);
+    }, 300);
   });
 
   document.addEventListener("keydown", (event) => {

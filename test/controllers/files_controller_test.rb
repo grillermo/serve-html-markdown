@@ -101,6 +101,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_select "title", text: "notes.md"
     assert_select "link[href*='markdown'][rel='stylesheet']"
     assert_select "h1", text: "“Notes”"
+    assert_select "h1 a#notes.anchor[aria-hidden='true']"
     assert_select "a[href='https://example.com']"
     assert_select "mark", text: "Trusted HTML"
   end
@@ -195,7 +196,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     get "/page.html"
 
     assert_response :success
-    assert_includes response.body, %(<script src="/expand.js" defer></script></body>)
+    assert_includes response.body, %(<script src="#{expand_script_path}" defer></script></body>)
     assert_select "meta[name='csrf-token']"
     assert_includes response.body, "<main>Raw</main>"
   end
@@ -206,7 +207,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     get "/page.html"
 
     assert_response :success
-    assert_includes response.body, %(<script src="/expand.js" defer></script>)
+    assert_includes response.body, %(<script src="#{expand_script_path}" defer></script>)
     assert response.body.start_with?("<main>Raw HTML</main>")
   end
 
@@ -219,7 +220,32 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_select "meta[name='csrf-token']"
-    assert_select "script[src='/expand.js'][defer]"
+    assert_select "script[src='#{expand_script_path}'][defer]"
+  end
+
+  test "embeds a saved scroll anchor for markdown and HTML files" do
+    @user.scroll_positions.create!(file_name: "notes.md", anchor: "saved-heading")
+    @user.scroll_positions.create!(file_name: "page.html", anchor: "saved-section")
+    write_file "notes.md", "# Notes"
+    write_file "page.html", "<main id=\"saved-section\">Raw HTML</main>"
+
+    get "/notes.md"
+    assert_includes response.body, 'window.__scrollAnchor = "saved-heading";'
+
+    get "/page.html"
+    assert_includes response.body, 'window.__scrollAnchor = "saved-section";'
+  end
+
+  test "omits the scroll anchor script when no position was saved" do
+    write_file "notes.md", "# Notes"
+
+    get "/notes.md"
+
+    assert_not_includes response.body, "window.__scrollAnchor"
+  end
+
+  test "the expand script is served under a content digest so edits bust the cache" do
+    assert_match %r{\A/assets/expand-[0-9a-f]{8,}\.js\z}, expand_script_path
   end
 
   test "rejects uploads without a configured bearer token" do
@@ -296,6 +322,10 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
   private
     def write_file(name, content)
       @files_dir.join(name).tap { |path| path.write(content) }
+    end
+
+    def expand_script_path
+      ActionController::Base.helpers.asset_path("expand.js")
     end
 
     def with_env(name, value)

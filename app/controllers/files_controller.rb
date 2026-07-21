@@ -3,7 +3,7 @@ class FilesController < ApplicationController
 
   MARKDOWN_OPTIONS = {
     render: { unsafe: true },
-    extension: { autolink: true },
+    extension: { autolink: true, header_ids: "" },
     parse: { smart: true }
   }.freeze
   FORMATTER = GeminiFormatter
@@ -28,6 +28,7 @@ class FilesController < ApplicationController
   def show
     file_path = resolve_file_path(params[:file_name])
     content = file_path.read(encoding: "UTF-8")
+    @scroll_position = current_user.scroll_positions.find_by(file_name: file_path.basename.to_s)&.anchor
 
     if file_path.extname.downcase == ".html"
       render html: inject_expand_script(content).html_safe, layout: false
@@ -68,7 +69,12 @@ class FilesController < ApplicationController
 
   private
     def inject_expand_script(content)
-      snippet = %(<meta name="csrf-token" content="#{form_authenticity_token}"><script src="/expand.js" defer></script>)
+      scroll_position_script = if @scroll_position
+        %(<script>window.__scrollAnchor = #{@scroll_position.to_json};</script>)
+      else
+        ""
+      end
+      snippet = %(<meta name="csrf-token" content="#{form_authenticity_token}">#{scroll_position_script}<script src="#{helpers.asset_path("expand.js")}" defer></script>)
       if content =~ %r{</body>}i
         content.sub(%r{</body>}i) { "#{snippet}</body>" }
       else

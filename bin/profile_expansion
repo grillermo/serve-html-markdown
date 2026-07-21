@@ -77,6 +77,8 @@ class Driver
     deadline = Time.now + POLL_TIMEOUT_S
     loop do
       response = request(Net::HTTP::Get, "/expansions/#{id}", headers: { "Accept" => "application/json" })
+      raise "Poll failed (#{response.code}): #{response.body}" unless response.code.to_i == 200
+
       data = JSON.parse(response.body)
       poll_seen_ms = (Time.now.to_f * 1000).round
       return [data, poll_seen_ms] if %w[completed failed].include?(data["status"])
@@ -172,19 +174,23 @@ PROVIDERS.each do |provider, params|
   end
 
   options[:runs].times do |i|
-    reset_state!
-    id = driver.create_expansion(use_openai: params[:use_openai])
-    data, poll_seen_ms = driver.poll_until_terminal(id)
-    record = timings_for(id)
+    begin
+      reset_state!
+      id = driver.create_expansion(use_openai: params[:use_openai])
+      data, poll_seen_ms = driver.poll_until_terminal(id)
+      record = timings_for(id)
 
-    if data["status"] == "failed"
-      puts "\n--- #{provider} run #{i + 1}: FAILED (#{record['error_detail']}) ---"
-      puts record["timings"].to_json
-      next
+      if data["status"] == "failed"
+        puts "\n--- #{provider} run #{i + 1}: FAILED (#{record['error_detail']}) ---"
+        puts record["timings"].to_json
+        next
+      end
+
+      print_run_table(provider, i + 1, record["timings"], poll_seen_ms)
+      results[provider] << record["timings"].merge("poll_discovery" => poll_seen_ms)
+    rescue StandardError => e
+      puts "\n--- #{provider} run #{i + 1}: ERRORED (#{e.message}) ---"
     end
-
-    print_run_table(provider, i + 1, record["timings"], poll_seen_ms)
-    results[provider] << record["timings"].merge("poll_discovery" => poll_seen_ms)
   end
 end
 

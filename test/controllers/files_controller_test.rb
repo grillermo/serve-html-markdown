@@ -106,11 +106,13 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_select "mark", text: "Trusted HTML"
   end
 
-  test "redirects to the newest supported file" do
-    older = write_file "older.html", "older"
-    newer = write_file "newer.markdown", "newer"
-    File.utime 2.minutes.ago.to_time, 2.minutes.ago.to_time, older
-    File.utime 1.minute.ago.to_time, 1.minute.ago.to_time, newer
+  test "redirects to the last added file, ignoring modification time" do
+    write_file "older.html", "older"
+    sleep 0.01
+    write_file "newer.markdown", "newer"
+
+    # Modify the older file most recently; added-order must still win.
+    File.utime Time.now, Time.now, @files_dir.join("older.html")
 
     get "/last"
 

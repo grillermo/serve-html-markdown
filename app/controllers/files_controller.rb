@@ -42,7 +42,7 @@ class FilesController < ApplicationController
   def last
     latest = FILES_DIR.children
       .select { |path| path.file? && ALLOWED_EXTENSIONS.include?(path.extname.downcase) }
-      .max_by(&:mtime)
+      .max_by { |path| creation_time(path) }
 
     if latest
       redirect_to "/#{ERB::Util.url_encode(latest.basename.to_s)}", status: :found
@@ -68,6 +68,12 @@ class FilesController < ApplicationController
   end
 
   private
+    def creation_time(path)
+      path.birthtime
+    rescue NotImplementedError
+      path.mtime
+    end
+
     def inject_expand_script(content)
       scroll_position_script = if @scroll_position
         %(<script>window.__scrollAnchor = #{@scroll_position.to_json};</script>)

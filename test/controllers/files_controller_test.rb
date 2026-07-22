@@ -318,6 +318,27 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_empty @files_dir.children
   end
 
+  test "lists served files with a link and updated_at from the database" do
+    ServedFile.create!(name: "older.md", updated_at: 2.days.ago)
+    ServedFile.create!(name: "newer.html", updated_at: 1.hour.ago)
+
+    get "/index"
+
+    assert_response :success
+    assert_select "a[href='/older.md']", text: "older.md"
+    assert_select "a[href='/newer.html']", text: "newer.html"
+  end
+
+  test "orders the index listing by most recently updated first" do
+    ServedFile.create!(name: "older.md", updated_at: 2.days.ago)
+    ServedFile.create!(name: "newer.html", updated_at: 1.hour.ago)
+
+    get "/index"
+
+    names = css_select("table a").map(&:text)
+    assert_equal ["newer.html", "older.md"], names
+  end
+
   test "rejects an empty upload filename" do
     with_env "API_TOKEN", "upload-token" do
       post "/file/new",

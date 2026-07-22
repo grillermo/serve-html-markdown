@@ -39,6 +39,10 @@ class FilesController < ApplicationController
     end
   end
 
+  def index
+    @served_files = ServedFile.order(updated_at: :desc)
+  end
+
   def last
     latest = ServedFile.newest
 

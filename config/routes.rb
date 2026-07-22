@@ -8,5 +8,6 @@ Rails.application.routes.draw do
   get "/favicon.ico", to: proc { [204, {}, []] }
   root "files#last"
   get "/last", to: "files#last"
+  get "/index", to: "files#index"
   get "/:file_name", to: "files#show", constraints: { file_name: /[^\/]+/ }, defaults: { format: :html }
 end

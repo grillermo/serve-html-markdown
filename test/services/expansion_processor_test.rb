@@ -27,6 +27,20 @@ class ExpansionProcessorTest < ActiveSupport::TestCase
     assert_equal "Alpha [beta](/notes--expand-1.html) gamma.", @files_dir.join("notes.md").read
   end
 
+  test "records the new expand file and bumps the source file's updated_at" do
+    @files_dir.join("notes.md").write("Alpha beta gamma.")
+    source_row = ServedFile.create!(name: "notes.md", created_at: 2.days.ago, updated_at: 2.days.ago)
+    original_updated = source_row.updated_at
+
+    with_expander(->(**) { HTML }) do
+      ExpansionProcessor.process(@expansion)
+    end
+
+    assert ServedFile.exists?(name: "notes--expand-1.html"),
+      "expected the new expand file to be recorded"
+    assert_operator ServedFile.find_by!(name: "notes.md").updated_at, :>, original_updated
+  end
+
   test "does not write either file when the expander fails" do
     @files_dir.join("notes.md").write("Alpha beta gamma.")
 

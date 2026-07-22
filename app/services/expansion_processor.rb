@@ -46,6 +46,8 @@ class ExpansionProcessor
       expansion_path.write(html, encoding: "UTF-8")
       file_path.write(rewritten, encoding: "UTF-8")
       @expansion.stamp!(:files_written)
+      ServedFile.record(expansion_path.basename.to_s)
+      ServedFile.record_modification(file_path.basename.to_s)
       url
     end
   end

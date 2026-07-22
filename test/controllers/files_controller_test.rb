@@ -288,6 +288,20 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "formatted markdown", @files_dir.join("note-1.md").read
   end
 
+  test "records the uploaded file in served_files so /last finds it immediately" do
+    with_env "API_TOKEN", "upload-token" do
+      with_formatter(->(*) { "formatted markdown" }) do
+        post "/file/new",
+          params: { content: "source text", filename: "fresh-note.md" },
+          headers: { "Authorization" => "Bearer upload-token" }
+      end
+    end
+
+    assert_response :success
+    created_name = URI(response.parsed_body.fetch("url")).path.delete_prefix("/")
+    assert ServedFile.exists?(name: created_name)
+  end
+
   test "returns a generic bad gateway response when Gemini fails" do
     formatter = ->(*) { raise GeminiFormatter::Error, "sensitive upstream detail" }
 

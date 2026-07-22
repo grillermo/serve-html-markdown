@@ -60,6 +60,7 @@ class FilesController < ApplicationController
     file_path = unique_file_path(params[:filename])
     formatted = FORMATTER.format(content)
     file_path.write(formatted, encoding: "UTF-8")
+    ServedFile.record(file_path.basename.to_s)
 
     host = ENV.fetch("HOST", "localhost")
     render json: { url: "https://#{host}/#{file_path.basename}" }

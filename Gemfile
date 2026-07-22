@@ -11,6 +11,7 @@ gem "pg", "~> 1.5"
 # Authentication
 gem "devise", "~> 4.9"
 gem "commonmarker", "~> 1.1"
+gem "listen"
 gem "dotenv-rails"
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem

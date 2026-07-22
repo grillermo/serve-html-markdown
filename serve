@@ -8,4 +8,8 @@ set -eu
 bin/rails assets:clobber
 bin/rails assets:precompile
 
-exec bin/rails server -p 8009 "$@"
+# Run the web server and the files/ watcher side by side. --ungroup streams each
+# job's output live; --halt now,done=1 stops the other job the moment one exits.
+exec parallel --ungroup --halt now,done=1 ::: \
+  "bin/rails server -p 8009 $*" \
+  "bin/watch"

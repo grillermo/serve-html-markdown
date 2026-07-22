@@ -40,5 +40,8 @@ module ServeHtmlMarkdown
     config.generators.system_tests = nil
 
     config.cache_store = :null_store
+
+    # Keep /health check requests out of the STDOUT request logs.
+    config.silence_healthcheck_path = "/health"
   end
 end

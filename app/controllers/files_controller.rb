@@ -40,12 +40,10 @@ class FilesController < ApplicationController
   end
 
   def last
-    latest = FILES_DIR.children
-      .select { |path| path.file? && ALLOWED_EXTENSIONS.include?(path.extname.downcase) }
-      .max_by { |path| creation_time(path) }
+    latest = ServedFile.newest
 
     if latest
-      redirect_to "/#{ERB::Util.url_encode(latest.basename.to_s)}", status: :found
+      redirect_to "/#{ERB::Util.url_encode(latest.name)}", status: :found
     else
       render json: { detail: "No files found." }, status: :not_found
     end
@@ -68,12 +66,6 @@ class FilesController < ApplicationController
   end
 
   private
-    def creation_time(path)
-      path.birthtime
-    rescue NotImplementedError
-      path.mtime
-    end
-
     def inject_expand_script(content)
       scroll_position_script = if @scroll_position
         %(<script>window.__scrollAnchor = #{@scroll_position.to_json};</script>)

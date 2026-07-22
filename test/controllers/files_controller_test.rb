@@ -106,13 +106,9 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_select "mark", text: "Trusted HTML"
   end
 
-  test "redirects to the last added file, ignoring modification time" do
-    write_file "older.html", "older"
-    sleep 0.01
-    write_file "newer.markdown", "newer"
-
-    # Modify the older file most recently; added-order must still win.
-    File.utime Time.now, Time.now, @files_dir.join("older.html")
+  test "redirects to the last added file from the served_files table" do
+    ServedFile.create!(name: "older.html", created_at: 2.days.ago)
+    ServedFile.create!(name: "newer.markdown", created_at: 1.day.ago)
 
     get "/last"
 
@@ -120,9 +116,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to "/newer.markdown"
   end
 
-  test "returns JSON not found when no supported files exist" do
-    write_file "ignored.txt", "ignored"
-
+  test "returns JSON not found when the served_files table is empty" do
     get "/"
 
     assert_response :not_found

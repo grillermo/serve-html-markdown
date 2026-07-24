@@ -11,6 +11,8 @@ gem "pg", "~> 1.5"
 # Authentication
 gem "devise", "~> 4.9"
 gem "commonmarker", "~> 1.1"
+gem "google-apis-youtube_v3", "~> 0.60"
+gem "signet", "~> 0.19"
 gem "listen"
 gem "dotenv-rails"
 

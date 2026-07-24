@@ -5,6 +5,12 @@ class TwitterVideo < ApplicationRecord
   validates :source_url, presence: true
   validates :status, inclusion: { in: STATUSES }
 
+  # Rows for the same tweet, ignoring any tracking query string.
+  scope :for_source_url, ->(url) {
+    canonical = url.to_s.split("?").first
+    where("source_url = ? OR source_url LIKE ?", canonical, "#{canonical}?%")
+  }
+
   def fail!(detail)
     update!(status: "failed", error_detail: detail)
   end

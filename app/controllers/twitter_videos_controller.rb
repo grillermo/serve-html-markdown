@@ -6,10 +6,13 @@ class TwitterVideosController < ApplicationController
     return render_unauthorized unless authenticated?
 
     source_url = TwitterUrl.normalize(params[:url])
-    video = TwitterVideo.create!(source_url: source_url, status: "downloading")
+    existing = TwitterVideo.for_source_url(source_url).order(id: :desc).first
+    video = existing || TwitterVideo.create!(source_url: source_url, status: "downloading")
+    Rails.logger.info("[TwitterVideosController] ##{video.id} #{existing ? 'retrying' : 'enqueued'} for #{source_url}")
     TwitterVideoIngestJob.perform_later(video.id)
     render json: { id: video.id, status: video.status }, status: :accepted
   rescue TwitterUrl::InvalidError => error
+    Rails.logger.warn("[TwitterVideosController] rejected invalid url: #{params[:url].inspect}")
     render json: { detail: error.message }, status: :bad_request
   end
 

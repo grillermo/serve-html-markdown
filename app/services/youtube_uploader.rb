@@ -30,7 +30,8 @@ class YoutubeUploader
     )
     result.id
   rescue Google::Apis::Error => error
-    raise Error, "YouTube upload failed: #{error.class}"
+    raise Error, "YouTube upload failed: #{error.class} status=#{error.status_code} " \
+                 "#{error.message} body=#{error.body}"
   end
 
   private

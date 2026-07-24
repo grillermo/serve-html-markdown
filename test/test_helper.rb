@@ -1,4 +1,5 @@
 ENV["RAILS_ENV"] ||= "test"
+ENV["VIDEOS_DIR"] ||= File.expand_path("../tmp/test-videos", __dir__)
 require_relative "../config/environment"
 require "rails/test_help"
 

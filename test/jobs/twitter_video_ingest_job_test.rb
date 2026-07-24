@@ -1,4 +1,5 @@
 require "test_helper"
+require "tempfile"
 
 class TwitterVideoIngestJobTest < ActiveJob::TestCase
   setup do
@@ -24,6 +25,35 @@ class TwitterVideoIngestJobTest < ActiveJob::TestCase
     assert @slack.successes.any?
   end
 
+  test "downloads into the permanent videos dir and records the path" do
+    TwitterVideoIngestJob.perform_now(@video.id)
+
+    @video.reload
+    assert_equal TwitterVideoIngestJob::VIDEOS_DIR.join("x.mp4").to_s, @video.video_path
+  end
+
+  test "reuses an already downloaded file for the same source url" do
+    existing = Tempfile.create(["reused", ".mp4"])
+    TwitterVideo.create!(source_url: "https://x.com/foo/status/1?s=20", status: "done",
+                         video_path: existing.path, youtube_title: "Cached Title")
+    TwitterVideoIngestJob.ytdlp = ->(*) { raise "must not download again" }
+
+    TwitterVideoIngestJob.perform_now(@video.id)
+
+    @video.reload
+    assert_equal "awaiting_captions", @video.status
+    assert_equal existing.path, @video.video_path
+    assert_equal "Cached Title", @video.youtube_title
+  end
+
+  test "re-downloads when the recorded file is gone" do
+    @video.update!(video_path: "/nonexistent/gone.mp4")
+
+    TwitterVideoIngestJob.perform_now(@video.id)
+
+    assert_equal TwitterVideoIngestJob::VIDEOS_DIR.join("x.mp4").to_s, @video.reload.video_path
+  end
+
   test "marks failed and notifies on download error" do
     TwitterVideoIngestJob.ytdlp = ->(*) { raise YtdlpClient::Error, "gone" }
     TwitterVideoIngestJob.perform_now(@video.id)
@@ -33,7 +63,12 @@ class TwitterVideoIngestJobTest < ActiveJob::TestCase
   end
 
   class FakeYtdlp
-    def download(_url, _dir) = { path: Pathname.new("/tmp/x.mp4"), title: "Tweet Title" }
+    def download(_url, dir)
+      path = Pathname.new(dir).join("x.mp4")
+      FileUtils.mkdir_p(dir)
+      FileUtils.touch(path)
+      { path: path, title: "Tweet Title" }
+    end
   end
   class FakeUploader
     def initialize(id) = (@id = id)

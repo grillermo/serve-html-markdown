@@ -48,3 +48,6 @@ files/**
 .tokensave/tokensave.db
 .tokensave/tokensave.db-shm
 .tokensave/tokensave.db-wal
+
+/videos/
+/tmp/test-videos/

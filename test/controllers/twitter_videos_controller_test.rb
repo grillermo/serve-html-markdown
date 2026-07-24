@@ -22,6 +22,21 @@ class TwitterVideosControllerTest < ActionDispatch::IntegrationTest
     assert_equal "downloading", body["status"]
   end
 
+  test "reuses an existing row for the same tweet and re-enqueues ingest" do
+    existing = TwitterVideo.create!(source_url: "https://x.com/a/status/7?s=20", status: "failed")
+
+    assert_no_difference -> { TwitterVideo.count } do
+      assert_enqueued_with(job: TwitterVideoIngestJob, args: [existing.id]) do
+        post "/twitter-video",
+          params: { url: "https://twitter.com/a/status/7" }, as: :json,
+          headers: { "Authorization" => "Bearer secret-token" }
+      end
+    end
+
+    assert_response :accepted
+    assert_equal existing.id, JSON.parse(response.body)["id"]
+  end
+
   test "rejects an invalid url" do
     post "/twitter-video",
       params: { url: "https://youtube.com/watch?v=x" }, as: :json,

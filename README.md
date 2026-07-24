@@ -34,6 +34,31 @@ HOST=example.com
 
 The `.env` file and served files are ignored by Git.
 
+## Twitter video → HTML
+
+`POST /twitter-video` (bearer `API_TOKEN`, body `{ "url": "<x.com status url>" }`)
+downloads the tweet's video, uploads it unlisted to YouTube for auto-captions,
+summarizes the transcript with Gemini, saves an HTML page, and pushes a link to
+[rulinky](../rulinky). Poll `GET /twitter-video/:id` for status.
+
+Requires `yt-dlp` on `PATH` (or set `YTDLP_BIN`).
+
+### YouTube API setup
+
+1. Create a project at <https://console.cloud.google.com/>.
+2. Enable the **YouTube Data API v3** (APIs & Services → Library).
+3. Configure the **OAuth consent screen** (External; add your Google account as
+   a test user).
+4. Create an **OAuth client ID** of type **Desktop app**. Copy the client ID and
+   secret into `.env` as `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`.
+5. Run `rake youtube:refresh_token`, open the printed URL, approve, paste the
+   code back. Copy the printed `YOUTUBE_REFRESH_TOKEN` into `.env`.
+
+### rulinky + Slack
+
+Set `RULINKY_HOST` and `RULINKY_API_TOKEN` (a rulinky user's API token), plus
+`SLACK_SUCCESS_WEBHOOK` and `SLACK_FAILURE_WEBHOOK` incoming-webhook URLs.
+
 ## Authentication
 
 Viewing served files requires signing in. Configure `ADMIN_EMAIL` and

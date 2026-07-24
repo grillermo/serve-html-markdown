@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_22_015104) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_23_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -48,6 +48,20 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_015104) do
     t.string "name", null: false
     t.datetime "updated_at", null: false
     t.index ["name"], name: "index_served_files_on_name", unique: true
+  end
+
+  create_table "twitter_videos", force: :cascade do |t|
+    t.integer "caption_attempts", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.text "error_detail"
+    t.string "html_filename"
+    t.string "rulinky_link_id"
+    t.string "source_url", null: false
+    t.string "status", default: "downloading", null: false
+    t.datetime "updated_at", null: false
+    t.datetime "upload_completed_at"
+    t.string "youtube_id"
+    t.string "youtube_title"
   end
 
   create_table "users", force: :cascade do |t|

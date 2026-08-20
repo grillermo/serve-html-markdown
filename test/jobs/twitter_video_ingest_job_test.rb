@@ -25,6 +25,13 @@ class TwitterVideoIngestJobTest < ActiveJob::TestCase
     assert @slack.successes.any?
   end
 
+  test "posts the studio edit link to slack after upload" do
+    TwitterVideoIngestJob.perform_now(@video.id)
+
+    assert_includes @slack.successes.last, "https://studio.youtube.com/video/YT9/edit"
+    assert_includes @slack.successes.last, "unlisted"
+  end
+
   test "downloads into the permanent videos dir and records the path" do
     TwitterVideoIngestJob.perform_now(@video.id)
 

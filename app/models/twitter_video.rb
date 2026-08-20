@@ -1,6 +1,8 @@
 class TwitterVideo < ApplicationRecord
   STATUSES = %w[downloading uploading awaiting_captions summarizing publishing done failed].freeze
-  CHECKPOINTS = [5, 10, 20, 30, 40, 60, 120].freeze # minutes, elapsed from upload_completed_at
+  # Minutes elapsed from upload_completed_at. The last two are 1 and 2 days out, for
+  # videos whose auto-captions only show up long after upload.
+  CHECKPOINTS = [5, 10, 20, 30, 40, 60, 120, 1440, 2880].freeze
 
   validates :source_url, presence: true
   validates :status, inclusion: { in: STATUSES }

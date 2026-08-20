@@ -3,9 +3,8 @@ require "active_support/core_ext/integer/time"
 Rails.application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
 
-  config.active_job.queue_adapter = ActiveJob::QueueAdapters::AsyncAdapter.new(
-    min_threads: 1, max_threads: 2, max_queue: 100
-  )
+  # Solid Queue lives in the primary database, so no connects_to is needed.
+  config.active_job.queue_adapter = :solid_queue
 
   # Code is not reloaded between requests.
   config.enable_reloading = false
@@ -36,6 +35,9 @@ Rails.application.configure do
 
   # Log to STDOUT with the current request id as a default log tag.
   config.log_tags = [ :request_id ]
+  # Unbuffered, so logs and puts from the web server and the Solid Queue workers
+  # appear live in the terminal running ./serve instead of sitting in a pipe buffer.
+  $stdout.sync    = true
   config.logger   = ActiveSupport::TaggedLogging.logger(STDOUT)
 
   # Change to "debug" to log everything (including potentially personally-identifiable information!).

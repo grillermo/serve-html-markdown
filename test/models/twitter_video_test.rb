@@ -23,6 +23,17 @@ class TwitterVideoTest < ActiveSupport::TestCase
     assert_equal 0, v.next_caption_wait(now: t0 + 15 * 60)
   end
 
+  test "checks again one and two days after upload" do
+    t0 = Time.utc(2026, 7, 23, 12, 0, 0)
+    v = TwitterVideo.create!(source_url: "u", status: "awaiting_captions",
+                             caption_attempts: TwitterVideo::CHECKPOINTS.length - 2,
+                             upload_completed_at: t0)
+    assert_equal 1.day.to_i, v.next_caption_wait(now: t0)
+
+    v.update!(caption_attempts: TwitterVideo::CHECKPOINTS.length - 1)
+    assert_equal 2.days.to_i, v.next_caption_wait(now: t0)
+  end
+
   test "next_caption_wait is nil once checkpoints are exhausted" do
     v = TwitterVideo.create!(source_url: "u", status: "awaiting_captions",
                              caption_attempts: TwitterVideo::CHECKPOINTS.length,

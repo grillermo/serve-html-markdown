@@ -50,7 +50,7 @@ class TwitterVideoCaptionsJob < ApplicationJob
       if wait.nil?
         Rails.logger.warn("[TwitterVideoCaptionsJob] ##{video.id} captions never became available, giving up")
         video.fail!("Auto-captions never became available.")
-        self.class.slack.call.failure("[twitter-video ##{video.id}] captions timed out after #{TwitterVideo::CHECKPOINTS.last} min")
+        self.class.slack.call.failure("[twitter-video ##{video.id}] captions timed out after #{TwitterVideo::CHECKPOINTS.last.minutes.inspect}")
       else
         Rails.logger.info("[TwitterVideoCaptionsJob] ##{video.id} not ready, retrying in #{wait}s (attempt #{video.caption_attempts})")
         self.class.slack.call.success("[twitter-video ##{video.id}] captions not ready (attempt #{video.caption_attempts}); retrying")

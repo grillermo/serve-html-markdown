@@ -7,6 +7,9 @@ class TwitterVideoIngestJob < ApplicationJob
   # Permanent store, so a failed ingest can be retried without re-downloading.
   VIDEOS_DIR = Pathname.new(ENV.fetch("VIDEOS_DIR") { Rails.root.join("videos").to_s }).expand_path
 
+  # Uploads land private while the OAuth app is unverified; flip them by hand here.
+  STUDIO_EDIT_URL = "https://studio.youtube.com/video/%s/edit".freeze
+
   class << self
     attr_writer :ytdlp, :uploader, :slack
 
@@ -42,8 +45,9 @@ class TwitterVideoIngestJob < ApplicationJob
     )
     video.update!(status: "awaiting_captions", youtube_id: youtube_id,
                   upload_completed_at: Time.current)
-    Rails.logger.info("[TwitterVideoIngestJob] ##{video.id} uploaded unlisted: youtube_id=#{youtube_id}")
-    slack.success("[twitter-video ##{video.id}] uploaded unlisted: #{youtube_id}")
+    Rails.logger.info("[TwitterVideoIngestJob] ##{video.id} uploaded: youtube_id=#{youtube_id}")
+    slack.success("[twitter-video ##{video.id}] uploaded: #{video.youtube_title}\n" \
+                  "set it to unlisted: #{STUDIO_EDIT_URL % youtube_id}")
 
     wait = TwitterVideo::CHECKPOINTS.first.minutes
     Rails.logger.info("[TwitterVideoIngestJob] ##{video.id} scheduling first caption check in #{wait.inspect}")

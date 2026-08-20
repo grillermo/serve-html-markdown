@@ -68,7 +68,7 @@
 
   function removeUI() {
     if (button) { button.remove(); button = null; }
-    if (popover) { popover.remove(); popover = null; }
+    if (popover) { popover.remove(); popover = null; untrackKeyboard(); }
   }
 
   function occurrenceIndex(range, text) {
@@ -110,7 +110,7 @@
       zIndex: "9999"
     });
     button.addEventListener("mousedown", (event) => event.preventDefault());
-    button.addEventListener("click", () => showPopover(rect));
+    button.addEventListener("click", () => showPopover());
     document.body.appendChild(button);
   }
 
@@ -236,26 +236,83 @@
       });
   }
 
-  function showPopover(rect) {
+  // The sheet is anchored to the bottom of the viewport instead of floating at
+  // the selection: a fixed position keeps it clear of the native iOS selection
+  // handles, and 16px inputs stop Safari from zooming in when they take focus.
+  let viewportHandler = null;
+
+  function trackKeyboard(sheet) {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+
+    viewportHandler = () => {
+      if (!sheet.isConnected) return;
+      const overlap = window.innerHeight - (viewport.height + viewport.offsetTop);
+      sheet.style.transform = `translateY(-${Math.max(0, overlap)}px)`;
+    };
+    viewport.addEventListener("resize", viewportHandler);
+    viewport.addEventListener("scroll", viewportHandler);
+    viewportHandler();
+  }
+
+  function untrackKeyboard() {
+    if (!viewportHandler || !window.visualViewport) return;
+    window.visualViewport.removeEventListener("resize", viewportHandler);
+    window.visualViewport.removeEventListener("scroll", viewportHandler);
+    viewportHandler = null;
+  }
+
+  function showPopover() {
     if (button) { button.remove(); button = null; }
 
     popover = document.createElement("form");
     Object.assign(popover.style, {
-      position: "absolute",
-      left: `${window.scrollX + rect.left}px`,
-      top: `${window.scrollY + rect.bottom + 8}px`,
-      width: "320px",
-      padding: "12px",
-      borderRadius: "8px",
-      border: "1px solid #555",
+      position: "fixed",
+      left: "0",
+      right: "0",
+      bottom: "0",
+      boxSizing: "border-box",
+      width: "100%",
+      maxWidth: "640px",
+      margin: "0 auto",
+      padding: "12px 16px calc(12px + env(safe-area-inset-bottom))",
+      borderRadius: "12px 12px 0 0",
+      borderTop: "1px solid #555",
       background: "#1b1b1b",
       color: "#eee",
       zIndex: "9999",
       display: "flex",
       flexDirection: "column",
       gap: "8px",
-      font: "14px system-ui, sans-serif"
+      font: "16px system-ui, sans-serif",
+      boxShadow: "0 -8px 24px rgba(0, 0, 0, 0.45)",
+      transition: "transform 0.15s ease-out"
     });
+
+    const header = document.createElement("div");
+    Object.assign(header.style, {
+      display: "flex", alignItems: "center", gap: "12px", minWidth: "0"
+    });
+
+    const quote = document.createElement("span");
+    quote.textContent = `“${currentSelection.text}”`;
+    Object.assign(quote.style, {
+      flex: "1", minWidth: "0", overflow: "hidden",
+      textOverflow: "ellipsis", whiteSpace: "nowrap",
+      fontSize: "14px", color: "#aaa"
+    });
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Close expansion form");
+    Object.assign(close.style, {
+      flex: "0 0 auto", border: "0", background: "transparent", color: "inherit",
+      font: "26px/1 system-ui, sans-serif", cursor: "pointer", padding: "0 4px"
+    });
+    close.addEventListener("click", removeUI);
+
+    header.append(quote, close);
 
     const textarea = document.createElement("textarea");
     textarea.placeholder = "Ask about this selection…";
@@ -266,9 +323,10 @@
       background: "#111",
       color: "#eee",
       border: "1px solid #444",
-      borderRadius: "4px",
-      padding: "6px",
-      font: "inherit"
+      borderRadius: "6px",
+      padding: "8px",
+      font: "inherit",
+      fontSize: "16px" // keeps iOS from zooming the page on focus
     });
 
     textarea.addEventListener("keydown", (event) => {
@@ -278,36 +336,49 @@
       }
     });
 
+    const actions = document.createElement("div");
+    Object.assign(actions.style, {
+      display: "flex", alignItems: "center", gap: "12px"
+    });
+
     const openaiLabel = document.createElement("label");
     Object.assign(openaiLabel.style, {
       display: "flex",
       alignItems: "center",
       gap: "6px",
       font: "inherit",
+      fontSize: "16px",
       cursor: "pointer"
     });
     const openaiCheckbox = document.createElement("input");
     openaiCheckbox.type = "checkbox";
+    Object.assign(openaiCheckbox.style, { width: "20px", height: "20px" });
     openaiLabel.append(openaiCheckbox, document.createTextNode("Use OpenAI"));
 
     const submit = document.createElement("button");
     submit.type = "submit";
     submit.textContent = "Expand";
     Object.assign(submit.style, {
-      padding: "6px 12px",
+      marginLeft: "auto",
+      minHeight: "44px",
+      padding: "10px 20px",
       background: "#2d5a88",
       color: "#fff",
       border: "none",
-      borderRadius: "4px",
+      borderRadius: "6px",
       cursor: "pointer",
-      font: "inherit"
+      font: "inherit",
+      fontSize: "16px"
     });
+
+    actions.append(openaiLabel, submit);
 
     const message = document.createElement("div");
     message.style.color = "#e08080";
     message.style.minHeight = "1em";
+    message.style.fontSize = "14px";
 
-    popover.append(textarea, openaiLabel, submit, message);
+    popover.append(header, textarea, actions, message);
     popover.addEventListener("submit", (event) => {
       event.preventDefault();
       submit.disabled = true;
@@ -348,6 +419,7 @@
     });
 
     document.body.appendChild(popover);
+    trackKeyboard(popover);
     textarea.focus();
   }
 

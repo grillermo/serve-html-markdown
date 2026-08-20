@@ -2,6 +2,7 @@ Rails.application.routes.draw do
   devise_for :users
   match "/health", to: proc { [200, {}, [""]] }, via: :head
   post "/file/new", to: "files#create"
+  post "/file/upload", to: "files#upload"
   post "/twitter-video", to: "twitter_videos#create"
   get "/twitter-video/:id", to: "twitter_videos#show", constraints: { id: /\d+/ }
   post "/expansions", to: "expansions#create"

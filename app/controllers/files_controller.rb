@@ -7,9 +7,15 @@ class FilesController < ApplicationController
     parse: { smart: true }
   }.freeze
   FORMATTER = GeminiFormatter
+  UPLOAD_EXTENSIONS = {
+    ".html" => ".html",
+    ".htm" => ".html",
+    ".md" => ".md",
+    ".markdown" => ".md"
+  }.freeze
 
-  skip_forgery_protection only: :create
-  skip_before_action :authenticate_user!, only: :create
+  skip_forgery_protection only: [:create, :upload]
+  skip_before_action :authenticate_user!, only: [:create, :upload]
 
   rescue_from ActionController::BadRequest do |error|
     render json: { detail: error.message }, status: :bad_request
@@ -66,11 +72,45 @@ class FilesController < ApplicationController
     file_path.write(formatted, encoding: "UTF-8")
     ServedFile.record(file_path.basename.to_s)
 
-    host = ENV.fetch("HOST", "localhost")
-    render json: { url: "https://#{host}/#{file_path.basename}" }
+    render json: { url: public_url(file_path) }
+  end
+
+  def upload
+    unless authenticated?
+      return render json: { detail: "Unauthorized" }, status: :unauthorized
+    end
+
+    file = params[:file]
+    raise ActionController::BadRequest, "Missing file." unless file.respond_to?(:read)
+
+    filename = params[:filename].presence || file.try(:original_filename)
+    file_path = unique_file_path(filename, extension: upload_extension(filename))
+    file_path.write(utf8_contents(file), encoding: "UTF-8")
+    ServedFile.record(file_path.basename.to_s)
+
+    render json: { url: public_url(file_path) }
   end
 
   private
+    def public_url(file_path)
+      host = ENV.fetch("HOST", "localhost")
+      "https://#{host}/#{file_path.basename}"
+    end
+
+    def upload_extension(filename)
+      extension = File.extname(File.basename(filename.to_s.tr("\\", "/"))).downcase
+      UPLOAD_EXTENSIONS.fetch(extension) do
+        raise ActionController::BadRequest, "Only .html, .md, and .markdown files are supported."
+      end
+    end
+
+    def utf8_contents(file)
+      contents = file.read.to_s.dup.force_encoding(Encoding::UTF_8)
+      raise ActionController::BadRequest, "File must be UTF-8 text." unless contents.valid_encoding?
+
+      contents
+    end
+
     def inject_expand_script(content)
       scroll_position_script = if @scroll_position
         %(<script>window.__scrollAnchor = #{@scroll_position.to_json};</script>)
@@ -95,7 +135,7 @@ class FilesController < ApplicationController
         ActiveSupport::SecurityUtils.secure_compare(authorization, expected)
     end
 
-    def unique_file_path(filename)
+    def unique_file_path(filename, extension: ".md")
       normalized = filename.to_s.tr("\\", "/")
       basename = File.basename(normalized)
       stem = File.basename(basename, File.extname(basename))
@@ -104,7 +144,7 @@ class FilesController < ApplicationController
       counter = 0
       loop do
         suffix = counter.zero? ? "" : "-#{counter}"
-        candidate = FILES_DIR.join("#{stem}#{suffix}.md").expand_path
+        candidate = FILES_DIR.join("#{stem}#{suffix}#{extension}").expand_path
         root_prefix = "#{FILES_DIR}#{File::SEPARATOR}"
         raise ActionController::BadRequest, "Invalid filename." unless candidate.to_s.start_with?(root_prefix)
 

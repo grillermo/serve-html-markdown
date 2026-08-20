@@ -350,9 +350,141 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "detail" => "Invalid filename." }, response.parsed_body)
   end
 
+  test "rejects an unauthenticated file upload" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload", params: { file: markdown_upload("# Hi", "note.md") }
+    end
+
+    assert_response :unauthorized
+    assert_empty @files_dir.children
+  end
+
+  test "stores an uploaded markdown file verbatim without formatting" do
+    write_file "note.md", "existing"
+
+    with_env "API_TOKEN", "upload-token" do
+      with_env "HOST", "reader.example" do
+        with_formatter(->(*) { raise "formatter must not be called" }) do
+          post "/file/upload",
+            params: { file: markdown_upload("# Hi\n", "note.md"), filename: "../nested/note.markdown" },
+            headers: { "Authorization" => "Bearer upload-token" }
+        end
+      end
+    end
+
+    assert_response :success
+    assert_equal({ "url" => "https://reader.example/note-1.md" }, response.parsed_body)
+    assert_equal "# Hi\n", @files_dir.join("note-1.md").read
+    assert ServedFile.exists?(name: "note-1.md")
+  end
+
+  test "keeps the html extension for uploaded html files" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("<main>Hi</main>", "page.html", type: "text/html") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :success
+    assert_equal "<main>Hi</main>", @files_dir.join("page.html").read
+    assert ServedFile.exists?(name: "page.html")
+  end
+
+  test "rejects uploaded files with an unsupported extension" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("plain", "note.txt", type: "text/plain") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal(
+      { "detail" => "Only .html, .md, and .markdown files are supported." },
+      response.parsed_body
+    )
+    assert_empty @files_dir.children
+  end
+
+  test "rejects an upload without a file" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { filename: "note.md" },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal({ "detail" => "Missing file." }, response.parsed_body)
+  end
+
+  test "rejects uploaded files that are not valid UTF-8 text" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("\xff\xfe binary".b, "note.md") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal({ "detail" => "File must be UTF-8 text." }, response.parsed_body)
+    assert_empty @files_dir.children
+  end
+
+  test "serves an uploaded markdown file with the expand script and csrf token" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("# Uploaded\n", "uploaded.md") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+    assert_response :success
+
+    with_forgery_protection do
+      get "/uploaded.md"
+    end
+
+    assert_response :success
+    assert_select "h1", text: "Uploaded"
+    assert_select "meta[name='csrf-token']"
+    assert_select "script[src='#{expand_script_path}'][defer]"
+  end
+
+  test "serves an uploaded HTML file with the expand script and csrf token" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: {
+          file: markdown_upload("<html><body><main>Uploaded</main></body></html>", "uploaded.html", type: "text/html")
+        },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+    assert_response :success
+
+    get "/uploaded.html"
+
+    assert_response :success
+    assert_includes response.body, "<main>Uploaded</main>"
+    assert_includes response.body, %(<script src="#{expand_script_path}" defer></script></body>)
+    assert_select "meta[name='csrf-token']"
+  end
+
+  test "an uploaded file becomes the newest file for /last" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("# Newest\n", "newest.md") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    get "/last"
+
+    assert_redirected_to "/newest.md"
+  end
+
   private
     def write_file(name, content)
       @files_dir.join(name).tap { |path| path.write(content) }
+    end
+
+    def markdown_upload(content, name, type: "text/markdown")
+      path = Pathname.new(Dir.mktmpdir("upload", @files_parent)).join(name)
+      path.binwrite(content)
+      Rack::Test::UploadedFile.new(path.to_s, type)
     end
 
     def expand_script_path

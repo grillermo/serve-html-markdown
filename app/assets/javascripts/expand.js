@@ -4,6 +4,56 @@
   let button = null;
   let popover = null;
   let currentSelection = null;
+  let versionBar = null;
+
+  function renderVersionBar() {
+    const versions = Array.isArray(window.__fileVersions) ? window.__fileVersions : [];
+    if (versions.length < 2) return;
+
+    const index = versions.findIndex((version) => version.current);
+    if (index === -1) return;
+
+    versionBar = document.createElement("nav");
+    versionBar.setAttribute("aria-label", "Document versions");
+    Object.assign(versionBar.style, {
+      position: "fixed", left: "0", right: "0", bottom: "0",
+      display: "flex", alignItems: "center", justifyContent: "center", gap: "16px",
+      padding: "8px 12px calc(8px + env(safe-area-inset-bottom))",
+      background: "#1b1b1b", color: "#eee", borderTop: "1px solid #555",
+      font: "14px system-ui, sans-serif", zIndex: "9998"
+    });
+
+    const label = document.createElement("span");
+    label.textContent = `v${versions[index].version} of ${versions.length}`;
+
+    versionBar.append(
+      versionArrow("‹", "Previous version", versions[index - 1]),
+      label,
+      versionArrow("›", "Next version", versions[index + 1])
+    );
+    document.body.appendChild(versionBar);
+  }
+
+  function versionArrow(glyph, label, target) {
+    const arrow = document.createElement("a");
+    arrow.textContent = glyph;
+    arrow.setAttribute("aria-label", label);
+    Object.assign(arrow.style, {
+      display: "flex", alignItems: "center", justifyContent: "center",
+      minWidth: "44px", minHeight: "44px", textDecoration: "none",
+      font: "22px/1 system-ui, sans-serif"
+    });
+
+    if (target) {
+      arrow.href = target.url;
+      arrow.style.color = "#bb86fc";
+    } else {
+      arrow.setAttribute("aria-disabled", "true");
+      arrow.style.color = "#555";
+      arrow.style.pointerEvents = "none";
+    }
+    return arrow;
+  }
 
   const CSRF = () => {
     const meta = document.querySelector("meta[name='csrf-token']");
@@ -66,6 +116,8 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    renderVersionBar();
+
     if (scrollToRequestedTarget()) return;
     if (typeof window.__scrollAnchor !== "string") return;
 
@@ -90,6 +142,7 @@
   function removeUI() {
     if (button) { button.remove(); button = null; }
     if (popover) { popover.remove(); popover = null; untrackKeyboard(); }
+    if (versionBar) versionBar.style.display = "";
   }
 
   function occurrenceIndex(range, text) {
@@ -491,6 +544,7 @@
 
     document.body.appendChild(popover);
     trackKeyboard(popover);
+    if (versionBar) versionBar.style.display = "none";
     textarea.focus();
   }
 

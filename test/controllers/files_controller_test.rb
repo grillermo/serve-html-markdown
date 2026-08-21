@@ -476,6 +476,47 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to "/newest.md"
   end
 
+  test "rejects a created file whose name uses the reserved version suffix" do
+    with_env "API_TOKEN", "create-token" do
+      post "/file/new",
+        params: { content: "# Hi", filename: "report--v2.md" },
+        headers: { "Authorization" => "Bearer create-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal(
+      { "detail" => "Filenames may not use the reserved --v<number> suffix." },
+      response.parsed_body
+    )
+    assert_empty @files_dir.children
+  end
+
+  test "rejects an uploaded file whose name uses the reserved version suffix" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("# Hi", "report--v10.md") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal(
+      { "detail" => "Filenames may not use the reserved --v<number> suffix." },
+      response.parsed_body
+    )
+    assert_empty @files_dir.children
+  end
+
+  test "allows filenames that merely resemble the reserved suffix" do
+    with_env "API_TOKEN", "create-token" do
+      post "/file/new",
+        params: { content: "# Hi", filename: "report-v2.md" },
+        headers: { "Authorization" => "Bearer create-token" }
+    end
+
+    assert_response :success
+    assert @files_dir.join("report-v2.md").exist?
+  end
+
   private
     def write_file(name, content)
       @files_dir.join(name).tap { |path| path.write(content) }

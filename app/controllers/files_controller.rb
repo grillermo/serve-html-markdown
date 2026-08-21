@@ -141,6 +141,10 @@ class FilesController < ApplicationController
       stem = File.basename(basename, File.extname(basename))
       raise ActionController::BadRequest, "Invalid filename." if stem.blank? || %w[. ..].include?(stem)
 
+      if stem.match?(FileVersions::RESERVED_SUFFIX)
+        raise ActionController::BadRequest, "Filenames may not use the reserved --v<number> suffix."
+      end
+
       counter = 0
       loop do
         suffix = counter.zero? ? "" : "-#{counter}"

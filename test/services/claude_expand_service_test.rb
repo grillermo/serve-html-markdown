@@ -1,15 +1,25 @@
 require "test_helper"
 require "stringio"
 
+# Minitest 6 dropped Minitest::Mock, so `.stub` isn't available by default.
+# This polyfill captures and restores the original method rather than removing
+# it outright: some call sites here stub class-level methods (e.g.
+# Net::HTTP.stub(:start, ...)) that are defined directly on their singleton
+# class with no ancestor to fall back to, so a bare remove_method would delete
+# them for the rest of the process and break later, unrelated tests.
 unless Object.method_defined?(:stub)
   class Object
     def stub(method_name, callable, &block)
+      has_original = singleton_class.method_defined?(method_name) || singleton_class.private_method_defined?(method_name)
+      original = singleton_class.instance_method(method_name) if has_original
+
       singleton_class.define_method(method_name) do |*args, &method_block|
         callable.call(*args, &method_block)
       end
       block.call
     ensure
       singleton_class.remove_method(method_name)
+      singleton_class.define_method(method_name, original) if original
     end
   end
 end

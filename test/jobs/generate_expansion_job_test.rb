@@ -1,14 +1,19 @@
 require "test_helper"
 
-# Minitest 6 dropped Minitest::Mock, so `.stub` isn't available by default.
-# Unlike the polyfill in test/services/claude_expand_service_test.rb, this one
-# captures and restores the original method rather than removing it outright:
-# ExpansionProcessor.process is defined directly on ExpansionProcessor's
-# singleton class (no ancestor to fall back to), so a bare remove_method would
-# delete it for the rest of the process and break every later test.
-unless Object.method_defined?(:stub)
+# Minitest 6 dropped Minitest::Mock, so a `.stub`-style helper isn't available
+# by default. This helper is named `stub_class_method` (not `stub`) so it can't
+# collide with the `Object#stub` polyfill in
+# test/services/claude_expand_service_test.rb: both files previously guarded
+# their monkeypatch with `unless Object.method_defined?(:stub)`, which made
+# whichever file loaded first win globally for the whole test process — and
+# that file's `.stub` unconditionally does `singleton_class.remove_method`,
+# which would permanently delete ExpansionProcessor.process (defined directly
+# on its singleton class, with no ancestor fallback) for the rest of the run.
+# Using a distinct method name removes the race entirely rather than relying
+# on load order.
+unless Object.method_defined?(:stub_class_method)
   class Object
-    def stub(method_name, callable, &block)
+    def stub_class_method(method_name, callable, &block)
       has_original = singleton_class.method_defined?(method_name) || singleton_class.private_method_defined?(method_name)
       original = singleton_class.instance_method(method_name) if has_original
 
@@ -63,7 +68,7 @@ class GenerateExpansionJobTest < ActiveJob::TestCase
     expansion = @user.expansions.create!(
       file_name: "notes.md", selected_text: "beta", question: "why?", mode: "edit_in_place"
     )
-    ExpansionProcessor.stub(:process, ->(*) { raise ExpansionProcessor::TruncatedRewrite, "Rewrite looked truncated." }) do
+    ExpansionProcessor.stub_class_method(:process, ->(*) { raise ExpansionProcessor::TruncatedRewrite, "Rewrite looked truncated." }) do
       GenerateExpansionJob.perform_now(expansion.id)
     end
 

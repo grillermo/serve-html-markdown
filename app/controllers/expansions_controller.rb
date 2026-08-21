@@ -13,11 +13,19 @@ class ExpansionsController < ApplicationController
       return
     end
 
+    mode = params[:mode].presence || "create_new"
+    unless Expansion::MODES.include?(mode)
+      render json: { detail: "Unknown mode." }, status: :bad_request
+      return
+    end
+
     expansion = current_user.expansions.create!(
       file_name: file_name,
       selected_text: selected_text,
       occurrence: [params[:occurrence].to_i, 0].max,
       question: question,
+      mode: mode,
+      fallback_anchor: params[:fallback_anchor].presence,
       use_openai: ActiveModel::Type::Boolean.new.cast(params[:use_openai]) || false
     )
 

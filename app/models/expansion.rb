@@ -1,5 +1,6 @@
 class Expansion < ApplicationRecord
   STATUSES = %w[pending processing completed failed].freeze
+  MODES = %w[create_new edit_in_place].freeze
 
   serialize :timings, coder: JSON, default: {}
 
@@ -8,6 +9,7 @@ class Expansion < ApplicationRecord
   validates :file_name, :selected_text, :question, presence: true
   validates :occurrence, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
   validates :status, inclusion: { in: STATUSES }
+  validates :mode, inclusion: { in: MODES }
 
   def self.now_ms
     (Time.now.to_f * 1000).round
@@ -34,5 +36,9 @@ class Expansion < ApplicationRecord
     end
   rescue StandardError => error
     Rails.logger.error("[Expansion] stamp! failed for stage=#{stage}: #{error.class}")
+  end
+
+  def edit_in_place?
+    mode == "edit_in_place"
   end
 end

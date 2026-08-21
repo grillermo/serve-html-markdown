@@ -71,4 +71,20 @@ class ExpansionTest < ActiveSupport::TestCase
 
     assert_nothing_raised { @expansion.stamp!(:job_started) }
   end
+
+  test "defaults to the create_new mode" do
+    expansion = User.create!(email: "mode@example.com", password: "s3cretpass")
+      .expansions.create!(file_name: "notes.md", selected_text: "beta", question: "why?")
+
+    assert_equal "create_new", expansion.mode
+    assert_not expansion.edit_in_place?
+  end
+
+  test "rejects an unknown mode" do
+    expansion = User.create!(email: "badmode@example.com", password: "s3cretpass")
+      .expansions.build(file_name: "notes.md", selected_text: "beta", question: "why?", mode: "nonsense")
+
+    assert_not expansion.valid?
+    assert_includes expansion.errors[:mode], "is not included in the list"
+  end
 end

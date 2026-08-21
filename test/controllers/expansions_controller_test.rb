@@ -130,6 +130,31 @@ class ExpansionsControllerTest < ActionDispatch::IntegrationTest
     assert_response :unauthorized
   end
 
+  test "stores the requested mode and fallback anchor" do
+    write_file "notes.md", "Alpha beta gamma."
+
+    post "/expansions", params: {
+      file_name: "notes.md", selected_text: "beta", occurrence: 0, question: "why?",
+      mode: "edit_in_place", fallback_anchor: "section-two"
+    }, as: :json
+
+    assert_response :accepted
+    expansion = @user.expansions.find(response.parsed_body.fetch("id"))
+    assert_equal "edit_in_place", expansion.mode
+    assert_equal "section-two", expansion.fallback_anchor
+  end
+
+  test "returns 400 for an unknown mode" do
+    write_file "notes.md", "Alpha beta gamma."
+
+    post "/expansions", params: {
+      file_name: "notes.md", selected_text: "beta", occurrence: 0, question: "why?", mode: "nonsense"
+    }, as: :json
+
+    assert_response :bad_request
+    assert_equal({ "detail" => "Unknown mode." }, response.parsed_body)
+  end
+
   private
     def write_file(name, content)
       @files_dir.join(name).tap { |path| path.write(content) }

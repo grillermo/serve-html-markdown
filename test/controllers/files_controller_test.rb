@@ -517,6 +517,54 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert @files_dir.join("report-v2.md").exist?
   end
 
+  test "injects version data into a markdown page with siblings" do
+    write_file "notes.md", "# Notes"
+    write_file "notes--v2.md", "# Notes, expanded"
+    ServedFile.record("notes.md")
+    ServedFile.record("notes--v2.md")
+
+    get "/notes.md"
+
+    assert_response :success
+    assert_match %r{window\.__fileVersions\s*=}, response.body
+    assert_match %r{"name":"notes--v2\.md"}, response.body
+    assert_match %r{"current":true}, response.body
+    assert_match %r{window\.__expansionMode\s*=\s*"create_new"}, response.body
+  end
+
+  test "injects version data into an html page with siblings" do
+    write_file "page.html", "<html><body>one</body></html>"
+    write_file "page--v2.html", "<html><body>two</body></html>"
+    ServedFile.record("page.html")
+    ServedFile.record("page--v2.html")
+
+    get "/page--v2.html"
+
+    assert_response :success
+    assert_match %r{window\.__fileVersions\s*=}, response.body
+    assert_match %r{"name":"page\.html"}, response.body
+    assert_match %r{"version":2,"current":true}, response.body
+  end
+
+  test "injects an empty version list for a file with no siblings" do
+    write_file "solo.md", "# Solo"
+    ServedFile.record("solo.md")
+
+    get "/solo.md"
+
+    assert_response :success
+    assert_match %r{window\.__fileVersions\s*=\s*\[\]}, response.body
+  end
+
+  test "reflects the user's remembered expansion mode" do
+    @user.update_column(:expansion_mode, "edit_in_place")
+    write_file "notes.md", "# Notes"
+
+    get "/notes.md"
+
+    assert_match %r{window\.__expansionMode\s*=\s*"edit_in_place"}, response.body
+  end
+
   private
     def write_file(name, content)
       @files_dir.join(name).tap { |path| path.write(content) }

@@ -34,12 +34,13 @@ class FilesController < ApplicationController
   def show
     file_path = resolve_file_path(params[:file_name])
     content = file_path.read(encoding: "UTF-8")
-    @scroll_position = current_user.scroll_positions.find_by(file_name: file_path.basename.to_s)&.anchor
+    @file_name = file_path.basename.to_s
+    @scroll_position = current_user.scroll_positions.find_by(file_name: @file_name)&.anchor
+    @file_versions = file_versions_for(@file_name)
 
     if file_path.extname.downcase == ".html"
       render html: inject_expand_script(content).html_safe, layout: false
     else
-      @file_name = file_path.basename.to_s
       @rendered = Commonmarker.to_html(content, options: MARKDOWN_OPTIONS)
       render :show, formats: :html, layout: "markdown"
     end
@@ -111,13 +112,26 @@ class FilesController < ApplicationController
       contents
     end
 
-    def inject_expand_script(content)
-      scroll_position_script = if @scroll_position
-        %(<script>window.__scrollAnchor = #{@scroll_position.to_json};</script>)
-      else
-        ""
+    def file_versions_for(name)
+      names = FileVersions.parse(name).family_names
+      return [] if names.length < 2
+
+      names.map do |sibling|
+        {
+          name: sibling,
+          url: "/#{ERB::Util.url_encode(sibling)}",
+          version: FileVersions.parse(sibling).version,
+          current: sibling == name
+        }
       end
-      snippet = %(<meta name="csrf-token" content="#{form_authenticity_token}">#{scroll_position_script}<script src="#{helpers.asset_path("expand.js")}" defer></script>)
+    end
+
+    def inject_expand_script(content)
+      snippet = helpers.expand_bootstrap_tags(
+        scroll_anchor: @scroll_position,
+        file_versions: @file_versions,
+        expansion_mode: current_user.expansion_mode
+      )
       if content =~ %r{</body>}i
         content.sub(%r{</body>}i) { "#{snippet}</body>" }
       else

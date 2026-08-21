@@ -82,12 +82,31 @@
     return count;
   }
 
+  // The reload lands on a rewritten document, so the only durable way back to
+  // roughly where the reader was is the nearest id before their selection.
+  function anchorBeforeSelection(range) {
+    let node = range.startContainer;
+    if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+
+    while (node && node !== document.body) {
+      if (node.id) return node.id;
+      let sibling = node.previousElementSibling;
+      while (sibling) {
+        if (sibling.id) return sibling.id;
+        sibling = sibling.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
   function showButton(range, text) {
     removeUI();
     const rect = range.getBoundingClientRect();
     currentSelection = {
       text: text,
       occurrence: occurrenceIndex(range, text),
+      fallbackAnchor: anchorBeforeSelection(range),
       range: range.cloneRange()
     };
 
@@ -132,7 +151,7 @@
     return container;
   }
 
-  function addStatusBar(jobId, selection, range) {
+  function addStatusBar(jobId, selection, range, mode) {
     const bar = document.createElement("div");
     const content = document.createElement("span");
     const close = document.createElement("button");
@@ -155,7 +174,7 @@
     bar.append(content, close);
     statusContainer().appendChild(bar);
 
-    const record = { bar, content, timer: null, range: range };
+    const record = { bar, content, timer: null, range: range, mode: mode };
     jobs.set(jobId, record);
     close.addEventListener("click", () => dismissJob(jobId));
     return record;
@@ -341,6 +360,29 @@
       display: "flex", alignItems: "center", gap: "12px"
     });
 
+    const modeSelect = document.createElement("select");
+    [
+      { value: "create_new", label: "Create new page" },
+      { value: "edit_in_place", label: "Edit in place" }
+    ].forEach((option) => {
+      const element = document.createElement("option");
+      element.value = option.value;
+      element.textContent = option.label;
+      modeSelect.appendChild(element);
+    });
+    modeSelect.value = window.__expansionMode === "edit_in_place" ? "edit_in_place" : "create_new";
+    modeSelect.setAttribute("aria-label", "Expansion mode");
+    Object.assign(modeSelect.style, {
+      minHeight: "44px",
+      background: "#111",
+      color: "#eee",
+      border: "1px solid #444",
+      borderRadius: "6px",
+      padding: "0 8px",
+      font: "inherit",
+      fontSize: "16px" // keeps iOS from zooming the page on focus
+    });
+
     const openaiLabel = document.createElement("label");
     Object.assign(openaiLabel.style, {
       display: "flex",
@@ -371,7 +413,7 @@
       fontSize: "16px"
     });
 
-    actions.append(openaiLabel, submit);
+    actions.append(modeSelect, openaiLabel, submit);
 
     const message = document.createElement("div");
     message.style.color = "#e08080";
@@ -396,6 +438,8 @@
           selected_text: currentSelection.text,
           occurrence: currentSelection.occurrence,
           question: textarea.value,
+          mode: modeSelect.value,
+          fallback_anchor: currentSelection.fallbackAnchor,
           use_openai: openaiCheckbox.checked,
           client_clicked_at: Date.now()
         })
@@ -407,7 +451,7 @@
           }
           const jobId = data.id;
           if (!jobId) throw new Error("Expansion was not queued.");
-          addStatusBar(jobId, currentSelection.text, currentSelection.range);
+          addStatusBar(jobId, currentSelection.text, currentSelection.range, modeSelect.value);
           removeUI();
           pollJob(jobId);
         })

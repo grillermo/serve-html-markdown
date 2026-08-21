@@ -77,14 +77,15 @@ class ClaudeExpandService
   def rewrite(file_name:, document:, selection:, question:, use_openai: false, expansion: nil)
     validator = File.extname(file_name).downcase == ".html" ? method(:ensure_html) : method(:ensure_present)
     generate(
-      template: REWRITE_PROMPT_TEMPLATE, validator:,
+      template: REWRITE_PROMPT_TEMPLATE, validator:, preserve_whitespace: true,
       file_name:, document:, selection:, question:, use_openai:, expansion:
     )
   end
 
   private
-    def generate(template:, validator:, file_name:, document:, selection:, question:, use_openai:, expansion:)
+    def generate(template:, validator:, file_name:, document:, selection:, question:, use_openai:, expansion:, preserve_whitespace: false)
       @validator = validator
+      @preserve_whitespace = preserve_whitespace
       prompt = format(template, file_name:, document:, selection:, question:)
       Rails.logger.info "[ClaudeExpandService] generating file=#{file_name} selection_bytes=#{selection.bytesize} question_bytes=#{question.bytesize} use_openai=#{use_openai}"
       expansion&.stamp!(:llm_request_start)
@@ -209,9 +210,11 @@ class ClaudeExpandService
     end
 
     def strip_fence(text)
-      return text unless text.strip.start_with?("```")
+      stripped = text.strip
+      return stripped.sub(/\A```[a-z]*\n/i, "").sub(/\n```\z/, "") if stripped.start_with?("```")
+      return text if @preserve_whitespace
 
-      text.strip.sub(/\A```[a-z]*\n/i, "").sub(/\n```\z/, "")
+      stripped
     end
 
     def ensure_html(text)

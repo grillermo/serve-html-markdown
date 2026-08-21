@@ -292,6 +292,46 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
     end
   end
 
+  test "rewrite returns markdown unchanged by the html check" do
+    markdown = "# Notes\n\nAlpha beta gamma.\n"
+    service = ClaudeExpandService.new
+    service.define_singleton_method(:run_claude) { |_prompt| markdown }
+
+    assert_equal markdown, service.rewrite(
+      file_name: "notes.md", document: "# Notes\n", selection: "beta", question: "why?"
+    )
+  end
+
+  test "rewrite still requires html for an html source" do
+    service = ClaudeExpandService.new
+    service.define_singleton_method(:run_claude) { |_prompt| "not markup" }
+
+    assert_raises(ClaudeExpandService::Error) do
+      service.rewrite(file_name: "notes.html", document: "<html></html>", selection: "beta", question: "why?")
+    end
+  end
+
+  test "rewrite rejects a blank document" do
+    service = ClaudeExpandService.new
+    service.define_singleton_method(:run_claude) { |_prompt| "   \n" }
+
+    assert_raises(ClaudeExpandService::Error) do
+      service.rewrite(file_name: "notes.md", document: "# Notes\n", selection: "beta", question: "why?")
+    end
+  end
+
+  test "rewrite prompt asks for the anchor sentinel and the original format" do
+    captured = nil
+    service = ClaudeExpandService.new
+    service.define_singleton_method(:run_claude) { |prompt| captured = prompt; "# ok\n" }
+
+    service.rewrite(file_name: "notes.md", document: "# Notes\n", selection: "beta", question: "why?")
+
+    assert_includes captured, "⟦EXPANSION_ANCHOR⟧"
+    assert_includes captured, "beta"
+    assert_includes captured, "why?"
+  end
+
   private
     def fake_http_response(code, body)
       response = Object.new

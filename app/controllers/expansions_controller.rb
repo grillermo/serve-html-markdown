@@ -29,6 +29,8 @@ class ExpansionsController < ApplicationController
       use_openai: ActiveModel::Type::Boolean.new.cast(params[:use_openai]) || false
     )
 
+    current_user.update_column(:expansion_mode, mode) if current_user.expansion_mode != mode
+
     client_clicked_ms = params[:client_clicked_at].presence&.to_i
     expansion.stamp!(:client_clicked, client_clicked_ms) if client_clicked_ms
     expansion.stamp!(:request_received, request_received_ms)

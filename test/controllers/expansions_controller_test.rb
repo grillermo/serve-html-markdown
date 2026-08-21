@@ -155,6 +155,18 @@ class ExpansionsControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "detail" => "Unknown mode." }, response.parsed_body)
   end
 
+  test "remembers the submitted mode on the user" do
+    write_file "notes.md", "Alpha beta gamma."
+
+    post "/expansions", params: {
+      file_name: "notes.md", selected_text: "beta", occurrence: 0, question: "why?",
+      mode: "edit_in_place"
+    }, as: :json
+
+    assert_response :accepted
+    assert_equal "edit_in_place", @user.reload.expansion_mode
+  end
+
   private
     def write_file(name, content)
       @files_dir.join(name).tap { |path| path.write(content) }

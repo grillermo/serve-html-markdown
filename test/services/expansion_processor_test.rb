@@ -92,7 +92,91 @@ class ExpansionProcessorTest < ActiveSupport::TestCase
     assert_equal @expansion, received
   end
 
+  test "writes the rewrite to the next version and leaves the source untouched" do
+    @files_dir.join("notes.md").write("Alpha beta gamma.")
+    @expansion.update!(mode: "edit_in_place")
+    rewritten = "Alpha ⟦EXPANSION_ANCHOR⟧beta, at length, gamma. Plus much more text here."
+
+    with_rewriter(->(**) { rewritten }) do
+      assert_equal "/notes--v2.md#expansion-anchor", ExpansionProcessor.process(@expansion)
+    end
+
+    assert_equal "Alpha beta gamma.", @files_dir.join("notes.md").read
+    assert_equal(
+      %(Alpha <a id="expansion-anchor"></a>beta, at length, gamma. Plus much more text here.),
+      @files_dir.join("notes--v2.md").read
+    )
+    assert ServedFile.exists?(name: "notes--v2.md")
+  end
+
+  test "includes the fallback anchor in the completed url" do
+    @files_dir.join("notes.md").write("Alpha beta gamma.")
+    @expansion.update!(mode: "edit_in_place", fallback_anchor: "section two")
+
+    with_rewriter(->(**) { "Alpha ⟦EXPANSION_ANCHOR⟧beta expanded gamma, and then some more." }) do
+      assert_equal "/notes--v2.md?fallback=section%20two#expansion-anchor", ExpansionProcessor.process(@expansion)
+    end
+  end
+
+  test "rewrites a versioned file into the next version of the same family" do
+    @files_dir.join("notes.md").write("Alpha beta gamma.")
+    @files_dir.join("notes--v2.md").write("Alpha beta gamma, expanded once already.")
+    @expansion.update!(mode: "edit_in_place", file_name: "notes--v2.md")
+
+    with_rewriter(->(**) { "Alpha ⟦EXPANSION_ANCHOR⟧beta expanded twice now, with more words." }) do
+      assert_equal "/notes--v3.md#expansion-anchor", ExpansionProcessor.process(@expansion)
+    end
+
+    assert @files_dir.join("notes--v3.md").exist?
+  end
+
+  test "keeps only the first anchor sentinel" do
+    @files_dir.join("notes.md").write("Alpha beta gamma.")
+    @expansion.update!(mode: "edit_in_place")
+
+    with_rewriter(->(**) { "A ⟦EXPANSION_ANCHOR⟧B ⟦EXPANSION_ANCHOR⟧C with plenty of extra text." }) do
+      ExpansionProcessor.process(@expansion)
+    end
+
+    assert_equal(
+      %(A <a id="expansion-anchor"></a>B C with plenty of extra text.),
+      @files_dir.join("notes--v2.md").read
+    )
+  end
+
+  test "still writes a version when the model omits the sentinel" do
+    @files_dir.join("notes.md").write("Alpha beta gamma.")
+    @expansion.update!(mode: "edit_in_place")
+
+    with_rewriter(->(**) { "Alpha beta gamma, expanded without any marker at all." }) do
+      assert_equal "/notes--v2.md#expansion-anchor", ExpansionProcessor.process(@expansion)
+    end
+
+    assert_equal "Alpha beta gamma, expanded without any marker at all.", @files_dir.join("notes--v2.md").read
+  end
+
+  test "refuses a rewrite shorter than half the source" do
+    @files_dir.join("notes.md").write("Alpha beta gamma, a reasonably long document body.")
+    @expansion.update!(mode: "edit_in_place")
+
+    with_rewriter(->(**) { "Alpha." }) do
+      error = assert_raises(ExpansionProcessor::TruncatedRewrite) { ExpansionProcessor.process(@expansion) }
+      assert_equal "Rewrite looked truncated.", error.message
+    end
+
+    assert_not @files_dir.join("notes--v2.md").exist?
+    assert_equal "Alpha beta gamma, a reasonably long document body.", @files_dir.join("notes.md").read
+  end
+
   private
+
+  def with_rewriter(callable)
+    fake = Object.new
+    fake.define_singleton_method(:rewrite, &callable)
+    fake.define_singleton_method(:expand) { |**| raise "expand must not be called in edit_in_place mode" }
+    swap_constant(ExpansionProcessor, :EXPANDER, fake)
+    yield
+  end
 
   def with_expander(callable)
     swap_constant(ExpansionProcessor, :EXPANDER, Object.new.tap { |fake| fake.define_singleton_method(:expand, &callable) })

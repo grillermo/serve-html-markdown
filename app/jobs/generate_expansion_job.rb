@@ -10,7 +10,7 @@ class GenerateExpansionJob < ApplicationJob
   rescue ClaudeExpandService::Error
     Rails.logger.error("Expansion generation failed for job #{expansion_id}")
     expansion&.fail!("Generation failed.")
-  rescue SelectionLinker::Error, ActionController::BadRequest,
+  rescue SelectionLinker::Error, ActionController::BadRequest, ExpansionProcessor::TruncatedRewrite,
          ResolvesServedFiles::UnsupportedFile, ResolvesServedFiles::MissingFile => error
     expansion&.fail!(error.message)
   rescue StandardError => error

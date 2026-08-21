@@ -7,6 +7,12 @@ class ExpansionProcessor
   MissingFile = ResolvesServedFiles::MissingFile
   EXPANDER = ClaudeExpandService
 
+  TruncatedRewrite = Class.new(StandardError)
+
+  ANCHOR_SENTINEL = ClaudeExpandService::ANCHOR_SENTINEL
+  ANCHOR_ID = "expansion-anchor"
+  MIN_REWRITE_RATIO = 0.5
+
   def self.process(expansion)
     new(expansion).process
   end
@@ -20,6 +26,16 @@ class ExpansionProcessor
     source = file_path.read(encoding: "UTF-8")
     @expansion.stamp!(:source_read)
 
+    if @expansion.edit_in_place?
+      rewrite_in_place(file_path, source)
+    else
+      link_new_page(file_path, source)
+    end
+  end
+
+  private
+
+  def link_new_page(file_path, source)
     html = EXPANDER.expand(
       file_name: file_path.basename.to_s,
       document: source,
@@ -52,7 +68,50 @@ class ExpansionProcessor
     end
   end
 
-  private
+  def rewrite_in_place(file_path, source)
+    rewritten = EXPANDER.rewrite(
+      file_name: file_path.basename.to_s,
+      document: source,
+      selection: @expansion.selected_text,
+      question: @expansion.question,
+      use_openai: @expansion.use_openai,
+      expansion: @expansion
+    )
+
+    if rewritten.length < source.length * MIN_REWRITE_RATIO
+      raise TruncatedRewrite, "Rewrite looked truncated."
+    end
+
+    anchored = insert_anchor(rewritten)
+
+    with_source_lock(file_path) do
+      @expansion.stamp!(:lock_acquired)
+      version_path = FileVersions.parse(file_path.basename.to_s).next_path(self.class::FILES_DIR)
+      version_path.write(anchored, encoding: "UTF-8")
+      @expansion.stamp!(:files_written)
+      ServedFile.record(version_path.basename.to_s)
+      version_url(version_path)
+    end
+  end
+
+  # The model is asked for exactly one sentinel; keep the first and drop any
+  # extras so the page can never carry a duplicate element id.
+  def insert_anchor(document)
+    return document unless document.include?(ANCHOR_SENTINEL)
+
+    first, *rest = document.split(ANCHOR_SENTINEL)
+    "#{first}<a id=\"#{ANCHOR_ID}\"></a>#{rest.join}"
+  end
+
+  # The fallback rides in the URL because the page reloads: the client cannot
+  # keep it in memory across the navigation.
+  def version_url(version_path)
+    url = "/#{ERB::Util.url_encode(version_path.basename.to_s)}"
+    if @expansion.fallback_anchor.present?
+      url += "?fallback=#{ERB::Util.url_encode(@expansion.fallback_anchor)}"
+    end
+    "#{url}##{ANCHOR_ID}"
+  end
 
   def with_source_lock(file_path)
     lock_path = self.class::FILES_DIR.join(".#{file_path.basename}.expansion.lock")

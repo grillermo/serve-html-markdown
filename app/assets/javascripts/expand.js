@@ -45,7 +45,28 @@
     }
   }
 
+  // A rewritten document arrives with #expansion-anchor in the URL. If the model
+  // dropped the marker, ?fallback= carries the id nearest the reader's original
+  // selection. Either beats the saved scroll position, which predates the rewrite.
+  function scrollToRequestedTarget() {
+    const candidates = [
+      location.hash.slice(1),
+      new URLSearchParams(location.search).get("fallback")
+    ];
+
+    for (const id of candidates) {
+      if (!id) continue;
+      const target = document.getElementById(id);
+      if (target) {
+        target.scrollIntoView();
+        return true;
+      }
+    }
+    return false;
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
+    if (scrollToRequestedTarget()) return;
     if (typeof window.__scrollAnchor !== "string") return;
 
     const target = document.getElementById(window.__scrollAnchor);
@@ -196,6 +217,12 @@
   }
 
   function renderCompleted(record, url) {
+    if (record.mode === "edit_in_place") {
+      record.content.textContent = "Rewrite ready — opening it";
+      location.href = url;
+      return;
+    }
+
     const link = document.createElement("a");
     link.href = url;
     link.textContent = "Expansion ready — open it";

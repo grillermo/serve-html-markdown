@@ -84,7 +84,12 @@ class ExpansionProcessor
 
     anchored = insert_anchor(rewritten)
 
-    with_source_lock(file_path) do
+    # Lock on the version family's base name (not the requested file_path's own
+    # basename) so concurrent rewrites of foo.md, foo--v2.md, foo--v3.md, etc.
+    # all serialize against the same lock file when allocating the next version.
+    family_path = self.class::FILES_DIR.join(FileVersions.parse(file_path.basename.to_s).base_name)
+
+    with_source_lock(family_path) do
       @expansion.stamp!(:lock_acquired)
       version_path = FileVersions.parse(file_path.basename.to_s).next_path(self.class::FILES_DIR)
       version_path.write(anchored, encoding: "UTF-8")
@@ -113,8 +118,13 @@ class ExpansionProcessor
     "#{url}##{ANCHOR_ID}"
   end
 
-  def with_source_lock(file_path)
-    lock_path = self.class::FILES_DIR.join(".#{file_path.basename}.expansion.lock")
+  # Takes an exclusive lock keyed on lock_path's basename. Callers decide what
+  # that key means: link_new_page locks on the actual source file_path (writes
+  # to that one file must be serialized), while rewrite_in_place locks on the
+  # version family's base path (version-number allocation must be serialized
+  # across every member of the family, not just the requested filename).
+  def with_source_lock(lock_path)
+    lock_path = self.class::FILES_DIR.join(".#{lock_path.basename}.expansion.lock")
     File.open(lock_path, File::RDWR | File::CREAT, 0o600) do |lock_file|
       lock_file.flock(File::LOCK_EX)
       yield

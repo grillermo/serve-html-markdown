@@ -130,6 +130,88 @@ class ExpansionProcessorTest < ActiveSupport::TestCase
     assert @files_dir.join("notes--v3.md").exist?
   end
 
+  test "serializes concurrent edit_in_place rewrites across the same version family" do
+    @files_dir.join("notes.md").write("Alpha beta gamma, the original document body here.")
+    @files_dir.join("notes--v2.md").write("Alpha beta gamma, expanded once already in this body.")
+
+    expansion_a = @expansion
+    expansion_a.update!(mode: "edit_in_place", file_name: "notes.md")
+    expansion_b = @user.expansions.create!(
+      file_name: "notes--v2.md", selected_text: "beta", occurrence: 0, question: "Why?", mode: "edit_in_place"
+    )
+
+    rewriter = ->(**) { "Alpha ⟦EXPANSION_ANCHOR⟧beta expanded with plenty of extra text to pass ratio." }
+
+    # The actual race window in production code is tiny: between "which
+    # version number is free" (FileVersions#next_path's exist? loop) and
+    # "write that version to disk". Widen it here so that if with_source_lock
+    # fails to serialize the two requests against the SAME lock file, both
+    # threads reliably observe the same free slot and collide, instead of the
+    # outcome depending on OS thread-scheduling luck.
+    original_next_path = FileVersions.instance_method(:next_path)
+    FileVersions.define_method(:next_path) do |files_dir|
+      candidate = original_next_path.bind(self).call(files_dir)
+      sleep 0.05
+      candidate
+    end
+
+    results = {}
+    errors = []
+
+    begin
+      with_rewriter(rewriter) do
+        thread_a = Thread.new do
+          results[:a] = ExpansionProcessor.process(expansion_a)
+        rescue => e
+          errors << e
+        end
+        # A tiny, deterministic stagger (far smaller than next_path's 0.05s
+        # sleep above) reliably lands thread B's next_path call inside thread
+        # A's sleep window under the bug, without affecting correctness under
+        # the fix: there, B is blocked on flock (a real OS-level wait) until
+        # A's locked block fully completes, regardless of this stagger.
+        sleep 0.01
+        thread_b = Thread.new do
+          results[:b] = ExpansionProcessor.process(expansion_b)
+        rescue => e
+          errors << e
+        end
+
+        thread_a.join
+        thread_b.join
+      end
+    ensure
+      FileVersions.define_method(:next_path, original_next_path)
+    end
+
+    assert_empty errors, "expected no errors, got: #{errors.map(&:message)}"
+
+    urls = results.values_at(:a, :b).sort
+    assert_equal ["/notes--v3.md#expansion-anchor", "/notes--v4.md#expansion-anchor"], urls,
+      "expected the two concurrent rewrites to land on distinct, non-colliding versions"
+
+    assert @files_dir.join("notes--v3.md").exist?
+    assert @files_dir.join("notes--v4.md").exist?
+    assert ServedFile.exists?(name: "notes--v3.md")
+    assert ServedFile.exists?(name: "notes--v4.md")
+  end
+
+  test "locks rewrite_in_place on the version family's base name, not the requested file" do
+    processor = ExpansionProcessor.send(:new, @expansion)
+
+    observed_lock_paths = []
+    lock_recorder = ->(lock_path) { observed_lock_paths << lock_path; processor.send(:with_source_lock, lock_path) { } }
+
+    # Mirrors exactly what rewrite_in_place computes for its lock key: the
+    # family's base path derived from the requested file's basename.
+    lock_recorder.call(@files_dir.join(FileVersions.parse("notes.md").base_name))
+    lock_recorder.call(@files_dir.join(FileVersions.parse("notes--v2.md").base_name))
+    lock_recorder.call(@files_dir.join(FileVersions.parse("notes--v3.md").base_name))
+
+    assert_equal 1, observed_lock_paths.uniq.size,
+      "expected every member of the notes family to resolve to the same lock path"
+  end
+
   test "keeps only the first anchor sentinel" do
     @files_dir.join("notes.md").write("Alpha beta gamma.")
     @expansion.update!(mode: "edit_in_place")

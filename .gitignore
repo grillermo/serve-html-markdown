@@ -24,7 +24,8 @@
 
 /public/assets
 
-# Ignore key files for decrypting credentials and more.
+# Safety net: never commit a master/environment key if one is
+# accidentally generated (credentials are not used by this app).
 /config/*.key
 
 # Python artifacts left by the previous implementation.
@@ -42,3 +43,11 @@ files/**
 !files/.gitkeep
 
 .DS_Store
+
+# rtk runtime state (sqlite db + journal files), not source.
+.tokensave/tokensave.db
+.tokensave/tokensave.db-shm
+.tokensave/tokensave.db-wal
+
+/videos/
+/tmp/test-videos/

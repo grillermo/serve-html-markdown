@@ -16,74 +16,36 @@ class SelectionLinker
   end
 
   def link
-    index = match_index
-    prefix = @source[0, index]
-    selection = @source[index, @selected_text.length]
-    suffix = @source[(index + @selected_text.length)..]
-
-    if @extension == ".html"
-      ensure_safe_html!(prefix, selection)
-      "#{prefix}<a href=\"#{@url}\">#{@selected_text}</a>#{suffix}"
-    else
-      ensure_safe_markdown!(prefix, index, index + @selected_text.length)
-      label = @selected_text.gsub("]", "\\]")
-      "#{prefix}[#{label}](#{@url})#{suffix}"
-    end
+    map = build_map
+    plain_range = SelectionLocator.locate(map, @selected_text, @occurrence)
+    segments = Planner.plan(map, plain_range, source: @source)
+    splice(segments)
   end
 
   private
-    def match_index
-      indices = []
-      position = 0
-      while (found = @source.index(@selected_text, position))
-        indices << found
-        position = found + 1
-      end
-      if indices.empty?
-        raise NotFound, "Selection not found in source — select a plainer run of text."
-      end
-
-      indices.fetch(@occurrence, indices.first)
+    def markdown?
+      @extension != ".html"
     end
 
-    def ensure_safe_html!(prefix, selection)
-      if selection.match?(/<\s*\/?\s*[A-Za-z][^>]*(?:>|\z)/)
-        raise UnsafeMatch, "Selection includes HTML markup."
-      end
-
-      last_lt = prefix.rindex("<")
-      last_gt = prefix.rindex(">")
-      if last_lt && (last_gt.nil? || last_lt > last_gt)
-        raise UnsafeMatch, "Selection falls inside an HTML tag."
-      end
-      %w[script style a].each do |tag|
-        opens = prefix.scan(/<#{tag}\b/i).length
-        closes = prefix.scan(%r{</#{tag}\s*>}i).length
-        raise UnsafeMatch, "Selection falls inside a <#{tag}> element." if opens > closes
-      end
+    def build_map
+      markdown? ? MarkdownMap.build(@source) : HtmlMap.build(@source)
     end
 
-    def ensure_safe_markdown!(prefix, selection_start, selection_end)
-      position = 0
-      while (match = @source.match(/\[(?:\\.|[^\]])*\]\([^)]*\)/, position))
-        match_start = match.begin(0)
-        match_end = match.end(0)
-        if match_start < selection_end && match_end > selection_start
-          raise UnsafeMatch, "Selection overlaps an existing markdown link."
-        end
-        position = match_end
+    def splice(segments)
+      result = @source.dup
+      segments.sort_by(&:begin).reverse_each do |segment|
+        slice = result[segment]
+        result[segment] = markdown? ? markdown_link(slice) : html_link(slice)
       end
+      result
+    end
 
-      last_open = prefix.rindex("[")
-      last_close = prefix.rindex("]")
-      if last_open && (last_close.nil? || last_open > last_close)
-        raise UnsafeMatch, "Selection falls inside a markdown link label."
-      end
+    def html_link(slice)
+      %(<a href="#{@url}">#{slice}</a>)
+    end
 
-      last_link_open = prefix.rindex("](")
-      last_paren_close = prefix.rindex(")")
-      if last_link_open && (last_paren_close.nil? || last_link_open > last_paren_close)
-        raise UnsafeMatch, "Selection falls inside a markdown link URL."
-      end
+    def markdown_link(slice)
+      label = slice.gsub(/(?<!\\)\]/) { "\\]" }
+      "[#{label}](#{@url})"
     end
 end

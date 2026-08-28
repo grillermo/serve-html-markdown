@@ -1,0 +1,18 @@
+<% content_for :title, "Files" %>
+
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Updated at</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @served_files.each do |served_file| %>
+      <tr>
+        <td><%= link_to served_file.name, "/#{ERB::Util.url_encode(served_file.name)}" %></td>
+        <td><%= served_file.updated_at.in_time_zone("America/Mexico_City").strftime("%b %-d, %Y %-I:%M %p") %></td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>

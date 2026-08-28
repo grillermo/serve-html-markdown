@@ -101,15 +101,14 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_select "title", text: "notes.md"
     assert_select "link[href*='markdown'][rel='stylesheet']"
     assert_select "h1", text: "“Notes”"
+    assert_select "h1 a#notes.anchor[aria-hidden='true']"
     assert_select "a[href='https://example.com']"
     assert_select "mark", text: "Trusted HTML"
   end
 
-  test "redirects to the newest supported file" do
-    older = write_file "older.html", "older"
-    newer = write_file "newer.markdown", "newer"
-    File.utime 2.minutes.ago.to_time, 2.minutes.ago.to_time, older
-    File.utime 1.minute.ago.to_time, 1.minute.ago.to_time, newer
+  test "redirects to the last added file from the served_files table" do
+    ServedFile.create!(name: "older.html", created_at: 2.days.ago)
+    ServedFile.create!(name: "newer.markdown", created_at: 1.day.ago)
 
     get "/last"
 
@@ -117,9 +116,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to "/newer.markdown"
   end
 
-  test "returns JSON not found when no supported files exist" do
-    write_file "ignored.txt", "ignored"
-
+  test "returns JSON not found when the served_files table is empty" do
     get "/"
 
     assert_response :not_found
@@ -195,7 +192,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     get "/page.html"
 
     assert_response :success
-    assert_includes response.body, %(<script src="/expand.js" defer></script></body>)
+    assert_includes response.body, %(<script src="#{expand_script_path}" defer></script></body>)
     assert_select "meta[name='csrf-token']"
     assert_includes response.body, "<main>Raw</main>"
   end
@@ -206,7 +203,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     get "/page.html"
 
     assert_response :success
-    assert_includes response.body, %(<script src="/expand.js" defer></script>)
+    assert_includes response.body, %(<script src="#{expand_script_path}" defer></script>)
     assert response.body.start_with?("<main>Raw HTML</main>")
   end
 
@@ -219,7 +216,32 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_select "meta[name='csrf-token']"
-    assert_select "script[src='/expand.js'][defer]"
+    assert_select "script[src='#{expand_script_path}'][defer]"
+  end
+
+  test "embeds a saved scroll anchor for markdown and HTML files" do
+    @user.scroll_positions.create!(file_name: "notes.md", anchor: "saved-heading")
+    @user.scroll_positions.create!(file_name: "page.html", anchor: "saved-section")
+    write_file "notes.md", "# Notes"
+    write_file "page.html", "<main id=\"saved-section\">Raw HTML</main>"
+
+    get "/notes.md"
+    assert_includes response.body, 'window.__scrollAnchor = "saved-heading";'
+
+    get "/page.html"
+    assert_includes response.body, 'window.__scrollAnchor = "saved-section";'
+  end
+
+  test "omits the scroll anchor script when no position was saved" do
+    write_file "notes.md", "# Notes"
+
+    get "/notes.md"
+
+    assert_not_includes response.body, "window.__scrollAnchor"
+  end
+
+  test "the expand script is served under a content digest so edits bust the cache" do
+    assert_match %r{\A/assets/expand-[0-9a-f]{8,}\.js\z}, expand_script_path
   end
 
   test "rejects uploads without a configured bearer token" do
@@ -266,6 +288,20 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "formatted markdown", @files_dir.join("note-1.md").read
   end
 
+  test "records the uploaded file in served_files so /last finds it immediately" do
+    with_env "API_TOKEN", "upload-token" do
+      with_formatter(->(*) { "formatted markdown" }) do
+        post "/file/new",
+          params: { content: "source text", filename: "fresh-note.md" },
+          headers: { "Authorization" => "Bearer upload-token" }
+      end
+    end
+
+    assert_response :success
+    created_name = URI(response.parsed_body.fetch("url")).path.delete_prefix("/")
+    assert ServedFile.exists?(name: created_name)
+  end
+
   test "returns a generic bad gateway response when Gemini fails" do
     formatter = ->(*) { raise GeminiFormatter::Error, "sensitive upstream detail" }
 
@@ -282,6 +318,27 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_empty @files_dir.children
   end
 
+  test "lists served files with a link and updated_at from the database" do
+    ServedFile.create!(name: "older.md", updated_at: 2.days.ago)
+    ServedFile.create!(name: "newer.html", updated_at: 1.hour.ago)
+
+    get "/index"
+
+    assert_response :success
+    assert_select "a[href='/older.md']", text: "older.md"
+    assert_select "a[href='/newer.html']", text: "newer.html"
+  end
+
+  test "orders the index listing by most recently updated first" do
+    ServedFile.create!(name: "older.md", updated_at: 2.days.ago)
+    ServedFile.create!(name: "newer.html", updated_at: 1.hour.ago)
+
+    get "/index"
+
+    names = css_select("table a").map(&:text)
+    assert_equal ["newer.html", "older.md"], names
+  end
+
   test "rejects an empty upload filename" do
     with_env "API_TOKEN", "upload-token" do
       post "/file/new",
@@ -293,9 +350,234 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert_equal({ "detail" => "Invalid filename." }, response.parsed_body)
   end
 
+  test "rejects an unauthenticated file upload" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload", params: { file: markdown_upload("# Hi", "note.md") }
+    end
+
+    assert_response :unauthorized
+    assert_empty @files_dir.children
+  end
+
+  test "stores an uploaded markdown file verbatim without formatting" do
+    write_file "note.md", "existing"
+
+    with_env "API_TOKEN", "upload-token" do
+      with_env "HOST", "reader.example" do
+        with_formatter(->(*) { raise "formatter must not be called" }) do
+          post "/file/upload",
+            params: { file: markdown_upload("# Hi\n", "note.md"), filename: "../nested/note.markdown" },
+            headers: { "Authorization" => "Bearer upload-token" }
+        end
+      end
+    end
+
+    assert_response :success
+    assert_equal({ "url" => "https://reader.example/note-1.md" }, response.parsed_body)
+    assert_equal "# Hi\n", @files_dir.join("note-1.md").read
+    assert ServedFile.exists?(name: "note-1.md")
+  end
+
+  test "keeps the html extension for uploaded html files" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("<main>Hi</main>", "page.html", type: "text/html") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :success
+    assert_equal "<main>Hi</main>", @files_dir.join("page.html").read
+    assert ServedFile.exists?(name: "page.html")
+  end
+
+  test "rejects uploaded files with an unsupported extension" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("plain", "note.txt", type: "text/plain") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal(
+      { "detail" => "Only .html, .md, and .markdown files are supported." },
+      response.parsed_body
+    )
+    assert_empty @files_dir.children
+  end
+
+  test "rejects an upload without a file" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { filename: "note.md" },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal({ "detail" => "Missing file." }, response.parsed_body)
+  end
+
+  test "rejects uploaded files that are not valid UTF-8 text" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("\xff\xfe binary".b, "note.md") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal({ "detail" => "File must be UTF-8 text." }, response.parsed_body)
+    assert_empty @files_dir.children
+  end
+
+  test "serves an uploaded markdown file with the expand script and csrf token" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("# Uploaded\n", "uploaded.md") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+    assert_response :success
+
+    with_forgery_protection do
+      get "/uploaded.md"
+    end
+
+    assert_response :success
+    assert_select "h1", text: "Uploaded"
+    assert_select "meta[name='csrf-token']"
+    assert_select "script[src='#{expand_script_path}'][defer]"
+  end
+
+  test "serves an uploaded HTML file with the expand script and csrf token" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: {
+          file: markdown_upload("<html><body><main>Uploaded</main></body></html>", "uploaded.html", type: "text/html")
+        },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+    assert_response :success
+
+    get "/uploaded.html"
+
+    assert_response :success
+    assert_includes response.body, "<main>Uploaded</main>"
+    assert_includes response.body, %(<script src="#{expand_script_path}" defer></script></body>)
+    assert_select "meta[name='csrf-token']"
+  end
+
+  test "an uploaded file becomes the newest file for /last" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("# Newest\n", "newest.md") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    get "/last"
+
+    assert_redirected_to "/newest.md"
+  end
+
+  test "rejects a created file whose name uses the reserved version suffix" do
+    with_env "API_TOKEN", "create-token" do
+      post "/file/new",
+        params: { content: "# Hi", filename: "report--v2.md" },
+        headers: { "Authorization" => "Bearer create-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal(
+      { "detail" => "Filenames may not use the reserved --v<number> suffix." },
+      response.parsed_body
+    )
+    assert_empty @files_dir.children
+  end
+
+  test "rejects an uploaded file whose name uses the reserved version suffix" do
+    with_env "API_TOKEN", "upload-token" do
+      post "/file/upload",
+        params: { file: markdown_upload("# Hi", "report--v10.md") },
+        headers: { "Authorization" => "Bearer upload-token" }
+    end
+
+    assert_response :bad_request
+    assert_equal(
+      { "detail" => "Filenames may not use the reserved --v<number> suffix." },
+      response.parsed_body
+    )
+    assert_empty @files_dir.children
+  end
+
+  test "allows filenames that merely resemble the reserved suffix" do
+    with_env "API_TOKEN", "create-token" do
+      post "/file/new",
+        params: { content: "# Hi", filename: "report-v2.md" },
+        headers: { "Authorization" => "Bearer create-token" }
+    end
+
+    assert_response :success
+    assert @files_dir.join("report-v2.md").exist?
+  end
+
+  test "injects version data into a markdown page with siblings" do
+    write_file "notes.md", "# Notes"
+    write_file "notes--v2.md", "# Notes, expanded"
+    ServedFile.record("notes.md")
+    ServedFile.record("notes--v2.md")
+
+    get "/notes.md"
+
+    assert_response :success
+    assert_match %r{window\.__fileVersions\s*=}, response.body
+    assert_match %r{"name":"notes--v2\.md"}, response.body
+    assert_match %r{"current":true}, response.body
+    assert_match %r{window\.__expansionMode\s*=\s*"create_new"}, response.body
+  end
+
+  test "injects version data into an html page with siblings" do
+    write_file "page.html", "<html><body>one</body></html>"
+    write_file "page--v2.html", "<html><body>two</body></html>"
+    ServedFile.record("page.html")
+    ServedFile.record("page--v2.html")
+
+    get "/page--v2.html"
+
+    assert_response :success
+    assert_match %r{window\.__fileVersions\s*=}, response.body
+    assert_match %r{"name":"page\.html"}, response.body
+    assert_match %r{"version":2,"current":true}, response.body
+  end
+
+  test "injects an empty version list for a file with no siblings" do
+    write_file "solo.md", "# Solo"
+    ServedFile.record("solo.md")
+
+    get "/solo.md"
+
+    assert_response :success
+    assert_match %r{window\.__fileVersions\s*=\s*\[\]}, response.body
+  end
+
+  test "reflects the user's remembered expansion mode" do
+    @user.update_column(:expansion_mode, "edit_in_place")
+    write_file "notes.md", "# Notes"
+
+    get "/notes.md"
+
+    assert_match %r{window\.__expansionMode\s*=\s*"edit_in_place"}, response.body
+  end
+
   private
     def write_file(name, content)
       @files_dir.join(name).tap { |path| path.write(content) }
+    end
+
+    def markdown_upload(content, name, type: "text/markdown")
+      path = Pathname.new(Dir.mktmpdir("upload", @files_parent)).join(name)
+      path.binwrite(content)
+      Rack::Test::UploadedFile.new(path.to_s, type)
+    end
+
+    def expand_script_path
+      ActionController::Base.helpers.asset_path("expand.js")
     end
 
     def with_env(name, value)

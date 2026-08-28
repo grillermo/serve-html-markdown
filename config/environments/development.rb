@@ -3,6 +3,17 @@ require "active_support/core_ext/integer/time"
 Rails.application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
 
+  # Solid Queue lives in the primary database, so no connects_to is needed.
+  config.active_job.queue_adapter = :solid_queue
+
+  # Log to STDOUT rather than log/development.log, so the web server and the job
+  # workers Puma supervises both stream into the terminal running ./serve, which
+  # tees the combined stream back into log/development.log. Unbuffered, otherwise
+  # puts/print from the jobs sit in the pipe buffer instead of appearing live.
+  $stdout.sync = true
+  config.logger = ActiveSupport::TaggedLogging.logger($stdout)
+  config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "debug")
+
   # Make code changes take effect immediately without server restart.
   config.enable_reloading = true
 

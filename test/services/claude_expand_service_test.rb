@@ -1,15 +1,25 @@
 require "test_helper"
 require "stringio"
 
+# Minitest 6 dropped Minitest::Mock, so `.stub` isn't available by default.
+# This polyfill captures and restores the original method rather than removing
+# it outright: some call sites here stub class-level methods (e.g.
+# Net::HTTP.stub(:start, ...)) that are defined directly on their singleton
+# class with no ancestor to fall back to, so a bare remove_method would delete
+# them for the rest of the process and break later, unrelated tests.
 unless Object.method_defined?(:stub)
   class Object
     def stub(method_name, callable, &block)
+      has_original = singleton_class.method_defined?(method_name) || singleton_class.private_method_defined?(method_name)
+      original = singleton_class.instance_method(method_name) if has_original
+
       singleton_class.define_method(method_name) do |*args, &method_block|
         callable.call(*args, &method_block)
       end
       block.call
     ensure
       singleton_class.remove_method(method_name)
+      singleton_class.define_method(method_name, original) if original
     end
   end
 end
@@ -45,6 +55,71 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
     assert_includes prompt, "Alpha beta."
     assert_includes prompt, "<selection>\nbeta\n</selection>"
     assert_includes prompt, "<question>\nwhy?\n</question>"
+  end
+
+  test "stamps llm_request_start and llm_response and records provider_used/html_bytes on claude success" do
+    runner = ->(cmd) { [{ "is_error" => false, "result" => HTML }.to_json, "", fake_status(true)] }
+    expansion = fake_expansion
+
+    @service.stub(:run_command, runner) { @service.expand(**@args, expansion: expansion) }
+
+    assert_equal %i[llm_request_start llm_response], expansion.stamped_stages
+    assert_equal ["claude", HTML.bytesize], [expansion.provider_used, expansion.html_bytes]
+  end
+
+  test "stamps llm_first_failure before falling back to codex" do
+    runner = lambda do |cmd|
+      if cmd.first == "claude"
+        ["", "boom", fake_status(false)]
+      else
+        File.write(cmd[cmd.index("-o") + 1], HTML)
+        ["", "", fake_status(true)]
+      end
+    end
+    expansion = fake_expansion
+
+    @service.stub(:run_command, runner) { @service.expand(**@args, expansion: expansion) }
+
+    assert_equal %i[llm_request_start llm_first_failure llm_response], expansion.stamped_stages
+    assert_equal ["codex", HTML.bytesize], [expansion.provider_used, expansion.html_bytes]
+  end
+
+  test "records openai as provider_used when use_openai is true" do
+    ENV["EXPANSION_LLM_API_KEY"] = "test-key"
+    response = fake_http_response(200, {
+      "output" => [
+        { "type" => "message", "content" => [{ "type" => "output_text", "text" => HTML }] }
+      ]
+    }.to_json)
+    expansion = fake_expansion
+
+    Net::HTTP.stub(:start, ->(*_args, **_opts, &blk) {
+      fake_http = Object.new
+      fake_http.define_singleton_method(:request) { |_req| response }
+      blk.call(fake_http)
+    }) do
+      @service.expand(**@args, use_openai: true, expansion: expansion)
+    end
+
+    assert_equal %i[llm_request_start llm_response], expansion.stamped_stages
+    assert_equal "openai", expansion.provider_used
+  ensure
+    ENV.delete("EXPANSION_LLM_API_KEY")
+  end
+
+  test "works with no expansion given" do
+    runner = ->(cmd) { [{ "is_error" => false, "result" => HTML }.to_json, "", fake_status(true)] }
+
+    result = @service.stub(:run_command, runner) { @service.expand(**@args) }
+
+    assert_equal HTML, result
+  end
+
+  test "CLAUDE_MODEL is overridable via EXPANSION_CLAUDE_MODEL" do
+    ENV["EXPANSION_CLAUDE_MODEL"] = "haiku"
+    assert_equal "haiku", ClaudeExpandService::CLAUDE_MODEL.call
+  ensure
+    ENV.delete("EXPANSION_CLAUDE_MODEL")
   end
 
   test "strips a wrapping markdown code fence" do
@@ -227,6 +302,46 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
     end
   end
 
+  test "rewrite returns markdown unchanged by the html check" do
+    markdown = "# Notes\n\nAlpha beta gamma.\n"
+    service = ClaudeExpandService.new
+    service.define_singleton_method(:run_claude) { |_prompt| markdown }
+
+    assert_equal markdown, service.rewrite(
+      file_name: "notes.md", document: "# Notes\n", selection: "beta", question: "why?"
+    )
+  end
+
+  test "rewrite still requires html for an html source" do
+    service = ClaudeExpandService.new
+    service.define_singleton_method(:run_claude) { |_prompt| "not markup" }
+
+    assert_raises(ClaudeExpandService::Error) do
+      service.rewrite(file_name: "notes.html", document: "<html></html>", selection: "beta", question: "why?")
+    end
+  end
+
+  test "rewrite rejects a blank document" do
+    service = ClaudeExpandService.new
+    service.define_singleton_method(:run_claude) { |_prompt| "   \n" }
+
+    assert_raises(ClaudeExpandService::Error) do
+      service.rewrite(file_name: "notes.md", document: "# Notes\n", selection: "beta", question: "why?")
+    end
+  end
+
+  test "rewrite prompt asks for the anchor sentinel and the original format" do
+    captured = nil
+    service = ClaudeExpandService.new
+    service.define_singleton_method(:run_claude) { |prompt| captured = prompt; "# ok\n" }
+
+    service.rewrite(file_name: "notes.md", document: "# Notes\n", selection: "beta", question: "why?")
+
+    assert_includes captured, "⟦EXPANSION_ANCHOR⟧"
+    assert_includes captured, "beta"
+    assert_includes captured, "why?"
+  end
+
   private
     def fake_http_response(code, body)
       response = Object.new
@@ -249,5 +364,24 @@ class ClaudeExpandServiceTest < ActiveSupport::TestCase
       status.define_singleton_method(:success?) { success }
       status.define_singleton_method(:exitstatus) { success ? 0 : 1 }
       status
+    end
+
+    def fake_expansion
+      Class.new do
+        attr_reader :stamped_stages, :provider_used, :html_bytes
+
+        def initialize
+          @stamped_stages = []
+        end
+
+        def stamp!(stage, *)
+          @stamped_stages << stage
+        end
+
+        def update_columns(provider_used:, html_bytes:)
+          @provider_used = provider_used
+          @html_bytes = html_bytes
+        end
+      end.new
     end
 end

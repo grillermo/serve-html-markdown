@@ -1,0 +1,13 @@
+#!/usr/bin/env ruby
+require_relative "../config/environment"
+
+ServedFile.sync!
+listener = FileWatcher.start
+puts "[watch] watching #{FileWatcher::FILES_DIR} (#{ServedFile.count} files tracked)"
+
+stop = false
+trap("INT")  { stop = true }
+trap("TERM") { stop = true }
+
+sleep 0.2 until stop
+listener.stop

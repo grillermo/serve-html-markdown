@@ -6,7 +6,7 @@ require "tempfile"
 class ClaudeExpandService
   Error = Class.new(StandardError)
 
-  CLAUDE_MODEL = "sonnet"
+  CLAUDE_MODEL = -> { ENV.fetch("EXPANSION_CLAUDE_MODEL", "sonnet") }
   CODEX_MODEL = "earth"
   OPENAI_MODEL = "gpt-5.6-terra"
   OPENAI_REASONING_EFFORT = "medium"
@@ -37,31 +37,84 @@ class ClaudeExpandService
     </question>
   PROMPT
 
+  ANCHOR_SENTINEL = "⟦EXPANSION_ANCHOR⟧"
+
+  REWRITE_PROMPT_TEMPLATE = <<~PROMPT
+    You are given a document, a text selection from it, and a reader's question about that selection.
+
+    Rewrite the document so the selected passage is expanded in light of the question: add the background, context, related concepts, and concrete details the original leaves out, woven into the document's own voice.
+
+    Requirements:
+    - Output the COMPLETE document, from its first line to its last. Never truncate, summarize, or elide with "...".
+    - Keep the document's original format exactly: Markdown stays Markdown, HTML stays HTML.
+    - Preserve every part of the document unrelated to the selection verbatim, including front matter, links, and code blocks.
+    - Immediately before the expanded passage, emit the marker #{ANCHOR_SENTINEL} on a line of its own. Emit it exactly once.
+    - Output ONLY the document. No markdown fences, no commentary.
+
+    <document filename="%{file_name}">
+    %{document}
+    </document>
+
+    <selection>
+    %{selection}
+    </selection>
+
+    <question>
+    %{question}
+    </question>
+  PROMPT
+
   def self.expand(**kwargs) = new.expand(**kwargs)
+  def self.rewrite(**kwargs) = new.rewrite(**kwargs)
 
-  def expand(file_name:, document:, selection:, question:, use_openai: false)
-    prompt = format(PROMPT_TEMPLATE, file_name:, document:, selection:, question:)
-    Rails.logger.info "[ClaudeExpandService] expanding file=#{file_name} selection_bytes=#{selection.bytesize} question_bytes=#{question.bytesize} use_openai=#{use_openai}"
+  def expand(file_name:, document:, selection:, question:, use_openai: false, expansion: nil)
+    generate(
+      template: PROMPT_TEMPLATE, validator: method(:ensure_html),
+      file_name:, document:, selection:, question:, use_openai:, expansion:
+    )
+  end
 
-    if use_openai
-      html = run_openai(prompt)
-      Rails.logger.info "[ClaudeExpandService] openai succeeded bytes=#{html.bytesize}"
-      return html
-    end
-
-    html = run_claude(prompt)
-    Rails.logger.info "[ClaudeExpandService] claude succeeded bytes=#{html.bytesize}"
-    html
-  rescue Error => error
-    raise error if use_openai
-
-    Rails.logger.warn "[ClaudeExpandService] claude failed, falling back to codex"
-    html = run_codex(prompt)
-    Rails.logger.info "[ClaudeExpandService] codex succeeded bytes=#{html.bytesize}"
-    html
+  def rewrite(file_name:, document:, selection:, question:, use_openai: false, expansion: nil)
+    validator = File.extname(file_name).downcase == ".html" ? method(:ensure_html) : method(:ensure_present)
+    generate(
+      template: REWRITE_PROMPT_TEMPLATE, validator:, preserve_whitespace: true,
+      file_name:, document:, selection:, question:, use_openai:, expansion:
+    )
   end
 
   private
+    def generate(template:, validator:, file_name:, document:, selection:, question:, use_openai:, expansion:, preserve_whitespace: false)
+      @validator = validator
+      @preserve_whitespace = preserve_whitespace
+      prompt = format(template, file_name:, document:, selection:, question:)
+      Rails.logger.info "[ClaudeExpandService] generating file=#{file_name} selection_bytes=#{selection.bytesize} question_bytes=#{question.bytesize} use_openai=#{use_openai}"
+      expansion&.stamp!(:llm_request_start)
+
+      if use_openai
+        html = finish(run_openai(prompt))
+        record_response(expansion, "openai", html)
+        return html
+      end
+
+      html = finish(run_claude(prompt))
+      record_response(expansion, "claude", html)
+      html
+    rescue Error => error
+      raise error if use_openai
+
+      Rails.logger.warn "[ClaudeExpandService] claude failed, falling back to codex"
+      expansion&.stamp!(:llm_first_failure)
+      html = finish(run_codex(prompt))
+      record_response(expansion, "codex", html)
+      html
+    end
+
+    def record_response(expansion, provider, html)
+      Rails.logger.info "[ClaudeExpandService] #{provider} succeeded bytes=#{html.bytesize}"
+      expansion&.stamp!(:llm_response)
+      expansion&.update_columns(provider_used: provider, html_bytes: html.bytesize)
+    end
+
     def run_openai(prompt)
       api_key = ENV["EXPANSION_LLM_API_KEY"]
       raise Error, "EXPANSION_LLM_API_KEY is not configured." if api_key.blank?
@@ -92,7 +145,7 @@ class ClaudeExpandService
 
       raise Error, "openai returned no output" if text.blank?
 
-      ensure_html(strip_fence(text))
+      text
     rescue JSON::ParserError
       raise Error, "openai output was not JSON"
     rescue SystemCallError
@@ -102,7 +155,7 @@ class ClaudeExpandService
     def run_claude(prompt)
       stdout, stderr, status = run_command([
         "claude", "-p", prompt,
-        "--model", CLAUDE_MODEL,
+        "--model", CLAUDE_MODEL.call,
         "--output-format", "json",
         "--tools", ""
       ])
@@ -113,7 +166,7 @@ class ClaudeExpandService
       parsed = JSON.parse(stdout)
       raise Error, "claude returned error" if parsed["is_error"]
 
-      ensure_html(strip_fence(parsed["result"].to_s))
+      parsed["result"].to_s
     rescue JSON::ParserError
       raise Error, "claude output was not JSON"
     rescue SystemCallError
@@ -135,7 +188,7 @@ class ClaudeExpandService
           raise Error, "codex CLI failed"
         end
 
-        ensure_html(strip_fence(File.read(output.path)))
+        File.read(output.path)
       end
     rescue SystemCallError
       raise Error, "codex CLI could not be started"
@@ -158,14 +211,24 @@ class ClaudeExpandService
 
     def strip_fence(text)
       stripped = text.strip
-      if stripped.start_with?("```")
-        stripped = stripped.sub(/\A```[a-z]*\n/i, "").sub(/\n```\z/, "")
-      end
+      return stripped.sub(/\A```[a-z]*\n/i, "").sub(/\n```\z/, "") if stripped.start_with?("```")
+      return text if @preserve_whitespace
+
       stripped
     end
 
     def ensure_html(text)
       raise Error, "output does not look like HTML" unless text.match?(/<html/i)
+
+      text
+    end
+
+    def finish(text)
+      @validator.call(strip_fence(text))
+    end
+
+    def ensure_present(text)
+      raise Error, "output was empty" if text.strip.empty?
 
       text
     end

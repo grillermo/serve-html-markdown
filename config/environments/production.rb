@@ -3,6 +3,9 @@ require "active_support/core_ext/integer/time"
 Rails.application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
 
+  # Solid Queue lives in the primary database, so no connects_to is needed.
+  config.active_job.queue_adapter = :solid_queue
+
   # Code is not reloaded between requests.
   config.enable_reloading = false
 
@@ -32,13 +35,15 @@ Rails.application.configure do
 
   # Log to STDOUT with the current request id as a default log tag.
   config.log_tags = [ :request_id ]
+  # Unbuffered, so logs and puts from the web server and the Solid Queue workers
+  # appear live in the terminal running ./serve instead of sitting in a pipe buffer.
+  $stdout.sync    = true
   config.logger   = ActiveSupport::TaggedLogging.logger(STDOUT)
 
   # Change to "debug" to log everything (including potentially personally-identifiable information!).
   config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
 
-  # Prevent health checks from clogging up the logs.
-  config.silence_healthcheck_path = "/up"
+  # Health check log silencing is configured in config/application.rb.
 
   # Don't log any deprecations.
   config.active_support.report_deprecations = false

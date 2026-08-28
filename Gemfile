@@ -11,6 +11,9 @@ gem "pg", "~> 1.5"
 # Authentication
 gem "devise", "~> 4.9"
 gem "commonmarker", "~> 1.1"
+gem "google-apis-youtube_v3", "~> 0.60"
+gem "signet", "~> 0.19"
+gem "listen"
 gem "dotenv-rails"
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
@@ -20,3 +23,4 @@ group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
 end
+gem "solid_queue", "~> 1.2"

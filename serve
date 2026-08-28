@@ -1,3 +1,27 @@
 #!/usr/bin/env sh
 
-exec bin/rails server -p 8009 "$@"
+set -eu
+
+# The Solid Queue supervisor forks its workers. On macOS the Objective-C runtime
+# aborts the child ("may have been in progress in another thread when fork() was
+# called"), which kills the supervisor and takes Puma down with it.
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+
+# Assets carry a content digest in their filename and are served with a one-year
+# cache-control, so a stale build is pinned in browsers until the digest changes.
+# Clobber before precompiling to drop digests that no longer match any source.
+bin/rails assets:clobber
+bin/rails assets:precompile
+
+# Run the web server and the files/ watcher side by side. --ungroup streams each
+# job's output live; --halt now,done=1 stops the other job the moment one exits.
+# bin/watch keeps the served_files table in sync; /last depends on it, so running
+# `bin/rails server` alone (without this script) leaves /last stale or 404ing.
+#
+# Background jobs run inside Puma (plugin :solid_queue in config/puma.rb), so their
+# logs, puts and print calls come out on the web server's stdout. Both streams land
+# here and are tee'd into log/development.log, since development.rb now logs to
+# STDOUT instead of writing that file itself.
+parallel --ungroup --halt now,done=1 ::: \
+  "bin/rails server -p 8009 $*" \
+  "bin/watch" 2>&1 | tee -a log/development.log

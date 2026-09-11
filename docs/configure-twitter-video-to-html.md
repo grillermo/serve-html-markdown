@@ -38,63 +38,53 @@ video as an **unlisted** YouTube video (so auto-captions get generated).
 
 ## 4. Create OAuth client credentials
 
-1. **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
-2. Application type: **Desktop app**.
-3. Name it anything (e.g. "twitter-video pipeline").
-4. Copy the generated **Client ID** and **Client secret** into `.env`:
+1. **APIs & Services → Credentials → Create Credentials → OAuth client ID**, or
+   go straight to <https://console.cloud.google.com/auth/clients>.
+2. Application type: **Web application**.
+3. Under **Authorized redirect URIs** add both:
+   - `https://serve.chiq.me/youtube/callback` — the real one.
+   - `http://127.0.0.1:8009/youtube/callback` — loopback is exempt from
+     Google's HTTPS rule, so the flow still works with the tunnel down.
+4. Copy the **Client ID** and **Client secret** into `.env`:
 
    ```dotenv
    YOUTUBE_CLIENT_ID=your-client-id.apps.googleusercontent.com
    YOUTUBE_CLIENT_SECRET=your-client-secret
    ```
 
-## 5. Obtain a refresh token
+The redirect URI must match what the app sends byte-for-byte — no trailing
+slash. The app builds it from `HOST` (override with `YOUTUBE_REDIRECT_URI`).
 
-The repo ships a rake task for this (`lib/tasks/youtube.rake`):
+## 5. Publish the project so tokens stop expiring
 
-```bash
-rake youtube:refresh_token
-```
+An OAuth project whose publishing status is **Testing** issues refresh tokens
+that die after 7 days. At <https://console.cloud.google.com/auth/audience>,
+press **Publish app** so the status reads **In production**. Don't submit for
+verification: unverified-in-production costs only the "Google hasn't verified
+this app" screen (click **Advanced → Go to … (unsafe)**) and a 100-user cap,
+neither of which matters for a single account.
 
-It will:
+## 6. Authorize
 
-1. Print a Google consent URL — open it in a browser signed into the test-user
-   account from step 3.
-2. Approve access (you'll see a warning that the app is unverified — this is
-   expected for a "Testing"-status app; click through **Advanced → Go to
-   [app name] (unsafe)**).
-3. Google shows you an authorization code. Paste it back into the terminal
-   prompt.
-4. The task exchanges the code for tokens and prints:
+Open <https://serve.chiq.me/youtube/reauth> (sign in to the app first), approve
+access, and the refresh token is stored in the `youtube_credentials` table.
+There is nothing to copy into `.env` — `YOUTUBE_REFRESH_TOKEN` is now only a
+bootstrap fallback for a checkout that has never authorized.
 
-   ```
-   YOUTUBE_REFRESH_TOKEN=1//0g...
-   ```
+`rake youtube:refresh_token` just prints that URL.
 
-Copy that value into `.env`.
-
-## Done
-
-With all three vars set, `YoutubeUploader.new` (built by
-`TwitterVideoIngestJob` from `ENV["YOUTUBE_CLIENT_ID"]`,
-`ENV["YOUTUBE_CLIENT_SECRET"]`, `ENV["YOUTUBE_REFRESH_TOKEN"]`) can silently
-refresh its access token on every upload — no further manual steps needed
-unless the refresh token is revoked (see Troubleshooting).
+When a token does die, the ingest job posts the link to Slack with the stalled
+video's id, and finishing the flow re-queues that video automatically.
 
 ## Troubleshooting
 
-- **`invalid_grant` when running the rake task** — the authorization code was
-  already used, expired (they're short-lived), or was copied with extra
-  whitespace. Re-run `rake youtube:refresh_token` and paste the fresh code
-  immediately.
 - **`access_denied` in the browser** — the Google account isn't listed under
   **Test users** on the OAuth consent screen (step 3). Add it and retry.
 - **Refresh token stops working after ~7 days** — apps in "Testing"
-  publishing status get refresh tokens that expire after 7 days. Either
-  re-run `rake youtube:refresh_token` periodically, or move the OAuth consent
-  screen to "In production" (no Google review is required merely to request
-  the `youtube.upload` scope for your own test users, but check current
-  Google policy — this can change).
+  publishing status get refresh tokens that expire after 7 days. Move the OAuth
+  consent screen to "In production" (see step 5). No Google review is required
+  merely to request the `youtube.upload` scope for your own test users, but
+  check current Google policy — this can change.
 - **`quotaExceeded` on upload** — the YouTube Data API v3 has a default daily
   quota (10,000 units/day); a single video insert costs 1,600 units, so this
   pipeline can upload roughly 6 videos/day before hitting the default quota.

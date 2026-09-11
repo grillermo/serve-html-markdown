@@ -69,6 +69,45 @@ class TwitterVideoIngestJobTest < ActiveJob::TestCase
     assert @slack.failures.any?
   end
 
+  test "posts a re-authorization link when the youtube grant is dead" do
+    TwitterVideoIngestJob.uploader = ->(*) { raise YoutubeUploader::AuthorizationExpired, "invalid_grant" }
+
+    with_env("YOUTUBE_REAUTH_URL" => "https://serve.chiq.me/youtube/reauth") do
+      TwitterVideoIngestJob.perform_now(@video.id)
+    end
+
+    assert_equal "failed", @video.reload.status
+    message = @slack.failures.last
+    assert_includes message, "YouTube authorization expired"
+    assert_includes message, "https://serve.chiq.me/youtube/reauth?video_id=#{@video.id}"
+    assert_includes message, "already downloaded"
+  end
+
+  test "keeps the raw error text for failures a link cannot fix" do
+    TwitterVideoIngestJob.ytdlp = ->(*) { raise YtdlpClient::Error, "gone" }
+
+    TwitterVideoIngestJob.perform_now(@video.id)
+
+    message = @slack.failures.last
+    assert_includes message, "YtdlpClient::Error: gone"
+    assert_not_includes message, "youtube/reauth"
+  end
+
+  test "the default uploader takes its refresh token from the database" do
+    # setup replaced the uploader with a fake; this test exercises the real default.
+    TwitterVideoIngestJob.reset_collaborators!
+
+    with_env("YOUTUBE_CLIENT_ID" => "cid", "YOUTUBE_CLIENT_SECRET" => "sec",
+             "YOUTUBE_REFRESH_TOKEN" => nil) do
+      # No row and no env var: the constructor guard from Task 2 fires.
+      assert_raises(YoutubeUploader::AuthorizationExpired) { TwitterVideoIngestJob.uploader.call }
+
+      YoutubeCredential.store!("from-db")
+
+      assert_nothing_raised { TwitterVideoIngestJob.uploader.call }
+    end
+  end
+
   class FakeYtdlp
     def download(_url, dir)
       path = Pathname.new(dir).join("x.mp4")
@@ -87,4 +126,18 @@ class TwitterVideoIngestJobTest < ActiveJob::TestCase
     def success(t) = @successes << t
     def failure(t) = @failures << t
   end
+
+  private
+    def with_env(hash)
+      previous = {}
+      hash.each do |key, value|
+        previous[key] = ENV[key]
+        ENV[key] = value
+      end
+      yield
+    ensure
+      previous.each do |key, prev_value|
+        prev_value.nil? ? ENV.delete(key) : ENV[key] = prev_value
+      end
+    end
 end

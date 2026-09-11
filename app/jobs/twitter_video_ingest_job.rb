@@ -17,7 +17,7 @@ class TwitterVideoIngestJob < ApplicationJob
     def uploader = @uploader ||= lambda do |*|
       YoutubeUploader.new(
         client_id: ENV["YOUTUBE_CLIENT_ID"], client_secret: ENV["YOUTUBE_CLIENT_SECRET"],
-        refresh_token: ENV["YOUTUBE_REFRESH_TOKEN"]
+        refresh_token: YoutubeCredential.refresh_token
       )
     end
     def slack = @slack ||= -> { SlackNotifier.from_env }
@@ -55,10 +55,23 @@ class TwitterVideoIngestJob < ApplicationJob
   rescue StandardError => error
     Rails.logger.error("[TwitterVideoIngestJob] ##{twitter_video_id} #{error.class}: #{error.message}")
     video&.fail!(error.message)
-    self.class.slack.call.failure("[twitter-video ##{twitter_video_id}] ingest failed: #{error.class}: #{error.message}")
+    self.class.slack.call.failure(failure_message(twitter_video_id, error))
   end
 
   private
+    # A dead OAuth grant is the one failure a human can fix from a phone, so it gets a
+    # link instead of a stack trace. The full Google message still reaches the log and
+    # twitter_videos.error_detail.
+    def failure_message(video_id, error)
+      unless error.is_a?(YoutubeUploader::AuthorizationExpired)
+        return "[twitter-video ##{video_id}] ingest failed: #{error.class}: #{error.message}"
+      end
+
+      "[twitter-video ##{video_id}] ingest failed: YouTube authorization expired.\n" \
+        "re-authorize: #{YoutubeAuthorization.reauth_url(video_id)}\n" \
+        "the video is already downloaded — the upload retries by itself once you're done."
+    end
+
     def download(video, slack)
       FileUtils.mkdir_p(VIDEOS_DIR)
       Rails.logger.info("[TwitterVideoIngestJob] ##{video.id} downloading via yt-dlp into #{VIDEOS_DIR}")

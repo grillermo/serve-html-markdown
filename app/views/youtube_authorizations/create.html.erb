@@ -1,0 +1,13 @@
+<% content_for :title, "YouTube re-authorized" %>
+
+<main class="signin">
+  <h1>YouTube re-authorized</h1>
+
+  <p>The new refresh token is stored. Nothing to copy, nothing to restart.</p>
+
+  <% if @video_id %>
+    <p>Re-queued twitter video #<%= @video_id %> — the upload resumes from the file already on disk.</p>
+  <% else %>
+    <p>No video was waiting on this, so nothing was re-queued.</p>
+  <% end %>
+</main>

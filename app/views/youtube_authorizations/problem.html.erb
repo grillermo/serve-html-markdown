@@ -1,0 +1,9 @@
+<% content_for :title, "YouTube authorization failed" %>
+
+<main class="signin">
+  <h1>YouTube authorization failed</h1>
+
+  <p><%= @message %></p>
+
+  <p><%= link_to "Try again", "/youtube/reauth" %></p>
+</main>

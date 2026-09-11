@@ -46,6 +46,19 @@ class YoutubeAuthorizationTest < ActiveSupport::TestCase
     end
   end
 
+  test "reauth_url falls back to the default when YOUTUBE_REAUTH_URL is present but blank" do
+    with_env("YOUTUBE_REAUTH_URL" => "", "HOST" => "serve.chiq.me") do
+      assert_equal "https://serve.chiq.me/youtube/reauth", YoutubeAuthorization.reauth_url
+      assert_equal "https://serve.chiq.me/youtube/reauth?video_id=7", YoutubeAuthorization.reauth_url(7)
+    end
+  end
+
+  test "redirect_uri falls back to the default when YOUTUBE_REDIRECT_URI is present but blank" do
+    with_env("YOUTUBE_REDIRECT_URI" => "", "HOST" => "serve.chiq.me") do
+      assert_equal "https://serve.chiq.me/youtube/callback", YoutubeAuthorization.redirect_uri
+    end
+  end
+
   test "build is overridable for tests" do
     sentinel = Object.new
     YoutubeAuthorization.build = -> { sentinel }

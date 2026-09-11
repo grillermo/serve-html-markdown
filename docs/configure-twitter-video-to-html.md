@@ -1,17 +1,23 @@
 # Configuring YouTube env vars for the twitter-video → HTML pipeline
 
-`.env.example` lists three YouTube-related vars the pipeline needs:
+`.env.example` lists five YouTube-related vars. Two are required:
 
 ```dotenv
 YOUTUBE_CLIENT_ID=
 YOUTUBE_CLIENT_SECRET=
-YOUTUBE_REFRESH_TOKEN=
 ```
 
-They're consumed by `YoutubeUploader` (`app/services/youtube_uploader.rb`), which
-authorizes a `Google::Apis::YoutubeV3::YouTubeService` via a
-`Signet::OAuth2::Client` refresh-token flow to upload each downloaded tweet
-video as an **unlisted** YouTube video (so auto-captions get generated).
+The other three are optional overrides: `YOUTUBE_REFRESH_TOKEN` (a bootstrap
+fallback, see step 6), `YOUTUBE_REDIRECT_URI`, and `YOUTUBE_REAUTH_URL`.
+
+`YoutubeUploader` (`app/services/youtube_uploader.rb`) authorizes a
+`Google::Apis::YoutubeV3::YouTubeService` via a `Signet::OAuth2::Client`, using
+a refresh token read from `YoutubeCredential.refresh_token` (see step 6), to
+upload each downloaded tweet video as an **unlisted** YouTube video (so
+auto-captions get generated).
+
+Run `bin/rails db:migrate` before any of this — it creates the
+`youtube_credentials` table that step 6 stores the token in.
 
 ## 1. Create a Google Cloud project
 
@@ -32,8 +38,9 @@ video as an **unlisted** YouTube video (so auto-captions get generated).
    `https://www.googleapis.com/auth/youtube.upload` at authorization time.
 4. Under **Test users**, add the Google account you'll actually upload videos
    from. While the app is in "Testing" publishing status, only accounts
-   listed here can complete the OAuth flow — this is normal and fine for a
-   single-account pipeline; you don't need to submit the app for
+   listed here can complete the OAuth flow. Testing is just the state you
+   start in — step 5 below moves the app to "In production" once client
+   credentials exist, and you still won't need to submit the app for
    verification.
 
 ## 4. Create OAuth client credentials
@@ -78,8 +85,10 @@ video's id, and finishing the flow re-queues that video automatically.
 
 ## Troubleshooting
 
-- **`access_denied` in the browser** — the Google account isn't listed under
-  **Test users** on the OAuth consent screen (step 3). Add it and retry.
+- **`access_denied` in the browser** — before publishing (step 5), only
+  accounts listed under **Test users** on the OAuth consent screen (step 3)
+  can complete the flow. Add the account and retry. Once the app is
+  published to "In production", this no longer applies.
 - **Refresh token stops working after ~7 days** — apps in "Testing"
   publishing status get refresh tokens that expire after 7 days. Move the OAuth
   consent screen to "In production" (see step 5). No Google review is required

@@ -20,11 +20,11 @@ class YoutubeAuthorization
     # Derived from HOST, never from the request: the public tunnel forwards plain
     # HTTP, so a request-derived URI would be http:// and Google would reject it.
     def redirect_uri
-      ENV.fetch("YOUTUBE_REDIRECT_URI") { "https://#{host}/youtube/callback" }
+      ENV["YOUTUBE_REDIRECT_URI"].presence || "https://#{host}/youtube/callback"
     end
 
     def reauth_url(video_id = nil)
-      base = ENV.fetch("YOUTUBE_REAUTH_URL") { "https://#{host}/youtube/reauth" }
+      base = ENV["YOUTUBE_REAUTH_URL"].presence || "https://#{host}/youtube/reauth"
       video_id.present? ? "#{base}?video_id=#{video_id}" : base
     end
 

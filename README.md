@@ -49,10 +49,15 @@ Requires `yt-dlp` on `PATH` (or set `YTDLP_BIN`).
 2. Enable the **YouTube Data API v3** (APIs & Services → Library).
 3. Configure the **OAuth consent screen** (External; add your Google account as
    a test user).
-4. Create an **OAuth client ID** of type **Desktop app**. Copy the client ID and
-   secret into `.env` as `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`.
-5. Run `rake youtube:refresh_token`, open the printed URL, approve, paste the
-   code back. Copy the printed `YOUTUBE_REFRESH_TOKEN` into `.env`.
+4. Create an **OAuth client ID** of type **Web application**, with the app's
+   `/youtube/callback` URL registered as an authorized redirect URI. Copy the
+   client ID and secret into `.env` as `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`.
+5. Sign in to the app and open `/youtube/reauth` (or run
+   `rake youtube:refresh_token` to print that URL) to authorize; the refresh
+   token is stored in the database. See
+   [`docs/configure-twitter-video-to-html.md`](docs/configure-twitter-video-to-html.md)
+   for the full walkthrough, including publishing the OAuth app so tokens
+   stop expiring after 7 days.
 
 ### rulinky + Slack
 

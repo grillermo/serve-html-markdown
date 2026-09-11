@@ -22,6 +22,8 @@ class YoutubeAuthorizationsController < ApplicationController
     @video_id = retry_stalled_video
     clear_oauth_session
     render :create
+  rescue YoutubeAuthorization::ConfigurationError => error
+    render_problem(error.message, :internal_server_error)
   rescue YoutubeAuthorization::Error => error
     render_problem(error.message, :bad_gateway)
   end

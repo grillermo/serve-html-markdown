@@ -73,6 +73,18 @@ class YoutubeAuthorizationsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "1//new-token", YoutubeCredential.refresh_token
   end
 
+  test "reports a configuration error during exchange as an internal server error, not a bad gateway" do
+    sign_in @user
+    get "/youtube/reauth", params: { video_id: @video.id }
+    @auth = FakeMisconfiguredAuthorization.new
+    YoutubeAuthorization.build = -> { @auth }
+
+    get "/youtube/callback", params: { code: "auth-code", state: state }
+
+    assert_response :internal_server_error
+    assert_nil YoutubeCredential.current
+  end
+
   private
     def state = session[YoutubeAuthorizationsController::STATE_KEY]
 
@@ -89,6 +101,14 @@ class YoutubeAuthorizationsControllerTest < ActionDispatch::IntegrationTest
       def exchange!(code:)
         @exchanged_code = code
         @token
+      end
+    end
+
+    class FakeMisconfiguredAuthorization
+      def consent_url(state:) = "https://accounts.google.com/o/oauth2/auth?state=#{state}"
+
+      def exchange!(code:)
+        raise YoutubeAuthorization::ConfigurationError, "YOUTUBE_CLIENT_SECRET is not set."
       end
     end
 end

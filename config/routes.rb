@@ -7,6 +7,7 @@ Rails.application.routes.draw do
   get "/twitter-video/:id", to: "twitter_videos#show", constraints: { id: /\d+/ }
   get "/youtube/reauth", to: "youtube_authorizations#new"
   get "/youtube/callback", to: "youtube_authorizations#create"
+  get "/youtube/debug", to: "youtube_authorizations#debug"
   post "/expansions", to: "expansions#create"
   get "/expansions/:id", to: "expansions#show", constraints: { id: /\d+/ }
   match "/scroll_position", to: "scroll_positions#update", via: [:patch, :post]

@@ -28,8 +28,37 @@ class YoutubeAuthorizationsController < ApplicationController
     render_problem(error.message, :bad_gateway)
   end
 
+  # Reports what THIS server process computes, so a redirect_uri_mismatch can be
+  # compared byte-for-byte against the URI registered on the Google client. Values
+  # are inspected rather than printed, so stray whitespace is visible.
+  def debug
+    render plain: debug_report, content_type: "text/plain"
+  end
+
   private
     def authorization = @authorization ||= YoutubeAuthorization.build.call
+
+    def debug_report
+      consent_url = authorization.consent_url(state: "debug-state")
+      sent_redirect_uri = Rack::Utils.parse_query(URI.parse(consent_url).query)["redirect_uri"]
+
+      {
+        "pid" => Process.pid,
+        "Rails.env" => Rails.env,
+        "Rails.root" => Rails.root.to_s,
+        "ENV['HOST']" => ENV["HOST"].inspect,
+        "ENV['YOUTUBE_REDIRECT_URI']" => ENV["YOUTUBE_REDIRECT_URI"].inspect,
+        "ENV['YOUTUBE_REAUTH_URL']" => ENV["YOUTUBE_REAUTH_URL"].inspect,
+        "ENV['YOUTUBE_CLIENT_ID']" => ENV["YOUTUBE_CLIENT_ID"].inspect,
+        "ENV['YOUTUBE_CLIENT_SECRET'] length" => ENV["YOUTUBE_CLIENT_SECRET"].to_s.length,
+        "YoutubeAuthorization.redirect_uri" => YoutubeAuthorization.redirect_uri.inspect,
+        "YoutubeAuthorization.reauth_url" => YoutubeAuthorization.reauth_url.inspect,
+        "redirect_uri Google receives" => sent_redirect_uri.inspect,
+        "consent_url" => consent_url,
+        "request.base_url" => request.base_url,
+        "X-Forwarded-Proto" => request.headers["X-Forwarded-Proto"].inspect
+      }.map { |key, value| "#{key}: #{value}" }.join("\n")
+    end
 
     def valid_state?
       expected = session[STATE_KEY].to_s

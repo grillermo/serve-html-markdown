@@ -7,7 +7,7 @@ class YoutubeAuthorization
   Error = Class.new(StandardError)
   ConfigurationError = Class.new(Error)
 
-  CONSENT_URI = "https://accounts.google.com/o/oauth2/auth".freeze
+  CONSENT_URI = "https://accounts.google.com/o/oauth2/v2/auth".freeze
 
   class << self
     attr_writer :build

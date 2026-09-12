@@ -7,7 +7,7 @@ class YoutubeAuthorizationTest < ActiveSupport::TestCase
     url = build_auth.consent_url(state: "st4te")
     params = Rack::Utils.parse_query(URI.parse(url).query)
 
-    assert_equal "https://accounts.google.com/o/oauth2/auth", url.split("?").first
+    assert_equal "https://accounts.google.com/o/oauth2/v2/auth", url.split("?").first
     assert_equal "offline", params["access_type"]
     assert_equal "consent", params["prompt"]
     assert_equal "st4te", params["state"]

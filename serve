@@ -2,6 +2,10 @@
 
 set -eu
 
+# Set here rather than inherited from ~/.zshrc, so the app boots in production
+# no matter which shell (or tmux pane) runs this script.
+export RAILS_ENV=production
+
 # The Solid Queue supervisor forks its workers. On macOS the Objective-C runtime
 # aborts the child ("may have been in progress in another thread when fork() was
 # called"), which kills the supervisor and takes Puma down with it.

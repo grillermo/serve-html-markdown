@@ -11,6 +11,8 @@ class ServedHtmlWriterTest < ActiveSupport::TestCase
       body = dir.join(name).read
       assert_includes body, "<title>The Big Idea!</title>"
       assert_includes body, "<p>Hi</p>"
+      assert_includes body, "background: #111"
+      assert_match %r{<main>\s*<h1>The Big Idea!</h1>\s*<p>Hi</p>\s*</main>}, body
       assert ServedFile.exists?(name: name)
     end
   end

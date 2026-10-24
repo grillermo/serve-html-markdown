@@ -6,16 +6,17 @@ class TwitterVideoCaptionsJob < ApplicationJob
   WATCH_URL = ->(youtube_id) { "https://www.youtube.com/watch?v=#{youtube_id}" }
 
   class << self
-    attr_writer :ytdlp, :summarizer, :rulinky, :slack, :html_writer
+    attr_writer :ytdlp, :cookies, :summarizer, :rulinky, :slack, :html_writer
 
     def ytdlp = @ytdlp ||= -> { YtdlpClient.new }
+    def cookies = @cookies ||= -> { EgoCookies.new }
     def summarizer = @summarizer ||= -> { GeminiSummarizer.new }
     def rulinky = @rulinky ||= -> { RulinkyClient.new }
     def slack = @slack ||= -> { SlackNotifier.from_env }
     def html_writer = @html_writer ||= ->(**kwargs) { ServedHtmlWriter.write(**kwargs) }
 
     def reset_collaborators!
-      @ytdlp = @summarizer = @rulinky = @slack = @html_writer = nil
+      @ytdlp = @cookies = @summarizer = @rulinky = @slack = @html_writer = nil
     end
   end
 
@@ -42,10 +43,20 @@ class TwitterVideoCaptionsJob < ApplicationJob
     # A yt-dlp failure (rate limit, network) counts as "not ready yet", so the video
     # waits for the next checkpoint instead of failing outright.
     def read_captions(video, dir)
-      path = self.class.ytdlp.call.fetch_auto_subs(WATCH_URL.call(video.youtube_id), dir)
+      path = self.class.ytdlp.call.fetch_auto_subs(WATCH_URL.call(video.youtube_id), dir,
+                                                   cookies: export_cookies(video, dir))
       path&.read
     rescue YtdlpClient::Error => error
       Rails.logger.warn("[TwitterVideoCaptionsJob] ##{video.id} caption fetch errored: #{error.message}")
+      nil
+    end
+
+    # Signed-in cookies from ego lite keep YouTube from rate-limiting the caption
+    # download; without them the fetch is still attempted anonymously.
+    def export_cookies(video, dir)
+      self.class.cookies.call.export(File.join(dir, "cookies.txt"))
+    rescue EgoCookies::Error => error
+      Rails.logger.warn("[TwitterVideoCaptionsJob] ##{video.id} no ego lite cookies: #{error.message}")
       nil
     end
 

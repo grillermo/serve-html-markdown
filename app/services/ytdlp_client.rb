@@ -33,7 +33,7 @@ class YtdlpClient
     { path: Pathname.new(path), title: title }
   end
 
-  def fetch_auto_subs(youtube_url, dest_dir)
+  def fetch_auto_subs(youtube_url, dest_dir, cookies: nil)
     outtmpl = File.join(dest_dir.to_s, "%(id)s.%(ext)s")
     # Uploaded captions win over auto-captions when a video has both.
     argv = [@bin,
@@ -44,6 +44,7 @@ class YtdlpClient
             "--skip-download",
             "--no-playlist",
             "-o", outtmpl,
+            *(["--cookies", cookies.to_s] if cookies),
             youtube_url]
     _stdout, ok = @runner.call(argv)
     raise Error, "yt-dlp subs fetch failed" unless ok

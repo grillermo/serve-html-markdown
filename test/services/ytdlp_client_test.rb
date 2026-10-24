@@ -47,4 +47,11 @@ class YtdlpClientTest < ActiveSupport::TestCase
       assert_nil YtdlpClient.new(bin: "yt-dlp", runner: runner).fetch_auto_subs("u", dir)
     end
   end
+
+  test "fetch_auto_subs passes a cookies file when given one" do
+    argv = nil
+    runner = ->(a) { argv = a; ["", true] }
+    YtdlpClient.new(bin: "yt-dlp", runner: runner).fetch_auto_subs("u", Dir.tmpdir, cookies: "/c.txt")
+    assert_equal "/c.txt", argv[argv.index("--cookies") + 1]
+  end
 end

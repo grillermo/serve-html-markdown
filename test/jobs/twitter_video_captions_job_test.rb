@@ -7,6 +7,7 @@ class TwitterVideoCaptionsJobTest < ActiveJob::TestCase
                                   upload_completed_at: Time.current)
     @slack = FakeSlack.new
     TwitterVideoCaptionsJob.slack = -> { @slack }
+    TwitterVideoCaptionsJob.cookies = -> { FakeCookies.new }
     TwitterVideoCaptionsJob.summarizer = -> { FakeSummarizer.new }
     TwitterVideoCaptionsJob.rulinky = -> { FakeRulinky.new("link-1") }
     TwitterVideoCaptionsJob.html_writer = ->(**) { "the-idea.html" }
@@ -44,6 +45,22 @@ class TwitterVideoCaptionsJobTest < ActiveJob::TestCase
     assert_empty @slack.failures
   end
 
+  test "passes the exported ego lite cookies to yt-dlp" do
+    ytdlp = FakeYtdlp.new(vtt: "WEBVTT\nhello")
+    TwitterVideoCaptionsJob.ytdlp = -> { ytdlp }
+    TwitterVideoCaptionsJob.perform_now(@video.id)
+    assert_equal "cookies.txt", File.basename(ytdlp.cookies.to_s)
+  end
+
+  test "still fetches anonymously when the cookies can't be exported" do
+    ytdlp = FakeYtdlp.new(vtt: "WEBVTT\nhello")
+    TwitterVideoCaptionsJob.ytdlp = -> { ytdlp }
+    TwitterVideoCaptionsJob.cookies = -> { FakeCookies.new(error: EgoCookies::Error.new("no key")) }
+    TwitterVideoCaptionsJob.perform_now(@video.id)
+    assert_nil ytdlp.cookies
+    assert_equal "done", @video.reload.status
+  end
+
   test "on miss at final checkpoint: fails" do
     @video.update!(caption_attempts: TwitterVideo::CHECKPOINTS.length - 1)
     TwitterVideoCaptionsJob.ytdlp = -> { FakeYtdlp.new(vtt: nil) }
@@ -53,9 +70,19 @@ class TwitterVideoCaptionsJobTest < ActiveJob::TestCase
     assert @slack.failures.any?
   end
 
+  class FakeCookies
+    def initialize(error: nil) = (@error = error)
+    def export(path)
+      raise @error if @error
+      File.write(path, "# Netscape HTTP Cookie File\n")
+      path
+    end
+  end
   class FakeYtdlp
+    attr_reader :cookies
     def initialize(vtt: nil, error: nil) = (@vtt, @error = vtt, error)
-    def fetch_auto_subs(_url, dir)
+    def fetch_auto_subs(_url, dir, cookies: nil)
+      @cookies = cookies
       raise @error if @error
       return nil if @vtt.nil?
       path = Pathname.new(dir).join("v.en.vtt")

@@ -35,6 +35,15 @@ class TwitterVideoCaptionsJobTest < ActiveJob::TestCase
     assert_equal "awaiting_captions", @video.status
   end
 
+  test "on yt-dlp error: waits for the next checkpoint instead of failing" do
+    TwitterVideoCaptionsJob.ytdlp = -> { FakeYtdlp.new(error: YtdlpClient::Error.new("HTTP 429")) }
+    assert_enqueued_with(job: TwitterVideoCaptionsJob, args: [@video.id]) do
+      TwitterVideoCaptionsJob.perform_now(@video.id)
+    end
+    assert_equal ["awaiting_captions", 1], [@video.reload.status, @video.caption_attempts]
+    assert_empty @slack.failures
+  end
+
   test "on miss at final checkpoint: fails" do
     @video.update!(caption_attempts: TwitterVideo::CHECKPOINTS.length - 1)
     TwitterVideoCaptionsJob.ytdlp = -> { FakeYtdlp.new(vtt: nil) }
@@ -45,8 +54,9 @@ class TwitterVideoCaptionsJobTest < ActiveJob::TestCase
   end
 
   class FakeYtdlp
-    def initialize(vtt:) = (@vtt = vtt)
+    def initialize(vtt: nil, error: nil) = (@vtt, @error = vtt, error)
     def fetch_auto_subs(_url, dir)
+      raise @error if @error
       return nil if @vtt.nil?
       path = Pathname.new(dir).join("v.en.vtt")
       path.write(@vtt)

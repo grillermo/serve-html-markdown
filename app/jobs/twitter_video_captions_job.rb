@@ -39,9 +39,14 @@ class TwitterVideoCaptionsJob < ApplicationJob
   end
 
   private
+    # A yt-dlp failure (rate limit, network) counts as "not ready yet", so the video
+    # waits for the next checkpoint instead of failing outright.
     def read_captions(video, dir)
       path = self.class.ytdlp.call.fetch_auto_subs(WATCH_URL.call(video.youtube_id), dir)
       path&.read
+    rescue YtdlpClient::Error => error
+      Rails.logger.warn("[TwitterVideoCaptionsJob] ##{video.id} caption fetch errored: #{error.message}")
+      nil
     end
 
     def reschedule_or_fail(video)

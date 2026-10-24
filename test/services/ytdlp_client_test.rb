@@ -29,6 +29,7 @@ class YtdlpClientTest < ActiveSupport::TestCase
     Dir.mktmpdir do |dir|
       vtt = File.join(dir, "video.en.vtt")
       runner = lambda do |argv|
+        assert_includes argv, "--write-subs"
         assert_includes argv, "--write-auto-subs"
         assert_includes argv, "--skip-download"
         File.write(vtt, "WEBVTT")

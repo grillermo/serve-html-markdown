@@ -35,7 +35,9 @@ class YtdlpClient
 
   def fetch_auto_subs(youtube_url, dest_dir)
     outtmpl = File.join(dest_dir.to_s, "%(id)s.%(ext)s")
+    # Uploaded captions win over auto-captions when a video has both.
     argv = [@bin,
+            "--write-subs",
             "--write-auto-subs",
             "--sub-langs", "en.*",
             "--sub-format", "vtt",

@@ -3,6 +3,9 @@ class TwitterVideo < ApplicationRecord
   # Minutes elapsed from upload_completed_at. The last two are 1 and 2 days out, for
   # videos whose auto-captions only show up long after upload.
   CHECKPOINTS = [5, 10, 20, 30, 40, 60, 120, 1440, 2880].freeze
+  # A YouTube link points at a video that is already public, so if its captions
+  # haven't shown up within two hours they almost certainly never will.
+  YOUTUBE_LINK_CHECKPOINTS = [5, 10, 20, 30, 40, 60, 120].freeze
 
   validates :source_url, presence: true
   validates :status, inclusion: { in: STATUSES }
@@ -13,13 +16,17 @@ class TwitterVideo < ApplicationRecord
     where("source_url = ? OR source_url LIKE ?", canonical, "#{canonical}?%")
   }
 
+  def checkpoints
+    YoutubeUrl.video_id(source_url) ? YOUTUBE_LINK_CHECKPOINTS : CHECKPOINTS
+  end
+
   def fail!(detail)
     update!(status: "failed", error_detail: detail)
   end
 
   # Seconds to wait before the next caption checkpoint, or nil when exhausted.
   def next_caption_wait(now: Time.current)
-    minutes = CHECKPOINTS[caption_attempts]
+    minutes = checkpoints[caption_attempts]
     return nil if minutes.nil?
 
     target = upload_completed_at + minutes.minutes

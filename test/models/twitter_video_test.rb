@@ -40,4 +40,15 @@ class TwitterVideoTest < ActiveSupport::TestCase
                              upload_completed_at: Time.current)
     assert_nil v.next_caption_wait
   end
+
+  test "a youtube link gives up two hours after it was sent" do
+    t0 = Time.utc(2026, 7, 23, 12, 0, 0)
+    v = TwitterVideo.create!(source_url: "https://www.youtube.com/watch?v=KpILHX2D-AA",
+                             status: "awaiting_captions", upload_completed_at: t0,
+                             caption_attempts: TwitterVideo::YOUTUBE_LINK_CHECKPOINTS.length - 1)
+    assert_equal 2.hours.to_i, v.next_caption_wait(now: t0)
+
+    v.update!(caption_attempts: TwitterVideo::YOUTUBE_LINK_CHECKPOINTS.length)
+    assert_nil v.next_caption_wait(now: t0)
+  end
 end

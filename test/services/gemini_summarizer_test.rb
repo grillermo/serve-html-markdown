@@ -14,6 +14,8 @@ class GeminiSummarizerTest < ActiveSupport::TestCase
     assert_equal "/v1beta/models/gemini-flash-lite-latest:generateContent",
       conn.captured_request.path
     assert_includes conn.captured_request.body, "full transcript"
+    assert_equal "application/json",
+      JSON.parse(conn.captured_request.body).dig("generationConfig", "responseMimeType")
   end
 
   test "raises generic error on upstream failure without leaking body" do

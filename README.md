@@ -34,12 +34,12 @@ HOST=example.com
 
 The `.env` file and served files are ignored by Git.
 
-## Twitter video → HTML
+## Video summaries (X/Twitter and YouTube) → HTML
 
-`POST /twitter-video` (bearer `API_TOKEN`, body `{ "url": "<x.com status url>" }`)
-downloads the tweet's video, uploads it unlisted to YouTube for auto-captions,
+`POST /summarize-video` (bearer `API_TOKEN`, body `{ "url": "<x.com post or YouTube video url>" }`)
+downloads a tweet's video and uploads it unlisted to YouTube for auto-captions (YouTube links skip straight to captions),
 summarizes the transcript with OpenAI (gpt-6-luna), saves an HTML page, and pushes a link to
-[rulinky](../rulinky). Poll `GET /twitter-video/:id` for status.
+[rulinky](../rulinky). Poll `GET /summarize-video/:id` for status.
 
 Requires `yt-dlp` on `PATH` (or set `YTDLP_BIN`).
 

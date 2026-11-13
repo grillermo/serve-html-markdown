@@ -2,7 +2,7 @@
 
 This walks through building a Shortcuts.app shortcut that appears in the
 iOS **Share Sheet** when you're viewing a tweet/X post — tap it, and it POSTs
-the tweet URL to this app's `POST /twitter-video` endpoint, kicking off the
+the tweet URL to this app's `POST /summarize-video` endpoint, kicking off the
 download → YouTube upload → summarize → publish pipeline.
 
 ## What you'll need first
@@ -30,7 +30,7 @@ download → YouTube upload → summarize → publish pipeline.
    normalizes whatever you received into a plain string you can reference
    below.
 6. Tap **Add Action**, search for **Get Contents of URL**, and add it.
-   - **URL**: `https://your-app.example.com/twitter-video` (replace with your
+   - **URL**: `https://your-app.example.com/summarize-video` (replace with your
      actual host from `HOST`/your deploy URL).
    - Tap **Show More** to expand options:
      - **Method**: `POST`
@@ -56,7 +56,7 @@ download → YouTube upload → summarize → publish pipeline.
 1. Open the X/Twitter app (or Safari) on a tweet with a video.
 2. Tap **Share**.
 3. Scroll the Share Sheet and tap your **Twitter → HTML** shortcut.
-4. It POSTs the tweet URL to `/twitter-video`, which responds `202 Accepted`
+4. It POSTs the tweet URL to `/summarize-video`, which responds `202 Accepted`
    with `{ "id": <video_id>, "status": "downloading" }`. The pipeline then
    runs asynchronously — download, YouTube upload, caption polling,
    summarize, publish, and a link pushed to rulinky, with progress posted to
@@ -64,7 +64,7 @@ download → YouTube upload → summarize → publish pipeline.
 
 ## Checking status later (optional)
 
-`GET /twitter-video/:id` returns the current status (no auth required — see
+`GET /summarize-video/:id` returns the current status (no auth required — see
 `docs/twitter-security-problem.md` for why that's currently unauthenticated).
 You can add a second shortcut, or extend this one, to poll that endpoint
 using the `id` from the first response if you want an in-app status check

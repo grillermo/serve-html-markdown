@@ -3,8 +3,11 @@ Rails.application.routes.draw do
   match "/health", to: proc { [200, {}, [""]] }, via: :head
   post "/file/new", to: "files#create"
   post "/file/upload", to: "files#upload"
-  post "/twitter-video", to: "twitter_videos#create"
-  get "/twitter-video/:id", to: "twitter_videos#show", constraints: { id: /\d+/ }
+  post "/summarize-video", to: "video_summaries#create"
+  get "/summarize-video/:id", to: "video_summaries#show", constraints: { id: /\d+/ }
+  # Old name, kept so existing iOS Shortcuts keep working.
+  post "/twitter-video", to: "video_summaries#create"
+  get "/twitter-video/:id", to: "video_summaries#show", constraints: { id: /\d+/ }
   get "/youtube/reauth", to: "youtube_authorizations#new"
   get "/youtube/callback", to: "youtube_authorizations#create"
   get "/youtube/debug", to: "youtube_authorizations#debug"

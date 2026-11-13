@@ -8,7 +8,7 @@ the `files/` directory.
 - `GET /name.md` and `GET /name.markdown` render Markdown with a dark theme.
 - `GET /` and `GET /last` redirect to the most recently modified supported file.
 - `HEAD /health` returns `200 OK`.
-- `POST /file/new` formats content with Gemini and saves it as Markdown.
+- `POST /file/new` formats content with OpenAI (gpt-6-luna) and saves it as Markdown.
 
 ## Requirements
 
@@ -28,7 +28,7 @@ Set these values in `.env`:
 
 ```dotenv
 API_TOKEN=replace-with-a-long-random-token
-GEMINI_API_KEY=replace-with-your-gemini-api-key
+OPENAI_API_KEY=replace-with-your-openai-api-key
 HOST=example.com
 ```
 
@@ -38,7 +38,7 @@ The `.env` file and served files are ignored by Git.
 
 `POST /twitter-video` (bearer `API_TOKEN`, body `{ "url": "<x.com status url>" }`)
 downloads the tweet's video, uploads it unlisted to YouTube for auto-captions,
-summarizes the transcript with Gemini, saves an HTML page, and pushes a link to
+summarizes the transcript with OpenAI (gpt-6-luna), saves an HTML page, and pushes a link to
 [rulinky](../rulinky). Poll `GET /twitter-video/:id` for status.
 
 Requires `yt-dlp` on `PATH` (or set `YTDLP_BIN`).
@@ -94,7 +94,7 @@ http://localhost:8009/example.html
 http://localhost:8009/example.md
 ```
 
-Create a Gemini-formatted Markdown file with a bearer token:
+Create an OpenAI-formatted Markdown file with a bearer token:
 
 ```sh
 curl -X POST http://localhost:8009/file/new \

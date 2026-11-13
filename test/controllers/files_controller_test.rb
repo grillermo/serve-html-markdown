@@ -302,8 +302,8 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     assert ServedFile.exists?(name: created_name)
   end
 
-  test "returns a generic bad gateway response when Gemini fails" do
-    formatter = ->(*) { raise GeminiFormatter::Error, "sensitive upstream detail" }
+  test "returns a generic bad gateway response when OpenAI fails" do
+    formatter = ->(*) { raise OpenaiFormatter::Error, "sensitive upstream detail" }
 
     with_env "API_TOKEN", "upload-token" do
       with_formatter(formatter) do
@@ -314,7 +314,7 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
     end
 
     assert_response :bad_gateway
-    assert_equal({ "detail" => "Gemini formatting failed." }, response.parsed_body)
+    assert_equal({ "detail" => "OpenAI formatting failed." }, response.parsed_body)
     assert_empty @files_dir.children
   end
 
@@ -508,9 +508,11 @@ class FilesControllerTest < ActionDispatch::IntegrationTest
 
   test "allows filenames that merely resemble the reserved suffix" do
     with_env "API_TOKEN", "create-token" do
-      post "/file/new",
-        params: { content: "# Hi", filename: "report-v2.md" },
-        headers: { "Authorization" => "Bearer create-token" }
+      with_formatter(->(content) { content }) do
+        post "/file/new",
+          params: { content: "# Hi", filename: "report-v2.md" },
+          headers: { "Authorization" => "Bearer create-token" }
+      end
     end
 
     assert_response :success

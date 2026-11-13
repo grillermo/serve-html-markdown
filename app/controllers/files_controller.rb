@@ -6,7 +6,7 @@ class FilesController < ApplicationController
     extension: { autolink: true, header_ids: "" },
     parse: { smart: true }
   }.freeze
-  FORMATTER = GeminiFormatter
+  FORMATTER = OpenaiFormatter
   UPLOAD_EXTENSIONS = {
     ".html" => ".html",
     ".htm" => ".html",
@@ -26,9 +26,9 @@ class FilesController < ApplicationController
   rescue_from MissingFile do |error|
     render json: { detail: error.message }, status: :not_found
   end
-  rescue_from GeminiFormatter::Error do |error|
-    Rails.logger.error("Gemini formatting failed (#{error.class})")
-    render json: { detail: "Gemini formatting failed." }, status: :bad_gateway
+  rescue_from OpenaiFormatter::Error do |error|
+    Rails.logger.error("OpenAI formatting failed (#{error.class})")
+    render json: { detail: "OpenAI formatting failed." }, status: :bad_gateway
   end
 
   def show

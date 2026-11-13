@@ -10,7 +10,7 @@ class TwitterVideoCaptionsJob < ApplicationJob
 
     def ytdlp = @ytdlp ||= -> { YtdlpClient.new }
     def cookies = @cookies ||= -> { EgoCookies.new }
-    def summarizer = @summarizer ||= -> { GeminiSummarizer.new }
+    def summarizer = @summarizer ||= -> { OpenaiSummarizer.new }
     def rulinky = @rulinky ||= -> { RulinkyClient.new }
     def slack = @slack ||= -> { SlackNotifier.from_env }
     def html_writer = @html_writer ||= ->(**kwargs) { ServedHtmlWriter.write(**kwargs) }
@@ -78,7 +78,7 @@ class TwitterVideoCaptionsJob < ApplicationJob
       slack = self.class.slack.call
 
       video.update!(status: "summarizing")
-      Rails.logger.info("[TwitterVideoCaptionsJob] ##{video.id} summarizing transcript with Gemini")
+      Rails.logger.info("[TwitterVideoCaptionsJob] ##{video.id} summarizing transcript with OpenAI")
       summary = self.class.summarizer.call.summarize(vtt)
       Rails.logger.info("[TwitterVideoCaptionsJob] ##{video.id} summarized: #{summary[:title]}")
       slack.success("[twitter-video ##{video.id}] summarized: #{summary[:title]}")

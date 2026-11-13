@@ -54,4 +54,13 @@ class YtdlpClientTest < ActiveSupport::TestCase
     YtdlpClient.new(bin: "yt-dlp", runner: runner).fetch_auto_subs("u", Dir.tmpdir, cookies: "/c.txt")
     assert_equal "/c.txt", argv[argv.index("--cookies") + 1]
   end
+
+  test "fetch_auto_subs failure carries yt-dlp's ERROR lines" do
+    stderr = "WARNING: noise\nERROR: [youtube] abc: Sign in to confirm you're not a bot\n"
+    runner = ->(_argv) { ["", false, stderr] }
+    error = assert_raises(YtdlpClient::Error) do
+      YtdlpClient.new(bin: "yt-dlp", runner: runner).fetch_auto_subs("u", Dir.tmpdir)
+    end
+    assert_equal "yt-dlp subs fetch failed: ERROR: [youtube] abc: Sign in to confirm you're not a bot", error.message
+  end
 end

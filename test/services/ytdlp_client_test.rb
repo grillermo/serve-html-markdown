@@ -53,6 +53,7 @@ class YtdlpClientTest < ActiveSupport::TestCase
     runner = ->(a) { argv = a; ["", true] }
     YtdlpClient.new(bin: "yt-dlp", runner: runner).fetch_auto_subs("u", Dir.tmpdir, cookies: "/c.txt")
     assert_equal "/c.txt", argv[argv.index("--cookies") + 1]
+    assert_includes argv, "--ignore-no-formats-error"
   end
 
   test "fetch_auto_subs failure carries yt-dlp's ERROR lines" do

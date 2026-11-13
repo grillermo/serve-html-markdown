@@ -42,6 +42,8 @@ class YtdlpClient
             "--sub-langs", "en.*",
             "--sub-format", "vtt",
             "--skip-download",
+            # Signed in, YouTube can offer no playable format; that must not stop the subs.
+            "--ignore-no-formats-error",
             "--no-playlist",
             "-o", outtmpl,
             *(["--cookies", cookies.to_s] if cookies),

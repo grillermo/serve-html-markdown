@@ -23,7 +23,7 @@ bin/rails assets:precompile
 # Solid Queue runs as threads inside Puma (config/puma.rb), so Puma's 3 threads
 # and its ~8 (3 job threads, pollers, heartbeats) share one pool.
 ENV_PREFIX="env RAILS_ENV=production OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES DATABASE_POOL=12"
-# bin/watch keeps served_files in sync; /last depends on it.
-serve_aux watch "$ENV_PREFIX bin/watch"
+# bin/watch keeps served_files in sync; /last depends on it. disabled due to lack of use
+# serve_aux watch "$ENV_PREFIX bin/watch"
 serve_pane web 8009 "$ENV_PREFIX sh -c 'bin/rails server -p 8009 2>&1 | tee -a log/development.log'"
 serve_attach

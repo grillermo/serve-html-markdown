@@ -36,7 +36,14 @@ plugin :tmp_restart
 
 # Run the Solid Queue supervisor inside Puma, so scheduled jobs survive without a
 # separate process. Set SOLID_QUEUE_IN_PUMA=false and run bin/jobs to split them.
-plugin :solid_queue if ENV.fetch("SOLID_QUEUE_IN_PUMA", "true") == "true"
+if ENV.fetch("SOLID_QUEUE_IN_PUMA", "true") == "true"
+  plugin :solid_queue
+  # Threads inside Puma instead of a forked supervisor plus dispatcher, worker
+  # and scheduler (4 extra copies of the app, ~330MB on the macmini) for a
+  # one-user app. Puma's threads and Solid Queue's share one connection pool,
+  # which ./serve widens with DATABASE_POOL.
+  solid_queue_mode :async
+end
 
 # Specify the PID file. Defaults to tmp/pids/server.pid in development.
 # In other environments, only set the PID file if requested.

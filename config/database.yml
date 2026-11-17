@@ -4,6 +4,9 @@ default: &default
   pool: <%= ENV.fetch("DATABASE_POOL") { ENV.fetch("RAILS_MAX_THREADS", 3).to_i + 2 } %>
   host: <%= ENV.fetch("DATABASE_HOST", "localhost") %>
   port: <%= ENV.fetch("DATABASE_PORT", 5432) %>
+  # ./serve's web/job panes connect through PgBouncer (transaction mode), which can't track
+  # Rails' SQL-level DEALLOCATE; they set DATABASE_PREPARED_STATEMENTS=false.
+  prepared_statements: <%= ENV["DATABASE_PREPARED_STATEMENTS"] != "false" %>
   username: <%= ENV["DATABASE_USER"] %>
   password: <%= ENV["DATABASE_PASSWORD"] %>
 

@@ -4,7 +4,6 @@ package web
 import (
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -87,5 +86,3 @@ func (w *statusWriter) Flush() {
 
 // Unwrap returns the underlying ResponseWriter.
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-var _ = httptest.NewRecorder

@@ -22,8 +22,19 @@ var AllowedExtensions = map[string]bool{".html": true, ".md": true, ".markdown":
 // Postgres could not store are never allowed.
 func allowed(name string) bool { return validText(name) && hasAllowedExt(name) }
 
-func hasAllowedExt(name string) bool {
-	return AllowedExtensions[strings.ToLower(filepath.Ext(strings.TrimLeft(name, ".")))]
+func hasAllowedExt(name string) bool { return HasAllowedExtension(name) }
+
+// Ext mirrors Ruby's File.extname on a base name: leading dots are skipped, a
+// trailing dot yields ".", and the result keeps its case.
+func Ext(name string) string {
+	return filepath.Ext(strings.TrimLeft(name, "."))
+}
+
+// HasAllowedExtension reports whether name's extension (Ext, case-insensitive)
+// is one of AllowedExtensions. It only looks at the extension; use it on a
+// base name.
+func HasAllowedExtension(name string) bool {
+	return AllowedExtensions[strings.ToLower(Ext(name))]
 }
 
 // ServedFile is a row of served_files.

@@ -338,3 +338,16 @@ func TestSyncPruneSparesRowsCreatedAfterSyncStart(t *testing.T) {
 	must(t, store.SyncServedFiles(ctx, pool, dir))
 	assertNames(t, pool, "future.md")
 }
+
+func TestExtMirrorsRubyFileExtname(t *testing.T) {
+	for name, want := range map[string]string{
+		"a.md": ".md", "A.MD": ".MD", ".md": "", "..md": "", ".x.md": ".md", "foo.": ".", "a.b.": ".", "noext": "", "": "",
+	} {
+		if got := store.Ext(name); got != want {
+			t.Errorf("Ext(%q) = %q, want %q", name, got, want)
+		}
+	}
+	if !store.HasAllowedExtension("x.HTML") || store.HasAllowedExtension("x.txt") || store.HasAllowedExtension(".md") {
+		t.Error("HasAllowedExtension")
+	}
+}

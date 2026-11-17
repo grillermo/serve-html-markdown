@@ -1,11 +1,11 @@
-// Package webfs embeds the static files served by the Go binary.
+// Package webfs embeds the static files and templates served by the Go binary.
 package webfs
 
 import "embed"
 
-// FS holds the public/ directory (error pages, icons, robots.txt). Later tasks
-// add assets/ and templates/ embeds once those directories exist: an
-// //go:embed pattern that matches no files fails the build.
+// FS holds public/ (error pages, icons, robots.txt) and templates/ (html/template
+// pages). A later task adds assets/ once that directory exists: an //go:embed
+// pattern that matches no files fails the build.
 //
-//go:embed all:public
+//go:embed all:public all:templates
 var FS embed.FS

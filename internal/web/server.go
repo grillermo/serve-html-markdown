@@ -2,13 +2,16 @@
 package web
 
 import (
+	"html/template"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"serve-html-markdown/internal/auth"
 	"serve-html-markdown/internal/config"
+	webfs "serve-html-markdown/web"
 )
 
 // Server is the application's http.Handler.
@@ -18,6 +21,11 @@ type Server struct {
 	// Clock returns the current time; WithClock replaces it in tests.
 	Clock   func() time.Time
 	handler http.Handler
+	// codec signs the session cookie (purpose "session"); it reads the time
+	// from Clock, so tests that move the clock also move cookie expiry.
+	codec auth.Codec
+	// pages holds the parsed page templates by name (see parsePages).
+	pages map[string]*template.Template
 }
 
 // Option customizes a Server before its routes are built. Later tasks add
@@ -31,14 +39,20 @@ func WithClock(clock func() time.Time) Option {
 }
 
 // New builds a Server and its route table, applying opts first. pool may be
-// nil for tests that never touch the database. It panics at startup if two
-// route patterns conflict, an embedded public file is missing, or cfg.Host is
-// not a valid origin host.
+// nil for tests that never touch the database. It panics at startup if
+// cfg.SecretKeyBase is empty (an unsigned session cookie would be forgeable),
+// two route patterns conflict, an embedded public file or template is missing,
+// or cfg.Host is not a valid origin host.
 func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
+	if cfg.SecretKeyBase == "" {
+		panic("web: SECRET_KEY_BASE is required to sign session cookies")
+	}
 	s := &Server{cfg: cfg, pool: pool, Clock: time.Now}
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.codec = auth.NewCodec(cfg.SecretKeyBase, "session").WithClock(func() time.Time { return s.Clock() })
+	s.pages = parsePages(webfs.FS, "sign_in")
 	s.handler = s.routes()
 	return s
 }

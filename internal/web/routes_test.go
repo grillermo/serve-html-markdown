@@ -128,8 +128,11 @@ func TestNonDigitIDsAre404(t *testing.T) {
 			t.Errorf("GET %s: got %d, want 404", p, rec.Code)
 		}
 	}
-	// Digit ids reach the (not yet ported) handlers.
-	for _, p := range []string{"/expansions/12", "/summarize-video/12", "/twitter-video/12"} {
+	// Digit ids reach the guard (expansions) or the (not yet ported) public handlers.
+	if rec := do(srv, "GET", "/expansions/12", nil); rec.Code != 302 {
+		t.Errorf("GET /expansions/12: got %d, want 302 (guard)", rec.Code)
+	}
+	for _, p := range []string{"/summarize-video/12", "/twitter-video/12"} {
 		if rec := do(srv, "GET", p, nil); rec.Code != 501 {
 			t.Errorf("GET %s: got %d, want 501", p, rec.Code)
 		}
@@ -140,20 +143,52 @@ func TestNonDigitIDsAre404(t *testing.T) {
 // real {id} handlers (Tasks 8.3, 9.7) must treat a parse error as 404.
 func TestHugeIDsPassTheDigitCheck(t *testing.T) {
 	srv := newTestServerNoDB(t)
-	for _, p := range []string{"/expansions/99999999999999999999", "/summarize-video/99999999999999999999"} {
-		if rec := do(srv, "GET", p, nil); rec.Code != 501 {
-			t.Errorf("GET %s: got %d, want 501 (reaches the handler)", p, rec.Code)
-		}
+	if rec := do(srv, "GET", "/expansions/99999999999999999999", nil); rec.Code != 302 {
+		t.Errorf("GET /expansions/<huge>: got %d, want 302 (reaches the guard)", rec.Code)
+	}
+	if rec := do(srv, "GET", "/summarize-video/99999999999999999999", nil); rec.Code != 501 {
+		t.Errorf("GET /summarize-video/<huge>: got %d, want 501 (reaches the handler)", rec.Code)
 	}
 }
 
-// TRIPWIRE: requireUser is a pass-through stub, so every guarded route answers
-// 501 here. Task 3.2 replaces requireUser and must update this test.
+// Guarded routes send an anonymous visitor to the sign-in page and let a
+// signed-in one reach the handler (still a 501 stub until its task lands).
 func TestRoutePrecedence(t *testing.T) {
 	srv := newTestServerNoDB(t)
-	// Every stubbed route answers 501 with the JSON detail until its task lands.
-	for _, p := range []string{"/", "/last", "/index", "/anything.md", "/users/sign_in"} {
+	for _, p := range []string{"/", "/last", "/index", "/anything.md", "/youtube/reauth", "/expansions/1"} {
 		rec := do(srv, "GET", p, nil)
+		if rec.Code != 302 || !strings.HasPrefix(rec.Header().Get("Location"), "/users/sign_in") {
+			t.Errorf("GET %s without a cookie: got %d %q, want 302 to sign-in", p, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	if rec := do(srv, "GET", "/users/sign_in", nil); rec.Code != 200 {
+		t.Errorf("GET /users/sign_in: got %d", rec.Code)
+	}
+	if rec := do(srv, "DELETE", "/users/sign_out", nil); rec.Code != 303 {
+		t.Errorf("DELETE /users/sign_out: got %d", rec.Code)
+	}
+	// Not behind the session guard (bearer or public), still stubs.
+	for _, c := range [][2]string{
+		{"POST", "/file/new"}, {"POST", "/file/upload"},
+		{"POST", "/summarize-video"}, {"POST", "/twitter-video"},
+	} {
+		if rec := do(srv, c[0], c[1], nil); rec.Code != 501 {
+			t.Errorf("%s %s: got %d, want 501", c[0], c[1], rec.Code)
+		}
+	}
+	// Static names beat the {file_name} wildcard; /assets/* is its own 404.
+	if rec := do(srv, "GET", "/assets/x", nil); rec.Code != 404 {
+		t.Errorf("GET /assets/x: got %d, want 404", rec.Code)
+	}
+}
+
+// With a valid session every guarded route reaches its handler: a 501 JSON
+// stub today. Not parallel: it uses the shared test database.
+func TestRoutePrecedenceSignedIn(t *testing.T) {
+	env := newAuthEnv(t)
+	h := map[string]string{"Cookie": env.cookieFor(env.user)}
+	for _, p := range []string{"/", "/last", "/index", "/anything.md", "/youtube/reauth", "/youtube/callback", "/youtube/debug", "/expansions/1"} {
+		rec := do(env.srv, "GET", p, h)
 		if rec.Code != 501 {
 			t.Errorf("GET %s: got %d, want 501", p, rec.Code)
 			continue
@@ -165,20 +200,14 @@ func TestRoutePrecedence(t *testing.T) {
 			t.Errorf("GET %s: body %q", p, rec.Body.String())
 		}
 	}
-	for _, c := range [][2]string{
-		{"POST", "/users/sign_in"}, {"DELETE", "/users/sign_out"},
-		{"POST", "/file/new"}, {"POST", "/file/upload"},
-		{"POST", "/summarize-video"}, {"POST", "/twitter-video"},
-		{"GET", "/youtube/reauth"}, {"GET", "/youtube/callback"}, {"GET", "/youtube/debug"},
-		{"POST", "/expansions"}, {"PATCH", "/scroll_position"}, {"POST", "/scroll_position"},
-	} {
-		if rec := do(srv, c[0], c[1], nil); rec.Code != 501 {
+	for _, c := range [][2]string{{"POST", "/expansions"}, {"PATCH", "/scroll_position"}, {"POST", "/scroll_position"}} {
+		if rec := do(env.srv, c[0], c[1], h); rec.Code != 501 {
 			t.Errorf("%s %s: got %d, want 501", c[0], c[1], rec.Code)
 		}
 	}
-	// Static names beat the {file_name} wildcard; /assets/* is its own 404.
-	if rec := do(srv, "GET", "/assets/x", nil); rec.Code != 404 {
-		t.Errorf("GET /assets/x: got %d, want 404", rec.Code)
+	// Exact paths still win over /{file_name}: signing in is not a file.
+	if rec := do(env.srv, "GET", "/users/sign_in", h); rec.Code != 302 {
+		t.Errorf("GET /users/sign_in signed in: got %d, want 302", rec.Code)
 	}
 }
 
@@ -194,25 +223,25 @@ func TestCrossOriginProtection(t *testing.T) {
 	if rec.Header().Get("Strict-Transport-Security") == "" {
 		t.Error("403 from cross-origin protection lacks HSTS")
 	}
-	if rec := do(srv, "POST", "/scroll_position", nil); rec.Code != 501 {
-		t.Errorf("POST without Sec-Fetch-Site/Origin: got %d, want 501 (allowed through)", rec.Code)
+	if rec := do(srv, "POST", "/scroll_position", nil); rec.Code != 302 {
+		t.Errorf("POST without Sec-Fetch-Site/Origin: got %d, want 302 (allowed through to the guard)", rec.Code)
 	}
 	if rec := do(srv, "POST", "/file/new", map[string]string{"Authorization": "Bearer x"}); rec.Code != 501 {
 		t.Errorf("bearer POST without Origin: got %d, want 501", rec.Code)
 	}
-	if rec := do(srv, "POST", "/scroll_position", map[string]string{"Sec-Fetch-Site": "same-origin"}); rec.Code != 501 {
-		t.Errorf("same-origin POST: got %d, want 501", rec.Code)
+	if rec := do(srv, "POST", "/scroll_position", map[string]string{"Sec-Fetch-Site": "same-origin"}); rec.Code != 302 {
+		t.Errorf("same-origin POST: got %d, want 302", rec.Code)
 	}
-	if rec := do(srv, "GET", "/index", map[string]string{"Sec-Fetch-Site": "cross-site"}); rec.Code != 501 {
-		t.Errorf("cross-site GET (safe method): got %d, want 501", rec.Code)
+	if rec := do(srv, "GET", "/index", map[string]string{"Sec-Fetch-Site": "cross-site"}); rec.Code != 302 {
+		t.Errorf("cross-site GET (safe method): got %d, want 302", rec.Code)
 	}
 }
 
 func TestTrustedOriginFromHost(t *testing.T) {
-	srv := New(config.Config{FilesDir: t.TempDir(), Host: "files.example.test"}, nil)
+	srv := New(config.Config{FilesDir: t.TempDir(), Host: "files.example.test", SecretKeyBase: "x"}, nil)
 	trusted := do(srv, "POST", "/scroll_position", map[string]string{"Origin": "https://files.example.test"})
-	if trusted.Code != 501 {
-		t.Errorf("Origin https://<Host>: got %d, want 501 (allowed)", trusted.Code)
+	if trusted.Code != 302 {
+		t.Errorf("Origin https://<Host>: got %d, want 302 (allowed)", trusted.Code)
 	}
 	other := do(srv, "POST", "/scroll_position", map[string]string{"Origin": "https://evil.example.test"})
 	if other.Code != 403 {
@@ -231,7 +260,7 @@ func TestInvalidHostPanicsAtStartup(t *testing.T) {
 			t.Fatal("expected a panic for a malformed HOST")
 		}
 	}()
-	New(config.Config{Host: "bad host/with path"}, nil)
+	New(config.Config{Host: "bad host/with path", SecretKeyBase: "x"}, nil)
 }
 
 // Not parallel: it swaps the slog default.

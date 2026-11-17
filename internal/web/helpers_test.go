@@ -25,7 +25,7 @@ func newTestServerNoDB(t *testing.T, opts ...Option) *Server {
 
 func testConfig(t *testing.T) config.Config {
 	t.Helper()
-	return config.Config{FilesDir: t.TempDir(), Host: "localhost", APIToken: "test-token"}
+	return config.Config{FilesDir: t.TempDir(), Host: "localhost", APIToken: "test-token", SecretKeyBase: "test-secret-key-base-0123456789abcdef"}
 }
 
 func do(srv http.Handler, method, path string, hdr map[string]string) *httptest.ResponseRecorder {

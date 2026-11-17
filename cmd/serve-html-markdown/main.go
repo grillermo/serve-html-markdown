@@ -50,7 +50,18 @@ func runTo(args []string, stdout, stderr io.Writer) int {
 		cfg := config.Load(root)
 		slog.Info("serve: not implemented yet", "port", cfg.Port, "env", cfg.AppEnv)
 		return 0
-	case "migrate", "seed-admin", "youtube-reauth-url", "sync-files":
+	case "migrate", "seed-admin":
+		root, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: getwd: %v\n", cmd, err)
+			return 1
+		}
+		cfg := config.Load(root)
+		if cmd == "migrate" {
+			return migrate(cfg, stdout, stderr)
+		}
+		return seedAdmin(cfg, stdout, stderr)
+	case "youtube-reauth-url", "sync-files":
 		fmt.Fprintf(stderr, "%s: not implemented\n", cmd)
 		return 1
 	default:

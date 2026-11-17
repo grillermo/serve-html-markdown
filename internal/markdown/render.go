@@ -67,6 +67,12 @@ var md = goldmark.New(
 // callers decide how to degrade (for example by serving the raw file).
 var ErrInvalidUTF8 = errors.New("markdown: input is not valid UTF-8")
 
+// ErrTooComplex is returned for input whose structure would take the parser
+// far too long: container nesting hundreds of levels deep on one line, or tens
+// of thousands of link reference definitions (see tooComplex). Callers show the
+// text unrendered.
+var ErrTooComplex = errors.New("markdown: input is too complex to render")
+
 // Render converts Markdown to HTML. It is safe for concurrent use: the
 // goldmark instance is shared and read-only, and all per-document state (the
 // heading id anchorizer, bracket tracking) lives in the parse context or the
@@ -75,8 +81,12 @@ func Render(src []byte) ([]byte, error) {
 	if !utf8.Valid(src) {
 		return nil, ErrInvalidUTF8
 	}
+	src = normalize(src)
+	if tooComplex(src) {
+		return nil, ErrTooComplex
+	}
 	var buf bytes.Buffer
-	if err := md.Convert(normalize(src), &buf); err != nil {
+	if err := md.Convert(src, &buf); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

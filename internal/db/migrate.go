@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -31,8 +32,11 @@ type Beginner interface {
 // in transaction mode: advisory locks and multi-statement DDL files need a
 // stable session. This is the same reason ./serve runs db:migrate directly
 // today.
-func Migrate(ctx context.Context, db Beginner) error {
-	return MigrateFS(ctx, db, migrations.FS)
+//
+// Each file runs inside a transaction, so statements that cannot run in one
+// (CREATE INDEX CONCURRENTLY, VACUUM, ...) do not work in migrations.
+func Migrate(ctx context.Context, conn Beginner) error {
+	return MigrateFS(ctx, conn, migrations.FS)
 }
 
 // MigrateFS is Migrate over an arbitrary file system whose root holds
@@ -41,7 +45,7 @@ func Migrate(ctx context.Context, db Beginner) error {
 // transaction; a failure rolls that file back and records nothing for it.
 // Concurrent callers are serialized with a transaction-level advisory lock and
 // re-check the version under it, so a file is applied exactly once.
-func MigrateFS(ctx context.Context, db Beginner, fsys fs.FS) error {
+func MigrateFS(ctx context.Context, conn Beginner, fsys fs.FS) error {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return fmt.Errorf("read migrations: %w", err)
@@ -74,26 +78,32 @@ func MigrateFS(ctx context.Context, db Beginner, fsys fs.FS) error {
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", m.file, err)
 		}
-		if err := applyOne(ctx, db, m.version, string(sqlBytes)); err != nil {
+		if err := applyOne(ctx, conn, m.version, string(sqlBytes)); err != nil {
 			return fmt.Errorf("migration %s: %w", m.file, err)
 		}
 	}
 	return nil
 }
 
-func applyOne(ctx context.Context, db Beginner, version, sql string) (err error) {
-	tx, err := db.Begin(ctx)
+func applyOne(ctx context.Context, conn Beginner, version, sql string) (err error) {
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() {
 		if err != nil {
-			_ = tx.Rollback(context.WithoutCancel(ctx))
+			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			_ = tx.Rollback(rbCtx)
 		}
 	}()
 
 	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrateLockKey); err != nil {
 		return fmt.Errorf("lock: %w", err)
+	}
+	// Rails' own definition; absent only in a database Rails never touched.
+	if _, err = tx.Exec(ctx, "CREATE TABLE IF NOT EXISTS schema_migrations (version character varying NOT NULL PRIMARY KEY)"); err != nil {
+		return fmt.Errorf("ensure schema_migrations: %w", err)
 	}
 	var applied bool
 	if err = tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)", version).Scan(&applied); err != nil {

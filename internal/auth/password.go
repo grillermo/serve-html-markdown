@@ -1,6 +1,12 @@
 package auth
 
-import "golang.org/x/crypto/bcrypt"
+import (
+	"crypto/sha256"
+	"encoding/base64"
+	"sync"
+
+	"golang.org/x/crypto/bcrypt"
+)
 
 // Cost is the bcrypt cost used for new hashes: config.stretches in config/initializers/devise.rb
 // (12 outside the test env). Existing hashes of any cost verify, since the cost is stored in the hash.
@@ -44,4 +50,40 @@ func SaltOf(hash string) string {
 		return hash
 	}
 	return hash[:29]
+}
+
+// SaltToken is a non-reversible per-user token derived from the hash's salt, for the session
+// cookie: base64url(first 16 bytes of SHA-256("serve-html-markdown salt v1:" + SaltOf(hash))).
+// Like SaltOf it changes when the password changes, but the cookie does not leak the raw bcrypt
+// salt. It returns "" for a blank hash; callers must reject an empty token.
+func SaltToken(hash string) string {
+	if hash == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("serve-html-markdown salt v1:" + SaltOf(hash)))
+	return base64.RawURLEncoding.EncodeToString(sum[:16])
+}
+
+var (
+	dummyCost = Cost // a variable only so tests can avoid a slow cost-12 hash
+	dummyOnce sync.Once
+	dummyHash []byte
+)
+
+// CheckPasswordConstantTime is CheckPassword for sign-in: when the hash is blank or malformed (for
+// example no user has the submitted email) it still spends a bcrypt compare against a dummy hash,
+// then returns false, so unknown emails take about as long as wrong passwords. Timing parity is
+// best-effort only. The dummy hash is computed on first use (about a second at cost 12), not at
+// init, so that first unknown-email attempt is slower than the rest.
+func CheckPasswordConstantTime(hash, password string) bool {
+	if hash != "" {
+		if _, err := bcrypt.Cost([]byte(hash)); err == nil {
+			return CheckPassword(hash, password)
+		}
+	}
+	dummyOnce.Do(func() {
+		dummyHash, _ = bcrypt.GenerateFromPassword([]byte("serve-html-markdown dummy password"), dummyCost)
+	})
+	bcrypt.CompareHashAndPassword(dummyHash, truncate(password))
+	return false
 }

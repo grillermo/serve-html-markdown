@@ -1,0 +1,890 @@
+[
+  {
+    "name": "md_wraps_selection",
+    "extension": ".md",
+    "source": "Alpha beta gamma.",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "Alpha [beta](/x--expand-1.html) gamma."
+  },
+  {
+    "name": "html_wraps_selection",
+    "extension": ".html",
+    "source": "<p>Alpha beta gamma.</p>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "<p>Alpha <a href=\"/x--expand-1.html\">beta</a> gamma.</p>"
+  },
+  {
+    "name": "html_greater_than_text",
+    "extension": ".html",
+    "source": "<p>1 > 0</p>",
+    "selected_text": ">",
+    "occurrence": 1,
+    "output": "<p>1 <a href=\"/x--expand-1.html\">></a> 0</p>"
+  },
+  {
+    "name": "md_picks_requested_occurrence",
+    "extension": ".md",
+    "source": "cat dog cat bird cat",
+    "selected_text": "cat",
+    "occurrence": 2,
+    "output": "cat dog cat bird [cat](/x--expand-1.html)"
+  },
+  {
+    "name": "md_occurrence_out_of_range_falls_back",
+    "extension": ".md",
+    "source": "cat dog cat",
+    "selected_text": "cat",
+    "occurrence": 9,
+    "output": "[cat](/x--expand-1.html) dog cat"
+  },
+  {
+    "name": "md_not_found_absent_text",
+    "extension": ".md",
+    "source": "Alpha beta.",
+    "selected_text": "missing",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "md_escapes_closing_bracket",
+    "extension": ".md",
+    "source": "a b] c",
+    "selected_text": "b]",
+    "occurrence": 0,
+    "output": "a [b\\]](/x--expand-1.html) c"
+  },
+  {
+    "name": "md_unsafe_inside_existing_link_label",
+    "extension": ".md",
+    "source": "see [beta gamma](/old.html) end",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection overlaps an existing link."
+  },
+  {
+    "name": "md_not_found_text_only_in_link_url",
+    "extension": ".md",
+    "source": "see [label](/beta.html) end",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "html_not_found_text_only_in_tag",
+    "extension": ".html",
+    "source": "<p class=\"beta\">x</p>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "html_not_found_text_only_in_script",
+    "extension": ".html",
+    "source": "<script>var beta = 1;</script><p>x</p>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "html_unsafe_inside_existing_anchor",
+    "extension": ".html",
+    "source": "<a href=\"/old.html\">beta</a>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection overlaps an existing link."
+  },
+  {
+    "name": "html_not_found_raw_anchor_markup",
+    "extension": ".html",
+    "source": "<p>before <a href=\"/old.html\">beta</a> after</p>",
+    "selected_text": "<a href=\"/old.html\">beta</a>",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "html_not_found_raw_closing_anchor_markup",
+    "extension": ".html",
+    "source": "<p>before <a href=\"/old.html\">beta</a> after</p>",
+    "selected_text": "beta</a> after",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "md_not_found_raw_link_syntax",
+    "extension": ".md",
+    "source": "see [beta](/old.html) end",
+    "selected_text": "[beta](/old.html)",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "md_not_found_raw_link_syntax_escaped_bracket",
+    "extension": ".md",
+    "source": "see [b\\]](/old.html) end",
+    "selected_text": "[b\\]](/old.html)",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "md_not_found_raw_syntax_crossing_link",
+    "extension": ".md",
+    "source": "see [beta](/old.html) and more",
+    "selected_text": "[beta](/old.html) and",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "html_unsafe_occurrence_judged_as_is",
+    "extension": ".html",
+    "source": "<a href=\"/old.html\">beta</a> and beta again",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection overlaps an existing link."
+  },
+  {
+    "name": "html_spans_inline_span",
+    "extension": ".html",
+    "source": "this is <span> some </span> code",
+    "selected_text": "some code",
+    "occurrence": 0,
+    "output": "this is <a href=\"/x--expand-1.html\"><span> some </span> code</a>"
+  },
+  {
+    "name": "html_matches_across_differing_whitespace",
+    "extension": ".html",
+    "source": "<p>some\ncode here</p>",
+    "selected_text": "some code",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">some\ncode</a> here</p>"
+  },
+  {
+    "name": "html_entity_amp_preserved",
+    "extension": ".html",
+    "source": "<p>A &amp; B here</p>",
+    "selected_text": "A & B",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">A &amp; B</a> here</p>"
+  },
+  {
+    "name": "html_snaps_to_cover_partial_em",
+    "extension": ".html",
+    "source": "<p>x <em>alpha beta</em> gamma</p>",
+    "selected_text": "beta gamma",
+    "occurrence": 0,
+    "output": "<p>x <a href=\"/x--expand-1.html\"><em>alpha beta</em> gamma</a></p>"
+  },
+  {
+    "name": "html_segments_around_existing_anchor",
+    "extension": ".html",
+    "source": "<p>before <a href=\"/old.html\">beta</a> after</p>",
+    "selected_text": "before beta after",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">before</a> <a href=\"/old.html\">beta</a> <a href=\"/x--expand-1.html\">after</a></p>"
+  },
+  {
+    "name": "html_unsafe_spans_two_paragraphs",
+    "extension": ".html",
+    "source": "<p>one</p><p>two</p>",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "html_occurrence_counts_rendered_text",
+    "extension": ".html",
+    "source": "<p class=\"beta\">beta one beta two</p>",
+    "selected_text": "beta",
+    "occurrence": 1,
+    "output": "<p class=\"beta\">beta one <a href=\"/x--expand-1.html\">beta</a> two</p>"
+  },
+  {
+    "name": "md_spans_inline_code",
+    "extension": ".md",
+    "source": "this is `some` code",
+    "selected_text": "some code",
+    "occurrence": 0,
+    "output": "this is [`some` code](/x--expand-1.html)"
+  },
+  {
+    "name": "md_snaps_to_cover_partial_emphasis",
+    "extension": ".md",
+    "source": "make *this bold* now ok",
+    "selected_text": "bold now",
+    "occurrence": 0,
+    "output": "make [*this bold* now](/x--expand-1.html) ok"
+  },
+  {
+    "name": "md_segments_around_existing_link",
+    "extension": ".md",
+    "source": "see [beta](/old.html) and more",
+    "selected_text": "beta and",
+    "occurrence": 0,
+    "output": "see [beta](/old.html) [and](/x--expand-1.html) more"
+  },
+  {
+    "name": "md_segments_around_image",
+    "extension": ".md",
+    "source": "pic ![alt](i.png) end",
+    "selected_text": "pic end",
+    "occurrence": 0,
+    "output": "[pic](/x--expand-1.html) ![alt](i.png) [end](/x--expand-1.html)"
+  },
+  {
+    "name": "md_unsafe_spans_two_paragraphs",
+    "extension": ".md",
+    "source": "alpha\n\nbeta",
+    "selected_text": "alpha beta",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "md_unsafe_inside_fenced_code_block",
+    "extension": ".md",
+    "source": "before\n\n```\ncode here\n```\n",
+    "selected_text": "code here",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection is inside a code block."
+  },
+  {
+    "name": "md_links_heading_text",
+    "extension": ".md",
+    "source": "# Title\ntext",
+    "selected_text": "Title",
+    "occurrence": 0,
+    "output": "# [Title](/x--expand-1.html)\ntext"
+  },
+  {
+    "name": "md_links_one_list_item",
+    "extension": ".md",
+    "source": "- alpha\n- beta\n",
+    "selected_text": "alpha",
+    "occurrence": 0,
+    "output": "- [alpha](/x--expand-1.html)\n- beta\n"
+  },
+  {
+    "name": "md_unsafe_across_list_items",
+    "extension": ".md",
+    "source": "- alpha\n- beta\n",
+    "selected_text": "alpha beta",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "sub_md_paragraph_trailing_newline",
+    "extension": ".md",
+    "source": "alpha beta\n",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "alpha [beta](/x--expand-1.html)\n"
+  },
+  {
+    "name": "sub_md_soft_line_break_same_paragraph",
+    "extension": ".md",
+    "source": "alpha\nbeta\n",
+    "selected_text": "alpha beta",
+    "occurrence": 0,
+    "output": "[alpha\nbeta](/x--expand-1.html)\n"
+  },
+  {
+    "name": "sub_md_heading_then_text_across_blocks",
+    "extension": ".md",
+    "source": "# Title\ntext\n",
+    "selected_text": "Title text",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "sub_md_blockquote_prefix_dropped",
+    "extension": ".md",
+    "source": "> quoted text\n",
+    "selected_text": "quoted text",
+    "occurrence": 0,
+    "output": "> [quoted text](/x--expand-1.html)\n"
+  },
+  {
+    "name": "sub_md_indented_code_block_unsafe",
+    "extension": ".md",
+    "source": "before\n\n    indented code\n",
+    "selected_text": "indented code",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection is inside a code block."
+  },
+  {
+    "name": "sub_md_backslash_escape",
+    "extension": ".md",
+    "source": "a \\* b\n",
+    "selected_text": "a * b",
+    "occurrence": 0,
+    "output": "[a \\* b](/x--expand-1.html)\n"
+  },
+  {
+    "name": "sub_md_link_label_unsafe",
+    "extension": ".md",
+    "source": "see [beta](/old.html) end\n",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection overlaps an existing link."
+  },
+  {
+    "name": "sub_md_emphasis_partial",
+    "extension": ".md",
+    "source": "make *this bold* now\n",
+    "selected_text": "bold now",
+    "occurrence": 0,
+    "output": "make [*this bold* now](/x--expand-1.html)\n"
+  },
+  {
+    "name": "sub_md_unmatched_emphasis_literal",
+    "extension": ".md",
+    "source": "5 * 3 is fifteen\n",
+    "selected_text": "5 * 3",
+    "occurrence": 0,
+    "output": "[5 * 3](/x--expand-1.html) is fifteen\n"
+  },
+  {
+    "name": "sub_md_raw_inline_html_and_anchor",
+    "extension": ".md",
+    "source": "word <span>in span</span> and <a href=\"/o.html\">old</a> end\n",
+    "selected_text": "word in span and old end",
+    "occurrence": 0,
+    "output": "[word <span>in span</span> and](/x--expand-1.html) <a href=\"/o.html\">old</a> [end](/x--expand-1.html)\n"
+  },
+  {
+    "name": "sub_md_entity_decoded",
+    "extension": ".md",
+    "source": "A &amp; B\n",
+    "selected_text": "A & B",
+    "occurrence": 0,
+    "output": "[A &amp; B](/x--expand-1.html)\n"
+  },
+  {
+    "name": "sub_html_ab_paragraph",
+    "extension": ".html",
+    "source": "<p>ab</p>",
+    "selected_text": "b",
+    "occurrence": 0,
+    "output": "<p>a<a href=\"/x--expand-1.html\">b</a></p>"
+  },
+  {
+    "name": "sub_html_entity_amp_atomic",
+    "extension": ".html",
+    "source": "<p>A &amp; B</p>",
+    "selected_text": "& B",
+    "occurrence": 0,
+    "output": "<p>A <a href=\"/x--expand-1.html\">&amp; B</a></p>"
+  },
+  {
+    "name": "sub_html_skips_style_contents",
+    "extension": ".html",
+    "source": "<script>var beta = 1;</script><style>.x{}</style><p>x</p>",
+    "selected_text": "x",
+    "occurrence": 0,
+    "output": "<script>var beta = 1;</script><style>.x{}</style><p><a href=\"/x--expand-1.html\">x</a></p>"
+  },
+  {
+    "name": "sub_html_inline_tags_same_block",
+    "extension": ".html",
+    "source": "<p>one <em>two</em> three</p>",
+    "selected_text": "one two three",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">one <em>two</em> three</a></p>"
+  },
+  {
+    "name": "sub_html_em_inside_selection",
+    "extension": ".html",
+    "source": "<p>a <em>b</em> c</p>",
+    "selected_text": "a b c",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">a <em>b</em> c</a></p>"
+  },
+  {
+    "name": "sub_html_anchor_only_selection_unsafe",
+    "extension": ".html",
+    "source": "<p><a href=\"/old.html\">alpha beta</a></p>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection overlaps an existing link."
+  },
+  {
+    "name": "sub_html_br_newline",
+    "extension": ".html",
+    "source": "<p>some<br>code</p>",
+    "selected_text": "some code",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">some<br>code</a></p>"
+  },
+  {
+    "name": "sub_html_stray_angle_and_comment",
+    "extension": ".html",
+    "source": "<p>1 > 0</p><!-- note -->",
+    "selected_text": "1 > 0",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">1 > 0</a></p><!-- note -->"
+  },
+  {
+    "name": "sub_html_plain_match_within_paragraph",
+    "extension": ".html",
+    "source": "<p>alpha beta gamma</p>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "<p>alpha <a href=\"/x--expand-1.html\">beta</a> gamma</p>"
+  },
+  {
+    "name": "sub_html_span_wraps_whole_selection",
+    "extension": ".html",
+    "source": "<p><span>alpha beta gamma</span></p>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "<p><span>alpha <a href=\"/x--expand-1.html\">beta</a> gamma</span></p>"
+  },
+  {
+    "name": "sub_html_trims_whitespace_around_anchor",
+    "extension": ".html",
+    "source": "<p>one <a href=\"/old.html\">beta</a> two</p>",
+    "selected_text": "one beta two",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">one</a> <a href=\"/old.html\">beta</a> <a href=\"/x--expand-1.html\">two</a></p>"
+  },
+  {
+    "name": "sub_locator_collapsed_whitespace",
+    "extension": ".md",
+    "source": "some  \n code",
+    "selected_text": "some code",
+    "occurrence": 0,
+    "output": "[some  \n code](/x--expand-1.html)"
+  },
+  {
+    "name": "sub_locator_second_occurrence",
+    "extension": ".md",
+    "source": "cat dog cat",
+    "selected_text": "cat",
+    "occurrence": 1,
+    "output": "cat dog [cat](/x--expand-1.html)"
+  },
+  {
+    "name": "sub_locator_blank_selection",
+    "extension": ".md",
+    "source": "alpha",
+    "selected_text": "   ",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "sub_locator_regex_metacharacters",
+    "extension": ".md",
+    "source": "cost is $5 (usd)",
+    "selected_text": "$5 (usd)",
+    "occurrence": 0,
+    "output": "cost is [$5 (usd)](/x--expand-1.html)"
+  },
+  {
+    "name": "added_md_across_bold",
+    "extension": ".md",
+    "source": "Hello **big** world\n",
+    "selected_text": "big world",
+    "occurrence": 0,
+    "output": "Hello [**big** world](/x--expand-1.html)\n"
+  },
+  {
+    "name": "added_md_bold_partial_start",
+    "extension": ".md",
+    "source": "Hello **big** world\n",
+    "selected_text": "Hello big",
+    "occurrence": 0,
+    "output": "[Hello **big**](/x--expand-1.html) world\n"
+  },
+  {
+    "name": "added_md_inside_bold",
+    "extension": ".md",
+    "source": "Hello **big** world\n",
+    "selected_text": "big",
+    "occurrence": 0,
+    "output": "Hello **[big](/x--expand-1.html)** world\n"
+  },
+  {
+    "name": "added_md_inside_inline_code",
+    "extension": ".md",
+    "source": "run `git status` now\n",
+    "selected_text": "status",
+    "occurrence": 0,
+    "output": "run `git [status](/x--expand-1.html)` now\n"
+  },
+  {
+    "name": "added_md_whole_inline_code",
+    "extension": ".md",
+    "source": "run `git status` now\n",
+    "selected_text": "git status",
+    "occurrence": 0,
+    "output": "run `[git status](/x--expand-1.html)` now\n"
+  },
+  {
+    "name": "added_md_across_existing_link",
+    "extension": ".md",
+    "source": "go to [the docs](/d.html) for more help\n",
+    "selected_text": "to the docs for",
+    "occurrence": 0,
+    "output": "go [to](/x--expand-1.html) [the docs](/d.html) [for](/x--expand-1.html) more help\n"
+  },
+  {
+    "name": "added_md_across_existing_link_unsafe_inside",
+    "extension": ".md",
+    "source": "go to [the docs](/d.html) for more help\n",
+    "selected_text": "the docs",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection overlaps an existing link."
+  },
+  {
+    "name": "added_md_entity_amp",
+    "extension": ".md",
+    "source": "Tom &amp; Jerry went home\n",
+    "selected_text": "Tom & Jerry",
+    "occurrence": 0,
+    "output": "[Tom &amp; Jerry](/x--expand-1.html) went home\n"
+  },
+  {
+    "name": "added_md_entity_nbsp_selected_as_space",
+    "extension": ".md",
+    "source": "one&nbsp;two three\n",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_md_entity_nbsp_selected_as_char",
+    "extension": ".md",
+    "source": "one&nbsp;two three\n",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_md_literal_nbsp_both",
+    "extension": ".md",
+    "source": "one two three\n",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "output": "[one two](/x--expand-1.html) three\n"
+  },
+  {
+    "name": "added_md_literal_nbsp_char_in_source",
+    "extension": ".md",
+    "source": "one two three\n",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_md_entity_numeric_eacute",
+    "extension": ".md",
+    "source": "un caf&#233; con leche\n",
+    "selected_text": "café",
+    "occurrence": 0,
+    "output": "un [caf&#233;](/x--expand-1.html) con leche\n"
+  },
+  {
+    "name": "added_md_multibyte_quotes_and_dash",
+    "extension": ".md",
+    "source": "Dijo “ñandú” — café con leche.\n",
+    "selected_text": "“ñandú” — café",
+    "occurrence": 0,
+    "output": "Dijo [“ñandú” — café](/x--expand-1.html) con leche.\n"
+  },
+  {
+    "name": "added_md_multibyte_before_selection",
+    "extension": ".md",
+    "source": "ñandú y café: hello world\n",
+    "selected_text": "hello",
+    "occurrence": 0,
+    "output": "ñandú y café: [hello](/x--expand-1.html) world\n"
+  },
+  {
+    "name": "added_md_emoji_before_selection",
+    "extension": ".md",
+    "source": "😀 happy 😀 days\n",
+    "selected_text": "days",
+    "occurrence": 0,
+    "output": "😀 happy 😀 [days](/x--expand-1.html)\n"
+  },
+  {
+    "name": "added_md_second_occurrence",
+    "extension": ".md",
+    "source": "the cat and the cat and the cat\n",
+    "selected_text": "the cat",
+    "occurrence": 1,
+    "output": "the cat and [the cat](/x--expand-1.html) and the cat\n"
+  },
+  {
+    "name": "added_md_cross_paragraph",
+    "extension": ".md",
+    "source": "First paragraph here.\n\nSecond paragraph there.\n",
+    "selected_text": "here. Second",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "added_md_not_found_different_text",
+    "extension": ".md",
+    "source": "alpha beta\n",
+    "selected_text": "alpha  gamma",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_md_multiple_closing_brackets",
+    "extension": ".md",
+    "source": "x [a] and [b] y\n",
+    "selected_text": "[a] and [b]",
+    "occurrence": 0,
+    "output": "x [[a\\] and [b\\]](/x--expand-1.html) y\n"
+  },
+  {
+    "name": "added_md_negative_occurrence",
+    "extension": ".md",
+    "source": "cat dog cat",
+    "selected_text": "cat",
+    "occurrence": -3,
+    "output": "[cat](/x--expand-1.html) dog cat"
+  },
+  {
+    "name": "added_md_blockquote_selection",
+    "extension": ".md",
+    "source": "> quoted text here\n",
+    "selected_text": "text here",
+    "occurrence": 0,
+    "output": "> quoted [text here](/x--expand-1.html)\n"
+  },
+  {
+    "name": "added_md_ordered_list_item",
+    "extension": ".md",
+    "source": "1. first item\n2. second item\n",
+    "selected_text": "second",
+    "occurrence": 0,
+    "output": "1. first item\n2. [second](/x--expand-1.html) item\n"
+  },
+  {
+    "name": "added_md_no_trailing_newline_end",
+    "extension": ".md",
+    "source": "tail word",
+    "selected_text": "word",
+    "occurrence": 0,
+    "output": "tail [word](/x--expand-1.html)"
+  },
+  {
+    "name": "added_md_crlf_line_endings",
+    "extension": ".md",
+    "source": "alpha\r\nbeta gamma\r\n",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "alpha\r\n[beta](/x--expand-1.html) gamma\r\n"
+  },
+  {
+    "name": "added_md_unknown_extension_treated_as_markdown",
+    "extension": ".txt",
+    "source": "Alpha beta gamma.",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "Alpha [beta](/x--expand-1.html) gamma."
+  },
+  {
+    "name": "added_html_entity_nbsp_selected_as_space",
+    "extension": ".html",
+    "source": "<p>one&nbsp;two three</p>",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_html_entity_nbsp_selected_as_char",
+    "extension": ".html",
+    "source": "<p>one&nbsp;two three</p>",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_html_literal_nbsp_char_in_source",
+    "extension": ".html",
+    "source": "<p>one two three</p>",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_html_entity_numeric_eacute",
+    "extension": ".html",
+    "source": "<p>un caf&#233; con leche</p>",
+    "selected_text": "café",
+    "occurrence": 0,
+    "output": "<p>un <a href=\"/x--expand-1.html\">caf&#233;</a> con leche</p>"
+  },
+  {
+    "name": "added_html_entity_amp_selection_start",
+    "extension": ".html",
+    "source": "<p>x &amp; y &amp; z</p>",
+    "selected_text": "y & z",
+    "occurrence": 0,
+    "output": "<p>x &amp; <a href=\"/x--expand-1.html\">y &amp; z</a></p>"
+  },
+  {
+    "name": "added_html_multibyte_quotes_and_dash",
+    "extension": ".html",
+    "source": "<p>Dijo “ñandú” — café con leche.</p>",
+    "selected_text": "“ñandú” — café",
+    "occurrence": 0,
+    "output": "<p>Dijo <a href=\"/x--expand-1.html\">“ñandú” — café</a> con leche.</p>"
+  },
+  {
+    "name": "added_html_multibyte_inside_em",
+    "extension": ".html",
+    "source": "<p>Un <em>ñandú</em> corre</p>",
+    "selected_text": "ñandú corre",
+    "occurrence": 0,
+    "output": "<p>Un <a href=\"/x--expand-1.html\"><em>ñandú</em> corre</a></p>"
+  },
+  {
+    "name": "added_html_emoji_before_selection",
+    "extension": ".html",
+    "source": "<p>😀 happy 😀 days</p>",
+    "selected_text": "days",
+    "occurrence": 0,
+    "output": "<p>😀 happy 😀 <a href=\"/x--expand-1.html\">days</a></p>"
+  },
+  {
+    "name": "added_html_second_occurrence",
+    "extension": ".html",
+    "source": "<p>the cat and the cat</p>",
+    "selected_text": "the cat",
+    "occurrence": 1,
+    "output": "<p>the cat and <a href=\"/x--expand-1.html\">the cat</a></p>"
+  },
+  {
+    "name": "added_html_cross_paragraph_unsafe",
+    "extension": ".html",
+    "source": "<p>First here.</p>\n<p>Second there.</p>",
+    "selected_text": "here. Second",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "added_html_em_and_br",
+    "extension": ".html",
+    "source": "<p>Hello <em>big</em><br>wide world</p>",
+    "selected_text": "big wide",
+    "occurrence": 0,
+    "output": "<p>Hello <a href=\"/x--expand-1.html\"><em>big</em><br>wide</a> world</p>"
+  },
+  {
+    "name": "added_html_em_br_selection_inside_em",
+    "extension": ".html",
+    "source": "<p>Hello <em>big</em><br>wide world</p>",
+    "selected_text": "big",
+    "occurrence": 0,
+    "output": "<p>Hello <em><a href=\"/x--expand-1.html\">big</a></em><br>wide world</p>"
+  },
+  {
+    "name": "added_html_partial_em_from_start",
+    "extension": ".html",
+    "source": "<p>x <em>alpha beta</em> gamma</p>",
+    "selected_text": "x alpha",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">x <em>alpha beta</em></a> gamma</p>"
+  },
+  {
+    "name": "added_html_nested_inline_tags",
+    "extension": ".html",
+    "source": "<p>a <strong>b <em>c d</em></strong> e</p>",
+    "selected_text": "c d e",
+    "occurrence": 0,
+    "output": "<p>a <a href=\"/x--expand-1.html\"><strong>b <em>c d</em></strong> e</a></p>"
+  },
+  {
+    "name": "added_html_not_found_entity_literal",
+    "extension": ".html",
+    "source": "<p>A &amp; B here</p>",
+    "selected_text": "A &amp; B",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_html_attributes_with_gt",
+    "extension": ".html",
+    "source": "<p title=\"a > b\">hello world</p>",
+    "selected_text": "hello",
+    "occurrence": 0,
+    "output": "<p title=\"a > b\"><a href=\"/x--expand-1.html\">hello</a> world</p>"
+  },
+  {
+    "name": "added_html_comment_ignored",
+    "extension": ".html",
+    "source": "<p>one <!-- hidden two --> three</p>",
+    "selected_text": "hidden",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_html_style_block_ignored",
+    "extension": ".html",
+    "source": "<style>.beta{}</style><p>beta here</p>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "<style>.beta{}</style><p><a href=\"/x--expand-1.html\">beta</a> here</p>"
+  },
+  {
+    "name": "added_html_blank_selection",
+    "extension": ".html",
+    "source": "<p>alpha</p>",
+    "selected_text": "",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "added_html_full_document",
+    "extension": ".html",
+    "source": "<!DOCTYPE html>\n<html><head><title>T</title></head>\n<body>\n<h1>Heading</h1>\n<p>Body text here.</p>\n</body></html>\n",
+    "selected_text": "text here",
+    "occurrence": 0,
+    "output": "<!DOCTYPE html>\n<html><head><title>T</title></head>\n<body>\n<h1>Heading</h1>\n<p>Body <a href=\"/x--expand-1.html\">text here</a>.</p>\n</body></html>\n"
+  },
+  {
+    "name": "added_html_heading_then_paragraph_unsafe",
+    "extension": ".html",
+    "source": "<h1>Heading</h1><p>Body</p>",
+    "selected_text": "Heading Body",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "added_html_list_items_unsafe",
+    "extension": ".html",
+    "source": "<ul><li>alpha</li><li>beta</li></ul>",
+    "selected_text": "alpha beta",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "added_html_list_item",
+    "extension": ".html",
+    "source": "<ul><li>alpha</li><li>beta</li></ul>",
+    "selected_text": "beta",
+    "occurrence": 0,
+    "output": "<ul><li>alpha</li><li><a href=\"/x--expand-1.html\">beta</a></li></ul>"
+  },
+  {
+    "name": "added_html_pre_block",
+    "extension": ".html",
+    "source": "<pre>code here</pre>",
+    "selected_text": "code here",
+    "occurrence": 0,
+    "output": "<pre><a href=\"/x--expand-1.html\">code here</a></pre>"
+  },
+  {
+    "name": "added_html_uppercase_tags",
+    "extension": ".html",
+    "source": "<P>Alpha <EM>beta</EM> gamma</P>",
+    "selected_text": "beta gamma",
+    "occurrence": 0,
+    "output": "<P>Alpha <a href=\"/x--expand-1.html\"><EM>beta</EM> gamma</a></P>"
+  }
+]

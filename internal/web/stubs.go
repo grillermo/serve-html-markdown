@@ -12,12 +12,6 @@ func notImplemented(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"detail":"Not implemented."}` + "\n"))
 }
 
-// File creation (not part of the show/index/last task).
-func (s *Server) createFile(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
-
-// Uploads (Task 5.2).
-func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
-
 // Expansions (Task 8.3).
 func (s *Server) createExpansion(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
 func (s *Server) showExpansion(w http.ResponseWriter, r *http.Request)   { notImplemented(w, r) }

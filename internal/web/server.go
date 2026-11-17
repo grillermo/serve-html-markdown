@@ -42,6 +42,11 @@ type Server struct {
 	// maxRenderBytes and maxHTMLBytes cap the size of a file shown as Markdown or
 	// as HTML (see MaxRenderBytes, MaxHTMLBytes); tests lower them.
 	maxRenderBytes, maxHTMLBytes int64
+	// formatter turns posted text into Markdown (WithFormatter replaces the
+	// OpenAI-backed default); maxCreateBytes and maxUploadBytes cap the bodies of
+	// POST /file/new and /file/upload (tests lower them).
+	formatter                      Formatter
+	maxCreateBytes, maxUploadBytes int64
 	// Test seams. openFile opens a served file, render converts Markdown, and
 	// renderDeadline starts the timer after which a request stops waiting for a
 	// render (it returns the channel and a stop function).
@@ -93,6 +98,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 		cfg: cfg, pool: pool, Clock: time.Now,
 		renderConcurrency: DefaultRenderConcurrency, htmlConcurrency: DefaultHTMLConcurrency,
 		maxRenderBytes: MaxRenderBytes, maxHTMLBytes: MaxHTMLBytes,
+		maxCreateBytes: MaxCreateBytes, maxUploadBytes: MaxUploadBytes,
 		openFile: func(dir, name string) (io.ReadCloser, string, error) {
 			f, canonical, err := files.OpenFile(dir, name)
 			if err != nil {
@@ -105,6 +111,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if s.formatter == nil {
+		s.formatter = newFormatter(cfg)
 	}
 	s.renders = newLimiter(s.renderConcurrency)
 	s.htmlLimit = newLimiter(s.htmlConcurrency)

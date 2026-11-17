@@ -199,3 +199,23 @@ func TestUniqueFunctionsMapNameTooLong(t *testing.T) {
 	_, err = files.CreateUnique(dir, stem, ".md", nil)
 	wantError(t, err, files.ErrBadRequest, 400, "Invalid filename.")
 }
+
+// Ruby: upload_extension (UPLOAD_EXTENSIONS).
+func TestUploadExtension(t *testing.T) {
+	ok := map[string]string{
+		"a.html": ".html", "a.HTM": ".html", "dir/a.htm": ".html", `..\a.Md`: ".md",
+		"a.markdown": ".md", "x/../a.MARKDOWN": ".md", "a.b.md": ".md", "a.md/": ".md", ".x.md": ".md",
+	}
+	for in, want := range ok {
+		if got, err := files.UploadExtension(in); err != nil || got != want {
+			t.Errorf("files.UploadExtension(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "a", "a.txt", ".md", "md", "a.md.txt", "a.md.", "dir.md/a", `dir.md\a`} {
+		_, err := files.UploadExtension(in)
+		status, detail, isFile := files.StatusOf(err)
+		if !isFile || status != 400 || detail != "Only .html, .md, and .markdown files are supported." {
+			t.Errorf("files.UploadExtension(%q) err = %v (%d %q)", in, err, status, detail)
+		}
+	}
+}

@@ -167,11 +167,16 @@ func TestRoutePrecedence(t *testing.T) {
 	if rec := do(srv, "DELETE", "/users/sign_out", nil); rec.Code != 303 {
 		t.Errorf("DELETE /users/sign_out: got %d", rec.Code)
 	}
-	// Not behind the session guard (bearer or public), still stubs.
-	for _, c := range [][2]string{
-		{"POST", "/file/new"}, {"POST", "/file/upload"},
-		{"POST", "/summarize-video"}, {"POST", "/twitter-video"},
-	} {
+	// Bearer routes are not behind the session guard: without a token they
+	// answer 401 JSON, not a redirect to sign-in.
+	for _, c := range [][2]string{{"POST", "/file/new"}, {"POST", "/file/upload"}} {
+		rec := do(srv, c[0], c[1], nil)
+		if rec.Code != 401 || strings.TrimSpace(rec.Body.String()) != `{"detail":"Unauthorized"}` {
+			t.Errorf("%s %s: got %d %q, want 401 Unauthorized", c[0], c[1], rec.Code, rec.Body.String())
+		}
+	}
+	// Public or bearer routes of later tasks are still stubs.
+	for _, c := range [][2]string{{"POST", "/summarize-video"}, {"POST", "/twitter-video"}} {
 		if rec := do(srv, c[0], c[1], nil); rec.Code != 501 {
 			t.Errorf("%s %s: got %d, want 501", c[0], c[1], rec.Code)
 		}
@@ -237,8 +242,13 @@ func TestCrossOriginProtection(t *testing.T) {
 	if rec := do(srv, "POST", "/scroll_position", nil); rec.Code != 302 {
 		t.Errorf("POST without Sec-Fetch-Site/Origin: got %d, want 302 (allowed through to the guard)", rec.Code)
 	}
-	if rec := do(srv, "POST", "/file/new", map[string]string{"Authorization": "Bearer x"}); rec.Code != 501 {
-		t.Errorf("bearer POST without Origin: got %d, want 501", rec.Code)
+	// A bearer request without Origin reaches the handler (wrong token: 401,
+	// not 403); a cross-site browser request does not.
+	if rec := do(srv, "POST", "/file/new", map[string]string{"Authorization": "Bearer x"}); rec.Code != 401 {
+		t.Errorf("bearer POST without Origin: got %d, want 401 (reaches the handler)", rec.Code)
+	}
+	if rec := do(srv, "POST", "/file/new", map[string]string{"Authorization": "Bearer x", "Sec-Fetch-Site": "cross-site"}); rec.Code != 403 {
+		t.Errorf("cross-site bearer POST: got %d, want 403", rec.Code)
 	}
 	if rec := do(srv, "POST", "/scroll_position", map[string]string{"Sec-Fetch-Site": "same-origin"}); rec.Code != 302 {
 		t.Errorf("same-origin POST: got %d, want 302", rec.Code)

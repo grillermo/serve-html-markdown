@@ -65,34 +65,42 @@ func parseParams(w http.ResponseWriter, r *http.Request, limit int64) (requestPa
 	return p, nil
 }
 
+// lookup is params[key]: the value as text and whether the parameter is
+// present. An explicit JSON null counts as absent (Rails gives nil), but it
+// still hides the same key of the form body, like get always did.
+func (p requestParams) lookup(key string) (string, bool) {
+	if vs := p.query[key]; len(vs) > 0 {
+		return vs[len(vs)-1], true
+	}
+	if v, ok := p.json[key]; ok {
+		switch v := v.(type) {
+		case nil:
+			return "", false
+		case string:
+			return v, true
+		case json.Number:
+			return v.String(), true
+		case bool:
+			if v {
+				return "true", true
+			}
+			return "false", true
+		default:
+			b, _ := json.Marshal(v)
+			return string(b), true
+		}
+	}
+	if vs := p.form[key]; len(vs) > 0 {
+		return vs[len(vs)-1], true
+	}
+	return "", false
+}
+
 // get is params[key].to_s: "" when the parameter is absent or null. Strings
 // are taken as they are, numbers and booleans as their JSON text (Ruby's to_s
 // of an integer or true gives the same), arrays and objects as JSON text,
 // which no valid anchor can match.
 func (p requestParams) get(key string) string {
-	if vs := p.query[key]; len(vs) > 0 {
-		return vs[len(vs)-1]
-	}
-	if v, ok := p.json[key]; ok {
-		switch v := v.(type) {
-		case nil:
-			return ""
-		case string:
-			return v
-		case json.Number:
-			return v.String()
-		case bool:
-			if v {
-				return "true"
-			}
-			return "false"
-		default:
-			b, _ := json.Marshal(v)
-			return string(b)
-		}
-	}
-	if vs := p.form[key]; len(vs) > 0 {
-		return vs[len(vs)-1]
-	}
-	return ""
+	v, _ := p.lookup(key)
+	return v
 }

@@ -3,14 +3,14 @@ package store
 import (
 	"context"
 	"errors"
-	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"serve-html-markdown/internal/video"
 )
 
 // TwitterVideoStatuses are the allowed values of twitter_videos.status, in the
@@ -122,25 +122,12 @@ func CreateTwitterVideo(ctx context.Context, db DB, n NewTwitterVideo) (*Twitter
 		(source_url, status, caption_attempts, upload_completed_at, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $5)
 		RETURNING `+twitterVideoColumns,
-		n.SourceURL, n.Status, n.CaptionAttempts, utcPtr(n.UploadCompletedAt), now))
-}
-
-// utcPtr converts a timestamp for a "timestamp without time zone" column.
-func utcPtr(t *time.Time) *time.Time {
-	if t == nil {
-		return nil
-	}
-	u := t.UTC()
-	return &u
+		n.SourceURL, n.Status, n.CaptionAttempts, utcTimePtr(n.UploadCompletedAt), now))
 }
 
 // FindTwitterVideo returns the row, or nil, nil when there is none.
 func FindTwitterVideo(ctx context.Context, db DB, id int64) (*TwitterVideo, error) {
-	v, err := scanTwitterVideo(db.QueryRow(ctx, `SELECT `+twitterVideoColumns+` FROM twitter_videos WHERE id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return v, err
+	return nilIfNoRows(scanTwitterVideo(db.QueryRow(ctx, `SELECT `+twitterVideoColumns+` FROM twitter_videos WHERE id = $1`, id)))
 }
 
 // forSourceURLWhere matches the stored URL exactly or followed by a query
@@ -176,16 +163,16 @@ func LatestTwitterVideoForSourceURL(ctx context.Context, db DB, sourceURL string
 		return nil, nil
 	}
 	canonical := canonicalSourceURL(sourceURL)
-	v, err := scanTwitterVideo(db.QueryRow(ctx, `SELECT `+twitterVideoColumns+` FROM twitter_videos
-		WHERE `+forSourceURLWhere+` ORDER BY id DESC LIMIT 1`, canonical, EscapeLike(canonical)+"?%"))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return v, err
+	return nilIfNoRows(scanTwitterVideo(db.QueryRow(ctx, `SELECT `+twitterVideoColumns+` FROM twitter_videos
+		WHERE `+forSourceURLWhere+` ORDER BY id DESC LIMIT 1`, canonical, EscapeLike(canonical)+"?%")))
 }
 
 // FindOrCreateTwitterVideo is the controller's twitter path: retry the newest
 // row for the tweet, or create a "downloading" one. created reports which.
+//
+// Like Rails, this is a SELECT followed by an INSERT and source_url has no
+// unique index, so two concurrent identical requests may both insert (duplicate
+// rows). That parity with the Rails app is accepted.
 func FindOrCreateTwitterVideo(ctx context.Context, db DB, sourceURL string) (v *TwitterVideo, created bool, err error) {
 	if v, err = LatestTwitterVideoForSourceURL(ctx, db, sourceURL); v != nil || err != nil {
 		return v, false, err
@@ -198,11 +185,21 @@ func FindOrCreateTwitterVideo(ctx context.Context, db DB, sourceURL string) (v *
 // exactly this watch URL (or a new one) is reset to "awaiting_captions" with the
 // video id, no caption attempts, upload_completed_at now and the error cleared.
 // existed reports whether it was a retry.
+//
+// Like Rails, this is a SELECT followed by a write and source_url has no unique
+// index, so two concurrent identical requests may both insert (duplicate rows).
+// That parity with the Rails app is accepted.
 func StartYoutubeTwitterVideo(ctx context.Context, db DB, watchURL, youtubeID string) (v *TwitterVideo, existed bool, err error) {
 	if blank(watchURL) {
 		return nil, false, &InvalidTwitterVideoError{"source_url", "can't be blank"}
 	}
-	if !validText(watchURL) || !validText(youtubeID) {
+	if !validText(watchURL) {
+		return nil, false, &InvalidTwitterVideoError{"source_url", "is invalid"}
+	}
+	if blank(youtubeID) {
+		return nil, false, &InvalidTwitterVideoError{"youtube_id", "can't be blank"}
+	}
+	if !validText(youtubeID) {
 		return nil, false, &InvalidTwitterVideoError{"youtube_id", "is invalid"}
 	}
 	var id int64
@@ -257,7 +254,9 @@ type TwitterVideoChanges struct {
 }
 
 // UpdateTwitterVideo sets the given columns and bumps updated_at in one
-// statement. An invalid status gives an *InvalidTwitterVideoError; a missing
+// statement. A nil field means "leave unchanged"; there is no way to set a
+// column to NULL (none of the Ruby jobs need that; StartYoutubeTwitterVideo
+// clears error_detail itself). An invalid status gives an *InvalidTwitterVideoError; a missing
 // row gives ErrNotFound.
 func UpdateTwitterVideo(ctx context.Context, db DB, id int64, c TwitterVideoChanges) error {
 	args := []any{id, utcNow()}
@@ -296,8 +295,11 @@ func UpdateTwitterVideo(ctx context.Context, db DB, id int64, c TwitterVideoChan
 	return requireRow(db.Exec(ctx, `UPDATE twitter_videos SET `+strings.Join(sets, ", ")+` WHERE id = $1`, args...))
 }
 
-// FailTwitterVideo records a failure: status "failed" and the detail.
+// FailTwitterVideo records a failure: status "failed" and the detail. It is the
+// last resort of the jobs' rescue blocks, so it never rejects odd text: NUL
+// bytes are dropped and invalid UTF-8 replaced (see sanitizeDetail).
 func FailTwitterVideo(ctx context.Context, db DB, id int64, detail string) error {
+	detail = sanitizeDetail(detail)
 	return UpdateTwitterVideo(ctx, db, id, TwitterVideoChanges{Status: new("failed"), ErrorDetail: &detail})
 }
 
@@ -322,84 +324,10 @@ func checkpointsFor(youtube bool) []int {
 	return CaptionCheckpoints
 }
 
-var (
-	// youtubeVideoID is Ruby's YoutubeUrl::ID; \w is ASCII-only in both.
-	youtubeVideoID = regexp.MustCompile(`\A[\w-]{11}\z`)
-	// youtubePathID is Ruby's YoutubeUrl::PATH_ID: /shorts/ID, /live/ID, /embed/ID, /v/ID, /e/ID, /watch/ID.
-	youtubePathID = regexp.MustCompile(`\A/(?:shorts|live|embed|v|e|watch)/([^/?#]+)`)
-	hasScheme     = regexp.MustCompile(`(?i)\A[a-z][a-z0-9+.-]*://`)
-	youtubeHosts  = []string{"youtube.com", "m.youtube.com", "music.youtube.com", "gaming.youtube.com", "youtube-nocookie.com", "youtu.be"}
-)
-
-// IsYoutubeSource reports whether a source URL is a YouTube link, mirroring
-// Ruby's YoutubeUrl.video_id(url) != nil: surrounding whitespace is ignored, a
-// missing scheme is allowed, the host is one of the YouTube hosts (case
-// insensitive, "www." dropped), and the 11-character id comes from youtu.be/ID,
-// /watch?v=ID (the last v= wins), /shorts|live|embed|v|e|watch/ID, or from an
-// /attribution_link whose u= is one of those paths on www.youtube.com.
-//
-// TODO(Task 9.1): replace with internal/video.YoutubeVideoID(...) != "" (that
-// package must not import store, hence this copy).
-func IsYoutubeSource(sourceURL string) bool {
-	raw := strings.TrimSpace(sourceURL)
-	if !hasScheme.MatchString(raw) {
-		raw = "https://" + raw
-	}
-	// Ruby's URI.parse rejects spaces and control characters.
-	if strings.ContainsFunc(raw, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
-	if !slices.Contains(youtubeHosts, host) {
-		return false
-	}
-	query, ok := decodeWWWForm(u.RawQuery)
-	if !ok {
-		return false
-	}
-	path := u.EscapedPath()
-	var id string
-	switch {
-	case host == "youtu.be":
-		id, _, _ = strings.Cut(strings.TrimPrefix(path, "/"), "/")
-	case path == "/attribution_link":
-		return IsYoutubeSource("https://www.youtube.com" + query["u"])
-	case strings.TrimSuffix(path, "/") == "/watch":
-		id = query["v"]
-	default:
-		if m := youtubePathID.FindStringSubmatch(path); m != nil {
-			id = m[1]
-		}
-	}
-	return youtubeVideoID.MatchString(id)
+// Checkpoints is the caption schedule of this video (a YouTube link gets the short one, see video.YoutubeVideoID).
+func (v *TwitterVideo) Checkpoints() []int {
+	return checkpointsFor(video.YoutubeVideoID(v.SourceURL) != "")
 }
-
-// decodeWWWForm is Ruby's URI.decode_www_form(query).to_h: pairs split on "&"
-// (empty ones skipped), "+" and %XX decoded, the last duplicate key wins. ok is
-// false for malformed percent-encoding (Ruby raises there).
-func decodeWWWForm(query string) (map[string]string, bool) {
-	m := map[string]string{}
-	for pair := range strings.SplitSeq(query, "&") {
-		if pair == "" {
-			continue
-		}
-		k, v, _ := strings.Cut(pair, "=")
-		key, err1 := url.QueryUnescape(k)
-		val, err2 := url.QueryUnescape(v)
-		if err1 != nil || err2 != nil {
-			return nil, false
-		}
-		m[key] = val
-	}
-	return m, true
-}
-
-// Checkpoints is the caption schedule of this video (see IsYoutubeSource).
-func (v *TwitterVideo) Checkpoints() []int { return checkpointsFor(IsYoutubeSource(v.SourceURL)) }
 
 // HasUploadTime reports whether upload_completed_at is set. Videos in
 // "awaiting_captions" always have it; check this before NextCaptionWait if a

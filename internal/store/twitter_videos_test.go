@@ -186,8 +186,20 @@ func TestStartYoutubeTwitterVideo(t *testing.T) {
 	if existed || other.ID == v.ID {
 		t.Fatalf("existed=%v %+v", existed, other)
 	}
-	if _, _, err := store.StartYoutubeTwitterVideo(ctx, pool, "", "x"); !errors.Is(err, store.ErrInvalidTwitterVideo) {
-		t.Fatalf("err = %v", err)
+	for _, c := range []struct{ watch, id, field, msg string }{
+		{"", "x", "source_url", "can't be blank"},
+		{"  ", "x", "source_url", "can't be blank"},
+		{"a\x00b", "x", "source_url", "is invalid"},
+		{"a\xffb", "x", "source_url", "is invalid"},
+		{watch, "", "youtube_id", "can't be blank"},
+		{watch, " ", "youtube_id", "can't be blank"},
+		{watch, "a\x00b", "youtube_id", "is invalid"},
+	} {
+		_, _, err := store.StartYoutubeTwitterVideo(ctx, pool, c.watch, c.id)
+		var invalid *store.InvalidTwitterVideoError
+		if !errors.Is(err, store.ErrInvalidTwitterVideo) || !errors.As(err, &invalid) || invalid.Field != c.field || invalid.Message != c.msg {
+			t.Errorf("(%q, %q): err = %v, want %s %s", c.watch, c.id, err, c.field, c.msg)
+		}
 	}
 }
 
@@ -273,6 +285,25 @@ func TestFailTwitterVideoRecordsStatusAndDetail(t *testing.T) {
 	}
 	if err := store.FailTwitterVideo(ctx, pool, 999, "x"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("missing row: %v", err)
+	}
+}
+
+// FailTwitterVideo is the jobs' last resort, so odd text is sanitised, not rejected.
+func TestFailTwitterVideoSanitisesDetail(t *testing.T) {
+	pool := testdb.New(t)
+	for detail, want := range map[string]string{
+		"a\x00b":        "ab",
+		"bad\xffbytes":  "bad\uFFFDbytes",
+		"\x00\xfe\x00z": "\uFFFDz",
+		"plain é":       "plain é",
+	} {
+		v := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "https://x.com/a/status/1", Status: "uploading"})
+		must(t, store.FailTwitterVideo(ctx, pool, v.ID, detail))
+		got, err := store.FindTwitterVideo(ctx, pool, v.ID)
+		must(t, err)
+		if got.Status != "failed" || got.ErrorDetail == nil || *got.ErrorDetail != want {
+			t.Errorf("detail %q: got %+v, want %q", detail, got, want)
+		}
 	}
 }
 
@@ -375,100 +406,5 @@ func TestNextCaptionWaitFromStoredRow(t *testing.T) {
 	must(t, err)
 	if wait, ok := got.NextCaptionWait(uploaded.Add(2 * time.Minute)); wait != 3*time.Minute || !ok {
 		t.Fatalf("(%v, %v)", wait, ok)
-	}
-}
-
-// Every form Ruby's YoutubeUrl.video_id accepts or rejects (test/services and
-// app/services/youtube_url.rb).
-func TestIsYoutubeSource(t *testing.T) {
-	const id = "KpILHX2D-AA"
-	cases := []struct {
-		url  string
-		want bool
-	}{
-		// watch
-		{"https://www.youtube.com/watch?v=" + id, true},
-		{"https://youtube.com/watch?v=" + id + "&t=5", true},
-		{"https://m.youtube.com/watch?v=" + id, true},
-		{"https://music.youtube.com/watch?v=" + id, true},
-		{"https://gaming.youtube.com/watch?v=" + id, true},
-		{"https://www.youtube-nocookie.com/watch?v=" + id, true},
-		{"https://www.youtube.com/watch/?v=" + id, true},
-		{"https://WWW.YouTube.COM/watch?v=" + id, true},
-		{"HTTPS://www.youtube.com/watch?v=" + id, true},
-		{"  https://www.youtube.com/watch?v=" + id + "\n", true},
-		{"https://www.youtube.com:443/watch?v=" + id, true},
-		{"https://www.youtube.com/watch?v=" + id + "#t=1", true},
-		{"https://www.youtube.com/watch?feature=x&v=" + id, true},
-		// schemeless
-		{"youtube.com/watch?v=" + id, true},
-		{"www.youtube.com/watch?v=" + id, true},
-		{"youtu.be/" + id, true},
-		// repeated v: the last one wins, like to_h
-		{"https://www.youtube.com/watch?v=short&v=" + id, true},
-		{"https://www.youtube.com/watch?v=" + id + "&v=short", false},
-		// percent/plus decoding of the query, as decode_www_form
-		{"https://www.youtube.com/watch?v=%4BpILHX2D-AA", true},
-		{"https://www.youtube.com/watch?v=%ZZ", false},
-		// youtu.be
-		{"https://youtu.be/" + id, true},
-		{"https://youtu.be/" + id + "?si=abc", true},
-		{"https://youtu.be/" + id + "/extra", true},
-		{"https://youtu.be/", false},
-		{"https://youtu.be/tooshort", false},
-		{"https://youtu.be/?v=" + id, false},
-		// path forms
-		{"https://www.youtube.com/shorts/" + id, true},
-		{"https://www.youtube.com/live/" + id, true},
-		{"https://www.youtube.com/embed/" + id, true},
-		{"https://www.youtube.com/v/" + id, true},
-		{"https://www.youtube.com/e/" + id, true},
-		{"https://www.youtube.com/watch/" + id, true},
-		{"https://www.youtube.com/shorts/" + id + "?feature=share", true},
-		{"https://www.youtube.com/shorts/" + id + "/more", true},
-		{"https://www.youtube.com/shorts/", false},
-		{"https://www.youtube.com/shorts/tooshort", false},
-		{"https://www.youtube.com/channel/" + id, false},
-		{"https://www.youtube.com/user/" + id, false},
-		{"https://www.youtube.com/" + id, false},
-		// attribution links
-		{"https://www.youtube.com/attribution_link?a=x&u=%2Fwatch%3Fv%3D" + id + "%26feature%3Dem", true},
-		{"https://www.youtube.com/attribution_link?u=/shorts/" + id, true},
-		{"https://www.youtube.com/attribution_link?u=%2Fwatch%3Fv%3Dshort", false},
-		{"https://www.youtube.com/attribution_link", false},
-		{"https://www.youtube.com/attribution_link?u=%2Fattribution_link", false},
-		// id rules: 11 chars of [A-Za-z0-9_-]
-		{"https://www.youtube.com/watch?v=" + id + "X", false},
-		{"https://www.youtube.com/watch?v=KpILHX2D-A", false},
-		{"https://www.youtube.com/watch?v=KpILHX2D-A!", false},
-		{"https://www.youtube.com/watch?v=KpILHX2D-A%C3%A9", false},
-		{"https://www.youtube.com/watch?v=", false},
-		{"https://www.youtube.com/watch", false},
-		{"https://www.youtube.com/", false},
-		{"https://www.youtube.com", false},
-		// hosts that are not YouTube
-		{"https://notyoutube.com/watch?v=" + id, false},
-		{"https://youtube.com.evil.com/watch?v=" + id, false},
-		{"https://evil.com/youtube.com/watch?v=" + id, false},
-		{"https://studio.youtube.com/watch?v=" + id, false},
-		// tweets and other URLs, including ones that carry a YouTube link in the query
-		{"https://x.com/a/status/1", false},
-		{"https://x.com/a/status/1?u=youtube.com/watch?v=" + id, false},
-		{"https://x.com/a/status/1?url=https://youtu.be/" + id, false},
-		{"https://example.com/?next=youtu.be/" + id, false},
-		{"https://x.com/youtube.com/watch?v=" + id, false},
-		{"u", false},
-		{"", false},
-		{"   ", false},
-		// URI.parse rejects these
-		{"https://www.youtube.com/watch?v=" + id + " x", false},
-		{"https://www.youtube.com/wa tch?v=" + id, false},
-		{"https://www.youtube.com/watch?v=" + id + "\x00", false},
-		{"https://%zz/watch?v=" + id, false},
-	}
-	for _, c := range cases {
-		if got := store.IsYoutubeSource(c.url); got != c.want {
-			t.Errorf("IsYoutubeSource(%q) = %v, want %v", c.url, got, c.want)
-		}
 	}
 }

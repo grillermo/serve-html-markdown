@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -257,9 +258,6 @@ func TestCompleteAndFail(t *testing.T) {
 	if err := store.FailExpansion(ctx, pool, 999, "x"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Fail missing: %v", err)
 	}
-	if err := store.FailExpansion(ctx, pool, failed.ID, "a\x00b"); err == nil {
-		t.Error("Fail with a NUL byte should be rejected")
-	}
 }
 
 func TestStampStartsFromEmptyTimings(t *testing.T) {
@@ -458,5 +456,42 @@ func TestCompleteSavesResultWhenTimingsIsNotJSON(t *testing.T) {
 	must(t, pool.QueryRow(ctx, `SELECT timings FROM expansions WHERE id = $1`, e.ID).Scan(&raw))
 	if raw != "garbage" {
 		t.Fatalf("timings = %q, want it left alone", raw)
+	}
+}
+
+// FailExpansion is the job's last resort, so odd text is sanitised, not rejected.
+func TestFailSanitisesDetail(t *testing.T) {
+	pool := testdb.New(t)
+	u := newExpansionUser(t, pool, "e@x.com")
+	for detail, want := range map[string]string{
+		"a\x00b":        "ab",
+		"bad\xffbytes":  "bad\uFFFDbytes",
+		"\x00\xfe\x00z": "\uFFFDz",
+		"plain é":       "plain é",
+	} {
+		e := newExpansion(t, pool, u.ID)
+		must(t, store.FailExpansion(ctx, pool, e.ID, detail))
+		got, err := store.FindExpansion(ctx, pool, e.ID)
+		must(t, err)
+		if got.Status != "failed" || got.ErrorDetail == nil || *got.ErrorDetail != want {
+			t.Errorf("detail %q: got %+v, want %q", detail, got, want)
+		}
+	}
+}
+
+// Timings written by anything but this package may hold odd values: keep the
+// numbers (floats truncated), skip the rest.
+func TestTimingsAreReadKeyByKey(t *testing.T) {
+	pool := testdb.New(t)
+	u := newExpansionUser(t, pool, "e@x.com")
+	e := newExpansion(t, pool, u.ID)
+	_, err := pool.Exec(ctx, `UPDATE expansions SET timings = $2 WHERE id = $1`, e.ID,
+		`{"int":5,"float":1700000000123.9,"neg":-3,"str":"7","null":null,"obj":{"a":1},"arr":[1],"bool":true,"huge":1e30}`)
+	must(t, err)
+	got, err := store.FindExpansion(ctx, pool, e.ID)
+	must(t, err)
+	want := map[string]int64{"int": 5, "float": 1700000000123, "neg": -3}
+	if !reflect.DeepEqual(got.Timings, want) {
+		t.Fatalf("timings = %v, want %v", got.Timings, want)
 	}
 }

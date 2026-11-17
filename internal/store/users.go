@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"regexp"
 	"slices"
 	"strings"
@@ -51,11 +50,7 @@ func FindUserByEmail(ctx context.Context, db DB, email string) (*User, error) {
 	if !validText(email) {
 		return nil, nil
 	}
-	u, err := scanUser(db.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE email = $1`, normalizeEmail(email)))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return u, err
+	return nilIfNoRows(scanUser(db.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE email = $1`, normalizeEmail(email))))
 }
 
 // UpsertUser creates the user, or replaces the password hash of the existing
@@ -79,11 +74,7 @@ func UpsertUser(ctx context.Context, db DB, email, bcryptHash string) (*User, er
 
 // FindUserByID returns the user, or nil, nil when there is none.
 func FindUserByID(ctx context.Context, db DB, id int64) (*User, error) {
-	u, err := scanUser(db.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return u, err
+	return nilIfNoRows(scanUser(db.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE id = $1`, id)))
 }
 
 // SetExpansionMode stores the user's remembered expansion mode. Modes outside
@@ -92,13 +83,6 @@ func SetExpansionMode(ctx context.Context, db DB, userID int64, mode string) err
 	if !slices.Contains(ExpansionModes, mode) {
 		return ErrInvalidExpansionMode
 	}
-	tag, err := db.Exec(ctx, `UPDATE users SET expansion_mode = $1, updated_at = $2 WHERE id = $3`,
-		mode, utcNow(), userID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return requireRow(db.Exec(ctx, `UPDATE users SET expansion_mode = $1, updated_at = $2 WHERE id = $3`,
+		mode, utcNow(), userID))
 }

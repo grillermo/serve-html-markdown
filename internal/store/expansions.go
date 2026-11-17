@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -79,12 +78,29 @@ func scanExpansion(row pgx.Row) (*Expansion, error) {
 	return &e, nil
 }
 
-// parseTimings reads the JSON text of expansions.timings. Rails stored a JSON
-// object; anything else (empty text, null, an array, garbage) reads as empty.
+// parseTimings reads the JSON text of expansions.timings, which Rails stored as
+// an object of stage => epoch milliseconds. It keeps every key whose value is a
+// JSON number (floats are truncated) and skips the rest; text that is not a JSON
+// object (empty, null, an array, garbage) reads as empty.
 func parseTimings(text string) map[string]int64 {
 	m := map[string]int64{}
-	if err := json.Unmarshal([]byte(text), &m); err != nil || m == nil {
-		return map[string]int64{}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text), &raw); err != nil {
+		return m
+	}
+	for stage, value := range raw {
+		if len(value) == 0 || (value[0] != '-' && (value[0] < '0' || value[0] > '9')) {
+			continue // not a number (a string, null, an object, ...)
+		}
+		var n json.Number
+		if err := json.Unmarshal(value, &n); err != nil {
+			continue
+		}
+		if i, err := n.Int64(); err == nil {
+			m[stage] = i
+		} else if f, err := n.Float64(); err == nil && f >= math.MinInt64 && f < math.MaxInt64 {
+			m[stage] = int64(f)
+		}
 	}
 	return m
 }
@@ -102,8 +118,6 @@ type NewExpansion struct {
 	FallbackAnchor string
 	UseOpenAI      bool
 }
-
-func blank(s string) bool { return strings.TrimSpace(s) == "" }
 
 func (n NewExpansion) validate() *InvalidExpansionError {
 	for _, f := range []struct{ field, value string }{
@@ -160,22 +174,14 @@ func CreateExpansion(ctx context.Context, db DB, n NewExpansion) (*Expansion, er
 
 // FindExpansion returns the expansion, or nil, nil when there is none.
 func FindExpansion(ctx context.Context, db DB, id int64) (*Expansion, error) {
-	e, err := scanExpansion(db.QueryRow(ctx, `SELECT `+expansionColumns+` FROM expansions WHERE id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return e, err
+	return nilIfNoRows(scanExpansion(db.QueryRow(ctx, `SELECT `+expansionColumns+` FROM expansions WHERE id = $1`, id)))
 }
 
 // FindUserExpansion is FindExpansion limited to the user's own rows: another
 // user's expansion is nil, nil.
 func FindUserExpansion(ctx context.Context, db DB, userID, id int64) (*Expansion, error) {
-	e, err := scanExpansion(db.QueryRow(ctx,
-		`SELECT `+expansionColumns+` FROM expansions WHERE id = $1 AND user_id = $2`, id, userID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return e, err
+	return nilIfNoRows(scanExpansion(db.QueryRow(ctx,
+		`SELECT `+expansionColumns+` FROM expansions WHERE id = $1 AND user_id = $2`, id, userID)))
 }
 
 // ClaimExpansion moves a pending expansion to "processing" and reports whether
@@ -219,11 +225,11 @@ func CompleteExpansion(ctx context.Context, db DB, id int64, url string) error {
 }
 
 // FailExpansion records a failure: status "failed", the url cleared and the
-// detail stored. ErrNotFound for a missing row.
+// detail stored. It is the last resort of the job's rescue block, so it never
+// rejects odd text: NUL bytes are dropped and invalid UTF-8 replaced (see
+// sanitizeDetail). ErrNotFound for a missing row.
 func FailExpansion(ctx context.Context, db DB, id int64, detail string) error {
-	if !validText(detail) {
-		return &InvalidExpansionError{"error_detail", "is invalid"}
-	}
+	detail = sanitizeDetail(detail)
 	return requireRow(db.Exec(ctx, `UPDATE expansions
 		SET status = 'failed', url = NULL, error_detail = $2, updated_at = $3
 		WHERE id = $1`, id, detail, utcNow()))
@@ -245,9 +251,6 @@ func StampExpansion(ctx context.Context, db DB, id int64, stage string, epochMS 
 	}
 }
 
-// NowMS is the current time in epoch milliseconds, from the package clock.
-func NowMS() int64 { return utcNow().UnixMilli() }
-
 // RecordExpansionResponse stores which LLM answered and how big its page was.
 // Like Rails' update_columns it leaves updated_at alone. ErrNotFound for a
 // missing row.
@@ -257,15 +260,4 @@ func RecordExpansionResponse(ctx context.Context, db DB, id int64, provider stri
 	}
 	return requireRow(db.Exec(ctx, `UPDATE expansions SET provider_used = $2, html_bytes = $3 WHERE id = $1`,
 		id, provider, htmlBytes))
-}
-
-// requireRow turns "no row was updated" into ErrNotFound.
-func requireRow(tag pgconn.CommandTag, err error) error {
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
 }

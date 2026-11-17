@@ -457,8 +457,6 @@ func TestShowCannotEscapeFilesDir(t *testing.T) {
 	wantDetail(t, "encoded traversal", env.get("/%2E%2E%2Fsecret-sibling.md"), 400, "Invalid file path.")
 }
 
-func url_(s string) string { return URLEncode(s) }
-
 // Ruby: "serves files to older browser user agents".
 func TestShowServesOldBrowsers(t *testing.T) {
 	env := newAuthEnv(t)
@@ -499,8 +497,8 @@ func TestShowTrailingSlash(t *testing.T) {
 
 func TestShowRefusesLargeMarkdown(t *testing.T) {
 	env := newAuthEnv(t)
-	if MaxRenderBytes != 5<<20 {
-		t.Fatalf("MaxRenderBytes = %d, want 5 MiB", MaxRenderBytes)
+	if MaxRenderBytes != 2<<20 {
+		t.Fatalf("MaxRenderBytes = %d, want 2 MiB", MaxRenderBytes)
 	}
 	env.writeFile(t, "big.md", strings.Repeat("a", MaxRenderBytes+1))
 	wantDetail(t, "big.md", env.get("/big.md"), 413, "File is too large to display.")
@@ -553,7 +551,7 @@ func TestMarkdownRenderWaitsForSlotAndHonoursCancellation(t *testing.T) {
 	release := make(chan struct{})
 	waiting := make(chan struct{}, 4)
 	var running, maxRunning atomic.Int32
-	env.srv.renderAcquired = func() {
+	env.srv.renders.acquired = func() {
 		n := running.Add(1)
 		for m := maxRunning.Load(); n > m && !maxRunning.CompareAndSwap(m, n); m = maxRunning.Load() {
 		}
@@ -561,7 +559,7 @@ func TestMarkdownRenderWaitsForSlotAndHonoursCancellation(t *testing.T) {
 		<-release
 		running.Add(-1)
 	}
-	env.srv.renderWaiting = func() { waiting <- struct{}{} }
+	env.srv.renders.waiting = func() { waiting <- struct{}{} }
 
 	var wg sync.WaitGroup
 	first := httptest.NewRecorder()
@@ -605,12 +603,12 @@ func signedReq(env *authEnv, path string, ctx context.Context) *http.Request {
 
 func TestRenderConcurrencyOption(t *testing.T) {
 	srv := newTestServerNoDB(t)
-	if cap(srv.renderSlots) != DefaultRenderConcurrency {
-		t.Errorf("default slots %d, want %d", cap(srv.renderSlots), DefaultRenderConcurrency)
+	if cap(srv.renders.slots) != DefaultRenderConcurrency {
+		t.Errorf("default slots %d, want %d", cap(srv.renders.slots), DefaultRenderConcurrency)
 	}
 	srv = newTestServerNoDB(t, WithRenderConcurrency(2), WithRenderConcurrency(0))
-	if cap(srv.renderSlots) != 2 {
-		t.Errorf("slots %d, want 2", cap(srv.renderSlots))
+	if cap(srv.renders.slots) != 2 {
+		t.Errorf("slots %d, want 2", cap(srv.renders.slots))
 	}
 }
 
@@ -736,6 +734,10 @@ func TestConditionalGet(t *testing.T) {
 				rec.Header().Get("Content-Type") != "" || rec.Header().Get("Cache-Control") == "" {
 				t.Errorf("GET %s If-None-Match %q: %d %v %q", p, inm, rec.Code, rec.Header(), rec.Body.String())
 			}
+		}
+		head := do(env.srv, "HEAD", p, map[string]string{"Cookie": env.cookieFor(env.user), "If-None-Match": etag})
+		if head.Code != 304 || head.Body.Len() != 0 || head.Header().Get("ETag") != etag {
+			t.Errorf("HEAD %s If-None-Match: %d %v", p, head.Code, head.Header())
 		}
 		if rec := env.get(p, "If-None-Match", `W/"other"`); rec.Code != 200 {
 			t.Errorf("GET %s with another ETag: %d", p, rec.Code)

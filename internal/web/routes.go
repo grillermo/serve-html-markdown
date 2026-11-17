@@ -63,7 +63,7 @@ func (s *Server) routes() http.Handler {
 
 	// Outermost first: logging sees every response, including the 403s from
 	// cross-origin protection, and those still carry HSTS.
-	return s.logRequests(s.securityHeaders(s.crossOriginProtection().Handler(mux)))
+	return s.logRequests(s.securityHeaders(s.recoverPanics(s.crossOriginProtection().Handler(mux))))
 }
 
 // crossOriginProtection rejects browser-originated cross-origin unsafe

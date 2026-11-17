@@ -4,6 +4,7 @@ package web
 import (
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -12,6 +13,8 @@ import (
 
 	"serve-html-markdown/internal/auth"
 	"serve-html-markdown/internal/config"
+	"serve-html-markdown/internal/files"
+	"serve-html-markdown/internal/markdown"
 	webfs "serve-html-markdown/web"
 )
 
@@ -31,16 +34,20 @@ type Server struct {
 	digests *assetTable
 	// mexicoCity is the zone the index page shows timestamps in.
 	mexicoCity *time.Location
-	// renderConcurrency is how many Markdown renders may run at once; renderSlots
-	// is its semaphore (built in New, after the options).
-	renderConcurrency int
-	renderSlots       chan struct{}
+	// renderConcurrency and htmlConcurrency size the limiters (built in New,
+	// after the options): renders caps Markdown renders running at once, htmlLimit
+	// the .html files being read and injected.
+	renderConcurrency, htmlConcurrency int
+	renders, htmlLimit                 *limiter
 	// maxRenderBytes and maxHTMLBytes cap the size of a file shown as Markdown or
 	// as HTML (see MaxRenderBytes, MaxHTMLBytes); tests lower them.
 	maxRenderBytes, maxHTMLBytes int64
-	// Test seams: renderWaiting runs when a request has to queue for a render
-	// slot, renderAcquired once it holds one.
-	renderWaiting, renderAcquired func()
+	// Test seams. openFile opens a served file, render converts Markdown, and
+	// renderDeadline starts the timer after which a request stops waiting for a
+	// render (it returns the channel and a stop function).
+	openFile       func(dir, name string) (io.ReadCloser, string, error)
+	renderMarkdown func(src []byte) ([]byte, error)
+	renderDeadline func() (<-chan time.Time, func())
 }
 
 // Option customizes a Server before its routes are built. Later tasks add
@@ -63,6 +70,16 @@ func WithRenderConcurrency(n int) Option {
 	}
 }
 
+// WithHTMLConcurrency sets how many .html files may be read and injected at
+// once (default DefaultHTMLConcurrency); n below 1 is ignored.
+func WithHTMLConcurrency(n int) Option {
+	return func(s *Server) {
+		if n >= 1 {
+			s.htmlConcurrency = n
+		}
+	}
+}
+
 // New builds a Server and its route table, applying opts first. pool may be
 // nil for tests that never touch the database. It panics at startup if
 // cfg.SecretKeyBase is empty (an unsigned session cookie would be forgeable),
@@ -74,13 +91,23 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 	}
 	s := &Server{
 		cfg: cfg, pool: pool, Clock: time.Now,
-		renderConcurrency: DefaultRenderConcurrency,
-		maxRenderBytes:    MaxRenderBytes, maxHTMLBytes: MaxHTMLBytes,
+		renderConcurrency: DefaultRenderConcurrency, htmlConcurrency: DefaultHTMLConcurrency,
+		maxRenderBytes: MaxRenderBytes, maxHTMLBytes: MaxHTMLBytes,
+		openFile: func(dir, name string) (io.ReadCloser, string, error) {
+			f, canonical, err := files.OpenFile(dir, name)
+			if err != nil {
+				return nil, "", err // not a typed nil inside the interface
+			}
+			return f, canonical, nil
+		},
+		renderMarkdown: markdown.Render,
+		renderDeadline: newDeadline,
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
-	s.renderSlots = make(chan struct{}, s.renderConcurrency)
+	s.renders = newLimiter(s.renderConcurrency)
+	s.htmlLimit = newLimiter(s.htmlConcurrency)
 	s.codec = auth.NewCodec(cfg.SecretKeyBase, "session").WithClock(func() time.Time { return s.Clock() })
 	s.digests = newAssetTable(webfs.FS)
 	for _, name := range requiredAssets {

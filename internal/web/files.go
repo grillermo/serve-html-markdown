@@ -3,16 +3,17 @@ package web
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"html"
 	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
-	"strconv"
+	"runtime/debug"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"serve-html-markdown/internal/auth"
@@ -22,20 +23,67 @@ import (
 )
 
 const (
-	// MaxRenderBytes is the largest file that is rendered as Markdown. The
-	// renderer has upstream quadratic behaviour on adversarial input, so bigger
-	// files get a 413 instead of tying up the CPU.
-	MaxRenderBytes = 5 << 20
+	// MaxRenderBytes is the largest file that is rendered as Markdown; a
+	// bigger one is a 413. It bounds memory and the work of one render, but not
+	// its time: the parser has quadratic cases that markdown.Render rejects up
+	// front (ErrTooComplex) and that renderTimeout cuts off when they slip
+	// through, in both cases the file is shown as plain text.
+	MaxRenderBytes = 2 << 20
 	// MaxHTMLBytes is the largest .html file that is served. HTML is only
-	// scanned for </body>, never rendered, so its cap is much higher.
-	MaxHTMLBytes = 50 << 20
+	// scanned for </body>, never rendered, so its cap is higher, but each
+	// request holds about three copies of the file (see htmlLimit).
+	MaxHTMLBytes = 20 << 20
 	// DefaultRenderConcurrency is how many Markdown renders run at once unless
 	// WithRenderConcurrency says otherwise.
 	DefaultRenderConcurrency = 4
+	// DefaultHTMLConcurrency is how many .html files are read and injected at
+	// once unless WithHTMLConcurrency says otherwise.
+	DefaultHTMLConcurrency = 2
+	// DefaultRenderTimeout is how long a request waits for a Markdown render
+	// before it falls back to plain text.
+	DefaultRenderTimeout = 10 * time.Second
 
 	msgTooLarge = "File is too large to display."
 	msgInternal = "Internal server error."
 )
+
+// limiter is a counting semaphore whose waiters give up with their request.
+// waiting runs when a caller has to queue, acquired once it holds a slot; both
+// are test seams.
+type limiter struct {
+	slots             chan struct{}
+	waiting, acquired func()
+}
+
+func newLimiter(n int) *limiter { return &limiter{slots: make(chan struct{}, n)} }
+
+// acquire takes a slot, waiting for one while respecting ctx. It reports false,
+// with no slot held, when ctx ended first; the caller must then return without
+// writing. On true the caller calls release exactly once.
+func (l *limiter) acquire(ctx context.Context) bool {
+	select {
+	case l.slots <- struct{}{}:
+	default:
+		if l.waiting != nil {
+			l.waiting()
+		}
+		select {
+		case l.slots <- struct{}{}:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	if ctx.Err() != nil {
+		l.release()
+		return false
+	}
+	if l.acquired != nil {
+		l.acquired()
+	}
+	return true
+}
+
+func (l *limiter) release() { <-l.slots }
 
 // writeDetail answers with {"detail": msg} like Rails' `render json: { detail: }`.
 // Rack::ETag gives a response without an ETag (anything but a non-empty 200)
@@ -75,7 +123,7 @@ func (s *Server) showFile(w http.ResponseWriter, r *http.Request) {
 		s.unauthenticated(w, r)
 		return
 	}
-	f, canonical, err := files.OpenFile(s.cfg.FilesDir, r.PathValue("file_name"))
+	f, canonical, err := s.openFile(s.cfg.FilesDir, r.PathValue("file_name"))
 	if err != nil {
 		s.fileError(w, r, err)
 		return
@@ -83,6 +131,14 @@ func (s *Server) showFile(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	name := filepath.Base(canonical)
 	isHTML := strings.EqualFold(store.Ext(name), ".html")
+	if isHTML {
+		// A .html request holds the file, the injected copy and the buffered
+		// response at once; few at a time keeps memory bounded.
+		if !s.htmlLimit.acquire(r.Context()) {
+			return
+		}
+		defer s.htmlLimit.release()
+	}
 
 	limit := s.maxRenderBytes
 	if isHTML {
@@ -132,14 +188,14 @@ func (s *Server) showFile(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("markdown file is not valid UTF-8; replacing bad bytes with U+FFFD", "file", name)
 		content = []byte(strings.ToValidUTF8(string(content), "�"))
 	}
-	if !s.acquireRender(ctx) {
-		return // the client went away while queued; nothing to answer
-	}
-	rendered, err := func() ([]byte, error) {
-		defer func() { <-s.renderSlots }()
-		return markdown.Render(content)
-	}()
-	if err != nil {
+	rendered, err := s.renderBounded(ctx, content)
+	switch {
+	case errors.Is(err, errClientGone):
+		return // nothing to answer
+	case errors.Is(err, markdown.ErrTooComplex), errors.Is(err, errRenderTimeout):
+		slog.Warn("markdown file shown as plain text", "file", name, "reason", err)
+		rendered = plainTextPage(content)
+	case err != nil:
 		s.fileError(w, r, err)
 		return
 	}
@@ -147,30 +203,65 @@ func (s *Server) showFile(w http.ResponseWriter, r *http.Request) {
 	s.renderMarkdownPage(w, name, template.HTML(rendered), bootstrap)
 }
 
-// acquireRender takes one of the render slots, waiting for it while respecting
-// ctx. It reports false, with no slot held, when ctx ended first; the caller must
-// then return without writing. On true the caller releases with <-s.renderSlots.
-func (s *Server) acquireRender(ctx context.Context) bool {
+var (
+	errClientGone    = errors.New("web: client went away")
+	errRenderTimeout = errors.New("web: markdown render timed out")
+	errRenderPanic   = errors.New("web: markdown render panicked")
+)
+
+// plainTextPage is the fallback for a document that cannot be rendered: its
+// source, escaped, in a <pre> that wraps long lines.
+func plainTextPage(content []byte) []byte {
+	var b bytes.Buffer
+	b.WriteString(`<pre style="white-space: pre-wrap; overflow-wrap: anywhere">`)
+	b.WriteString(html.EscapeString(string(content)))
+	b.WriteString("</pre>\n")
+	return b.Bytes()
+}
+
+// renderBounded renders content under the render limiter. The render runs in
+// its own goroutine, which owns the slot until the render really returns, so a
+// runaway cannot be multiplied by retries: after renderDeadline fires the
+// request moves on (errRenderTimeout) but the slot stays taken. A panic in the
+// render is logged and becomes errRenderPanic; the slot is released either way.
+// errClientGone means the request ended while it waited, and nothing may be
+// written.
+func (s *Server) renderBounded(ctx context.Context, content []byte) ([]byte, error) {
+	if !s.renders.acquire(ctx) {
+		return nil, errClientGone
+	}
+	type result struct {
+		out []byte
+		err error
+	}
+	done := make(chan result, 1) // buffered: the goroutine never blocks on an abandoned request
+	go func() {
+		defer s.renders.release() // runs last, after the recover below
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("markdown render panicked", "panic", p, "stack", string(debug.Stack()))
+				done <- result{err: errRenderPanic}
+			}
+		}()
+		out, err := s.renderMarkdown(content)
+		done <- result{out, err}
+	}()
+	deadline, stop := s.renderDeadline()
+	defer stop()
 	select {
-	case s.renderSlots <- struct{}{}:
-	default:
-		if s.renderWaiting != nil {
-			s.renderWaiting()
-		}
-		select {
-		case s.renderSlots <- struct{}{}:
-		case <-ctx.Done():
-			return false
-		}
+	case r := <-done:
+		return r.out, r.err
+	case <-deadline:
+		return nil, errRenderTimeout
+	case <-ctx.Done():
+		return nil, errClientGone
 	}
-	if ctx.Err() != nil {
-		<-s.renderSlots
-		return false
-	}
-	if s.renderAcquired != nil {
-		s.renderAcquired()
-	}
-	return true
+}
+
+// newDeadline is the default renderDeadline: a timer of DefaultRenderTimeout.
+func newDeadline() (<-chan time.Time, func()) {
+	t := time.NewTimer(DefaultRenderTimeout)
+	return t.C, func() { t.Stop() }
 }
 
 // fileVersionsFor lists the documents of name's family (name itself included)
@@ -246,105 +337,4 @@ func (s *Server) lastFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	redirect(w, "/"+URLEncode(latest.Name), http.StatusFound)
-}
-
-// conditionalGet gives the wrapped handler what Rails' Rack::ETag and
-// Rack::ConditionalGet give every response: a 200 with a body gets a weak ETag
-// (the first 32 hex digits of the body's SHA-256) and Cache-Control
-// "max-age=0, private, must-revalidate"; any other response gets "no-cache"
-// unless the handler chose its own. A GET or HEAD whose If-None-Match matches
-// the ETag is answered 304, and HEAD never gets a body.
-//
-// The handler's response is held in memory until it returns. Slices passed to
-// Write are kept, not copied, so a wrapped handler must not change them
-// afterwards (none does). A handler that writes nothing at all, as when the
-// client is gone, leaves the response untouched.
-func conditionalGet(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		bw := &bufferedResponse{header: w.Header()}
-		next(bw, r)
-		status := bw.status
-		if status == 0 {
-			return // the handler answered nothing (a cancelled request)
-		}
-		h := w.Header()
-		etag := h.Get("ETag")
-		if status == http.StatusOK && bw.size > 0 && etag == "" && h.Get("Last-Modified") == "" {
-			sum := sha256.New()
-			for _, p := range bw.parts {
-				sum.Write(p)
-			}
-			etag = `W/"` + hex.EncodeToString(sum.Sum(nil))[:32] + `"`
-			h.Set("ETag", etag)
-		}
-		if h.Get("Cache-Control") == "" {
-			if etag != "" {
-				h.Set("Cache-Control", defaultCacheControl)
-			} else {
-				h.Set("Cache-Control", "no-cache")
-			}
-		}
-		head := r.Method == http.MethodHead
-		if (r.Method == http.MethodGet || head) && status == http.StatusOK && etagMatches(r.Header.Get("If-None-Match"), etag) {
-			h.Del("Content-Type")
-			h.Del("Content-Length")
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		if bw.size > 0 {
-			h.Set("Content-Length", strconv.Itoa(bw.size))
-		}
-		w.WriteHeader(status)
-		if head {
-			return
-		}
-		for _, p := range bw.parts {
-			if _, err := w.Write(p); err != nil {
-				return
-			}
-		}
-	}
-}
-
-// etagMatches is the weak comparison of RFC 9110 for an If-None-Match value:
-// "*" matches any ETag, otherwise any listed tag equal to etag, ignoring W/.
-func etagMatches(header, etag string) bool {
-	if etag == "" || header == "" {
-		return false
-	}
-	want := strings.TrimPrefix(etag, "W/")
-	for _, tag := range strings.Split(header, ",") {
-		tag = strings.TrimSpace(tag)
-		if tag == "*" || strings.TrimPrefix(tag, "W/") == want {
-			return true
-		}
-	}
-	return false
-}
-
-// bufferedResponse holds a handler's response for conditionalGet.
-type bufferedResponse struct {
-	header http.Header
-	status int
-	parts  [][]byte
-	size   int
-}
-
-func (b *bufferedResponse) Header() http.Header { return b.header }
-
-func (b *bufferedResponse) WriteHeader(code int) {
-	if b.status == 0 {
-		b.status = code
-	}
-}
-
-func (b *bufferedResponse) Write(p []byte) (int, error) {
-	if b.status == 0 {
-		b.status = http.StatusOK
-	}
-	if len(p) > 0 {
-		b.parts = append(b.parts, p)
-		b.size += len(p)
-	}
-	return len(p), nil
 }

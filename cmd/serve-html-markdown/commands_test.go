@@ -131,3 +131,23 @@ func TestMigrateFailsWithoutDatabase(t *testing.T) {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }
+
+// countMigrations must report a failing query instead of returning 0, or
+// "Database is up to date." could be printed for a database it never reached.
+func TestCountMigrationsPropagatesErrors(t *testing.T) {
+	pool := useTestDatabase(t)
+	ctx := context.Background()
+	if n, err := countMigrations(ctx, pool); err != nil || n == 0 {
+		t.Fatalf("healthy database: %d, %v", n, err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE schema_migrations`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := countMigrations(ctx, pool); err != nil || n != 0 {
+		t.Errorf("no schema_migrations table: %d, %v; want 0, nil", n, err)
+	}
+	pool.Close()
+	if _, err := countMigrations(ctx, pool); err == nil {
+		t.Error("closed pool: want an error")
+	}
+}

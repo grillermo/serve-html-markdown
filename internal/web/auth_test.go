@@ -464,9 +464,209 @@ func TestSafeReturnTo(t *testing.T) {
 	for in, want := range map[string]string{
 		"/": "/", "/a/b?c=d#e": "/a/b?c=d#e", "": "", "//x": "", "/\\x": "", "x": "", "http://x": "",
 		"/a\tb": "", "/a\x00b": "", "javascript:alert(1)": "",
+		// Backslashes anywhere, raw or percent-encoded.
+		"/./\\evil": "", "/a/../\\evil": "", "/./\\/evil": "", "/%5cevil": "", "/%5Cevil": "", "/ok?x=\\": "",
+		"/ok?x=%5c": "",
+		// Repeated slashes and dot segments collapse; the cleaned value is returned.
+		"/.//evil": "/evil", "/a/..//evil": "/evil", "/a/./b": "/a/b", "/a/": "/a/", "/a/b/../c": "/a/c",
+		// An encoded slash prefix is not a path a browser would take as a host.
+		"/%2f/evil": "", "/%2F/evil": "",
+		// Control characters and whitespace, raw or encoded.
+		"/x\r\nSet-Cookie:a=b": "", "/x\nb": "", "/x b": "", "/x%0d%0aSet-Cookie:a=b": "", "/x%00": "",
+		// Legitimate encoded characters survive.
+		"/my%20file.md": "/my%20file.md", "/caf%C3%A9.md?q=a+b": "/caf%C3%A9.md?q=a+b",
+		// Bad escapes, non-ASCII, userinfo-like and scheme-like values.
+		"/bad%zz": "", "/caf\u00e9": "", "/@evil.test": "/@evil.test", "/a:b": "/a:b",
+		// Length cap: 2048 bytes is accepted, 2049 is not.
+		"/" + strings.Repeat("a", 2047): "/" + strings.Repeat("a", 2047),
+		"/" + strings.Repeat("a", 2048): "",
 	} {
 		if got := safeReturnTo(in); got != want {
 			t.Errorf("safeReturnTo(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// hostileReturnTo are return_to values that must never produce a Location
+// outside this origin.
+var hostileReturnTo = []string{
+	`/./\evil`, `/a/../\evil`, `/./\/evil`, `/.//evil`, `/a/..//evil`, `/%2f/evil`, `/%5cevil`,
+	`//evil`, `/\evil`, `javascript:alert(1)`, "/x\r\nSet-Cookie:a=b", "/" + strings.Repeat("a", 3000),
+	`https://evil.test/`, `/%5C/evil`, `/..//evil`, "/\t/evil",
+}
+
+// sameOriginLocation reports whether loc is "/" or a single-slash local path
+// without backslashes, control characters or a "//" prefix once decoded.
+func sameOriginLocation(loc string) bool {
+	if loc == "/" {
+		return true
+	}
+	if !strings.HasPrefix(loc, "/") || strings.HasPrefix(loc, "//") || strings.ContainsAny(loc, "\\\r\n\t ") {
+		return false
+	}
+	dec, err := url.PathUnescape(loc)
+	return err == nil && !strings.HasPrefix(dec, "//") && !strings.Contains(dec, "\\")
+}
+
+func TestReturnToNeverRedirectsOffSite(t *testing.T) {
+	env := newAuthEnv(t)
+	for _, payload := range hostileReturnTo {
+		// POST: sign in with credentials.
+		form := signInForm(viewerEmail, viewerPassword)
+		form.Set("return_to", payload)
+		rec := postForm(env.srv, "POST", "/users/sign_in", form, nil)
+		if loc := rec.Header().Get("Location"); rec.Code != 303 || !sameOriginLocation(loc) {
+			t.Errorf("POST return_to %q: %d Location %q", payload, rec.Code, loc)
+		}
+		if got := rec.Header().Values("Set-Cookie"); len(got) != 1 || !strings.HasPrefix(got[0], sessionCookieName+"=") {
+			t.Errorf("POST return_to %q: Set-Cookie %q", payload, got)
+		}
+		// GET: a signed-in visitor opens the sign-in page.
+		rec = do(env.srv, "GET", "/users/sign_in?return_to="+url.QueryEscape(payload), map[string]string{"Cookie": env.cookieFor(env.user)})
+		if loc := rec.Header().Get("Location"); rec.Code != 302 || !sameOriginLocation(loc) {
+			t.Errorf("GET return_to %q: %d Location %q", payload, rec.Code, loc)
+		}
+		if len(rec.Header().Values("Set-Cookie")) != 0 {
+			t.Errorf("GET return_to %q: unexpected Set-Cookie", payload)
+		}
+	}
+}
+
+func TestReturnToUsesTheCleanedValue(t *testing.T) {
+	env := newAuthEnv(t)
+	form := signInForm(viewerEmail, viewerPassword)
+	form.Set("return_to", "/a/..//evil")
+	rec := postForm(env.srv, "POST", "/users/sign_in", form, nil)
+	if got := rec.Header().Get("Location"); got != "/evil" {
+		t.Errorf("Location %q, want /evil", got)
+	}
+}
+
+// --- remember_me: the hidden =0 comes before the checkbox =1; the last value wins ---
+
+func TestRememberMeUsesTheLastValue(t *testing.T) {
+	env := newAuthEnv(t)
+	for name, tc := range map[string]struct {
+		values  []string
+		wantAge int
+	}{
+		"0 then 1": {[]string{"0", "1"}, int(fourteenDays / time.Second)},
+		"only 0":   {[]string{"0"}, 0},
+		"1 then 0": {[]string{"1", "0"}, 0},
+		"only 1":   {[]string{"1"}, int(fourteenDays / time.Second)},
+	} {
+		form := signInForm(viewerEmail, viewerPassword)
+		form["user[remember_me]"] = tc.values
+		rec := postForm(env.srv, "POST", "/users/sign_in", form, nil)
+		c := setCookie(rec)
+		if rec.Code != 303 || c == nil || c.MaxAge != tc.wantAge {
+			t.Errorf("%s: code %d cookie %v, want Max-Age %d", name, rec.Code, c, tc.wantAge)
+		}
+	}
+}
+
+// --- headers ---
+
+func assertRailsHeaders(t *testing.T, label string, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	for k, v := range map[string]string{
+		"X-Frame-Options":                   "SAMEORIGIN",
+		"X-Content-Type-Options":            "nosniff",
+		"Referrer-Policy":                   "strict-origin-when-cross-origin",
+		"X-Permitted-Cross-Domain-Policies": "none",
+		"X-XSS-Protection":                  "0",
+		"Strict-Transport-Security":         "max-age=63072000; includeSubDomains",
+	} {
+		if got := rec.Header().Get(k); got != v {
+			t.Errorf("%s: %s = %q, want %q", label, k, got, v)
+		}
+	}
+}
+
+func TestSecurityAndCacheHeaders(t *testing.T) {
+	srv := newTestServerNoDB(t)
+	const dynamic = "max-age=0, private, must-revalidate"
+	cases := []struct {
+		label, method, path string
+		hdr                 map[string]string
+		want                string
+		code                int
+	}{
+		{"sign-in page", "GET", "/users/sign_in", nil, "no-store", 200},
+		{"guarded redirect", "GET", "/index", nil, dynamic, 302},
+		{"404", "GET", "/assets/x", nil, dynamic, 404},
+		{"JSON 401", "GET", "/index", map[string]string{"Accept": "application/json"}, dynamic, 401},
+		{"static file", "GET", "/robots.txt", nil, "public, max-age=31536000", 200},
+		{"cross-origin 403", "POST", "/scroll_position", map[string]string{"Sec-Fetch-Site": "cross-site"}, "", 403},
+	}
+	for _, c := range cases {
+		rec := do(srv, c.method, c.path, c.hdr)
+		if rec.Code != c.code {
+			t.Errorf("%s: got %d, want %d", c.label, rec.Code, c.code)
+		}
+		assertRailsHeaders(t, c.label, rec)
+		if c.want != "" && rec.Header().Get("Cache-Control") != c.want {
+			t.Errorf("%s: Cache-Control %q, want %q", c.label, rec.Header().Get("Cache-Control"), c.want)
+		}
+	}
+}
+
+func TestInvalidSignInIsNoStore(t *testing.T) {
+	env := newAuthEnv(t)
+	rec := postForm(env.srv, "POST", "/users/sign_in", signInForm(viewerEmail, "wrong"), nil)
+	if rec.Code != 422 || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("got %d Cache-Control %q", rec.Code, rec.Header().Get("Cache-Control"))
+	}
+	assertRailsHeaders(t, "422", rec)
+}
+
+func TestRenderDefaultsCacheControl(t *testing.T) {
+	srv := newTestServerNoDB(t)
+	rec := httptest.NewRecorder()
+	srv.render(rec, 200, "sign_in", signInPage{}) // outside the middleware
+	if got := rec.Header().Get("Cache-Control"); got != "max-age=0, private, must-revalidate" {
+		t.Errorf("Cache-Control %q", got)
+	}
+}
+
+// --- failure paths ---
+
+func TestSignInRejectsOversizedBodyWith413(t *testing.T) {
+	srv := newTestServerNoDB(t)
+	form := signInForm(viewerEmail, strings.Repeat("x", maxFormBytes+1))
+	rec := postForm(srv, "POST", "/users/sign_in", form, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("got %d, want 413", rec.Code)
+	}
+	if setCookie(rec) != nil {
+		t.Error("cookie set")
+	}
+}
+
+// A database failure while loading the session user must fail closed: 500,
+// never the handler, never the sign-in redirect that would hide the outage.
+func TestRequireUserFailsClosedOnDatabaseError(t *testing.T) {
+	env := newAuthEnv(t)
+	cookie := env.cookieFor(env.user)
+	env.srv.pool.Close()
+
+	called := false
+	h := env.srv.requireUser(func(w http.ResponseWriter, r *http.Request) { called = true })
+	req := httptest.NewRequest("GET", "/index", nil)
+	req.Header.Set("Cookie", cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if called || rec.Code != 500 {
+		t.Errorf("guard: called=%v code=%d, want 500 without calling the handler", called, rec.Code)
+	}
+	// Same through the route table, for the sign-in page too.
+	for _, p := range []string{"/index", "/users/sign_in"} {
+		if rec := do(env.srv, "GET", p, map[string]string{"Cookie": cookie}); rec.Code != 500 {
+			t.Errorf("GET %s: got %d, want 500", p, rec.Code)
+		}
+	}
+	form := signInForm(viewerEmail, viewerPassword)
+	if rec := postForm(env.srv, "POST", "/users/sign_in", form, nil); rec.Code != 500 || setCookie(rec) != nil {
+		t.Errorf("POST sign-in: got %d cookie %v, want 500 without a cookie", rec.Code, setCookie(rec))
 	}
 }

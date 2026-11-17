@@ -18,7 +18,10 @@ func WithUser(ctx context.Context, u *store.User) context.Context {
 	return context.WithValue(ctx, userKey{}, u)
 }
 
-// UserFrom returns the user stored by WithUser, or nil for an anonymous request.
+// UserFrom returns the user stored by WithUser, or nil. requireUser is the only thing that stores
+// one, so outside a handler wrapped by it (or on an anonymous request) the result is always nil:
+// a handler that needs the user must be registered behind the guard, and must not assume non-nil
+// anywhere else.
 func UserFrom(ctx context.Context) *store.User {
 	u, _ := ctx.Value(userKey{}).(*store.User)
 	return u

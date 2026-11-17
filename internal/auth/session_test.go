@@ -432,3 +432,19 @@ func TestOpenRejectsFlippedBits(t *testing.T) {
 		}
 	}
 }
+
+func TestWarmUpIsIdempotent(t *testing.T) {
+	dummyCost = 4 // keep the dummy hash fast; see TestCheckPasswordConstantTimeSemantics
+	WarmUp()
+	first := string(dummyHash)
+	if first == "" {
+		t.Fatal("WarmUp did not compute the dummy hash")
+	}
+	WarmUp()
+	if string(dummyHash) != first {
+		t.Fatal("WarmUp recomputed the dummy hash")
+	}
+	if CheckPasswordConstantTime("", "x") {
+		t.Fatal("blank hash verified")
+	}
+}

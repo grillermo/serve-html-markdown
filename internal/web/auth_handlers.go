@@ -2,9 +2,11 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -47,13 +49,14 @@ func (s *Server) signInForm(w http.ResponseWriter, r *http.Request) {
 	}
 	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
 	if user != nil {
-		http.Redirect(w, r, orRoot(returnTo), http.StatusFound)
+		redirect(w, orRoot(returnTo), http.StatusFound)
 		return
 	}
 	page := signInPage{ReturnTo: returnTo}
 	if returnTo != "" {
 		page.Alert = msgUnauthenticated
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	s.render(w, http.StatusOK, "sign_in", page)
 }
 
@@ -63,19 +66,29 @@ func (s *Server) signInForm(w http.ResponseWriter, r *http.Request) {
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 	if err := r.ParseForm(); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 	email := r.PostFormValue("user[email]")
 	password := r.PostFormValue("user[password]")
-	remember := r.PostFormValue("user[remember_me]") == "1"
+	// The form sends a hidden user[remember_me]=0 before the checkbox's =1, and
+	// Rails uses the last value.
+	remember := false
+	if vals := r.PostForm["user[remember_me]"]; len(vals) > 0 {
+		remember = vals[len(vals)-1] == "1"
+	}
 	returnTo := safeReturnTo(r.PostFormValue("return_to"))
 
 	if user, err := s.sessionUser(r); err != nil {
 		s.serverError(w, r, err)
 		return
 	} else if user != nil {
-		http.Redirect(w, r, orRoot(returnTo), http.StatusFound)
+		redirect(w, orRoot(returnTo), http.StatusFound)
 		return
 	}
 
@@ -92,6 +105,7 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 		hash = user.EncryptedPassword
 	}
 	if !auth.CheckPasswordConstantTime(hash, password) || user == nil {
+		w.Header().Set("Cache-Control", "no-store")
 		s.render(w, http.StatusUnprocessableEntity, "sign_in", signInPage{
 			Alert: msgInvalid, Email: email, ReturnTo: returnTo,
 		})
@@ -111,7 +125,7 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 		c.MaxAge = int(sessionLifetime / time.Second)
 	}
 	http.SetCookie(w, c)
-	http.Redirect(w, r, orRoot(returnTo), http.StatusSeeOther)
+	redirect(w, orRoot(returnTo), http.StatusSeeOther)
 }
 
 // signOut is DELETE /users/sign_out. Sessions are stateless, so it only clears
@@ -121,7 +135,7 @@ func (s *Server) signOut(w http.ResponseWriter, r *http.Request) {
 	c.MaxAge = -1
 	c.Expires = time.Unix(0, 0)
 	http.SetCookie(w, c)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	redirect(w, "/", http.StatusSeeOther)
 }
 
 // sessionCookie builds the session cookie. Secure is always set: production is
@@ -179,7 +193,7 @@ func (s *Server) unauthenticated(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		target += "?return_to=" + url.QueryEscape(r.URL.RequestURI())
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	redirect(w, target, http.StatusFound)
 }
 
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) {
@@ -223,19 +237,80 @@ func firstMediaType(accept string) string {
 	return strings.ToLower(strings.TrimSpace(first))
 }
 
-// safeReturnTo returns v when it is a local path (one leading "/", not "//" or
-// "/\", no control characters), else "". It keeps return_to from becoming an
-// open redirect.
+// maxReturnToBytes caps a return_to value.
+const maxReturnToBytes = 2048
+
+// safeReturnTo returns the cleaned local path to redirect to, or "" when v is
+// not one. It keeps return_to from becoming an open redirect:
+//
+//   - the raw value has no backslash, control character, whitespace or non-ASCII
+//     byte and is at most 2048 bytes; after one round of percent-decoding it has
+//     no backslash or control character either (browsers read "/\x" as "//x");
+//   - it must parse with no scheme, host or userinfo;
+//   - the path is cleaned the way http.Redirect would (dot segments and repeated
+//     slashes collapse), and the CLEANED value is returned and used as the
+//     Location, so what was validated is what is sent. The result starts with
+//     exactly one "/" and its decoded path does not start with "//".
 func safeReturnTo(v string) string {
-	if !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") || strings.HasPrefix(v, `/\`) {
+	if v == "" || len(v) > maxReturnToBytes || v[0] != '/' {
 		return ""
 	}
-	for i := 0; i < len(v); i++ {
-		if v[i] < 0x20 || v[i] == 0x7f {
-			return ""
+	if !plainASCII(v) {
+		return ""
+	}
+	decoded, err := url.PathUnescape(v)
+	if err != nil || !noBackslashOrControl(decoded) {
+		return ""
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
+		return ""
+	}
+	// Split off the query/fragment, clean only the path.
+	rawPath, rest := v, ""
+	if i := strings.IndexAny(v, "?#"); i >= 0 {
+		rawPath, rest = v[:i], v[i:]
+	}
+	clean := path.Clean(rawPath)
+	if strings.HasSuffix(rawPath, "/") && !strings.HasSuffix(clean, "/") {
+		clean += "/"
+	}
+	out := clean + rest
+	dec, err := url.PathUnescape(out)
+	if err != nil || out[0] != '/' || strings.HasPrefix(out, "//") || strings.HasPrefix(dec, "//") || !noBackslashOrControl(dec) {
+		return ""
+	}
+	return out
+}
+
+// plainASCII reports whether s has no backslash, control character, space or
+// byte outside 7-bit ASCII.
+func plainASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c <= 0x20 || c >= 0x7f || c == '\\' {
+			return false
 		}
 	}
-	return v
+	return true
+}
+
+// redirect sends a redirect with exactly the given Location. Callers pass
+// either a constant or a value from safeReturnTo, which is already clean, so
+// nothing rewrites it on the way out (http.Redirect would path.Clean it again).
+func redirect(w http.ResponseWriter, target string, status int) {
+	w.Header().Set("Location", target)
+	w.WriteHeader(status)
+}
+
+// noBackslashOrControl is for percent-decoded text, where spaces and UTF-8
+// (from file names such as "my%20file.md") are legitimate.
+func noBackslashOrControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 || c == 0x7f || c == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 func orRoot(path string) string {

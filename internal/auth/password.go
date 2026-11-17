@@ -70,20 +70,27 @@ var (
 	dummyHash []byte
 )
 
+// WarmUp computes the dummy hash CheckPasswordConstantTime compares against when no user matches
+// (about a second at cost 12). Call it once at startup, before serving (the serve command does),
+// so the first sign-in attempt for an unknown email is not measurably slower than the rest. It is
+// idempotent and safe for concurrent use.
+func WarmUp() {
+	dummyOnce.Do(func() {
+		dummyHash, _ = bcrypt.GenerateFromPassword([]byte("serve-html-markdown dummy password"), dummyCost)
+	})
+}
+
 // CheckPasswordConstantTime is CheckPassword for sign-in: when the hash is blank or malformed (for
 // example no user has the submitted email) it still spends a bcrypt compare against a dummy hash,
 // then returns false, so unknown emails take about as long as wrong passwords. Timing parity is
-// best-effort only. The dummy hash is computed on first use (about a second at cost 12), not at
-// init, so that first unknown-email attempt is slower than the rest.
+// best-effort only. The dummy hash is computed on first use unless WarmUp ran at startup.
 func CheckPasswordConstantTime(hash, password string) bool {
 	if hash != "" {
 		if _, err := bcrypt.Cost([]byte(hash)); err == nil {
 			return CheckPassword(hash, password)
 		}
 	}
-	dummyOnce.Do(func() {
-		dummyHash, _ = bcrypt.GenerateFromPassword([]byte("serve-html-markdown dummy password"), dummyCost)
-	})
+	WarmUp()
 	bcrypt.CompareHashAndPassword(dummyHash, truncate(password))
 	return false
 }

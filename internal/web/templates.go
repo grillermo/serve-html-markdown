@@ -48,7 +48,15 @@ func (s *Server) render(w http.ResponseWriter, status int, page string, data any
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	// Every rendered page gets Rails' default unless its handler chose another
+	// (the sign-in page uses no-store). The server middleware applies the same
+	// default to all dynamic responses; doing it here keeps pages correct when
+	// rendered outside it.
+	if h.Get("Cache-Control") == "" {
+		h.Set("Cache-Control", defaultCacheControl)
+	}
 	w.WriteHeader(status)
 	_, _ = buf.WriteTo(w)
 }

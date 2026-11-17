@@ -62,14 +62,77 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-// securityHeaders sets Strict-Transport-Security on every response, matching
-// Rails' force_ssl with assume_ssl (TLS terminates at the Cloudflare tunnel).
+// defaultCacheControl is what Rails sends for a dynamic response that sets no
+// Cache-Control of its own. Static files, assets and the sign-in page override it.
+const defaultCacheControl = "max-age=0, private, must-revalidate"
+
+// defaultSecurityHeaders are Rails' default_headers (the app overrides none).
+var defaultSecurityHeaders = [][2]string{
+	{"X-Frame-Options", "SAMEORIGIN"},
+	{"X-Content-Type-Options", "nosniff"},
+	{"Referrer-Policy", "strict-origin-when-cross-origin"},
+	{"X-Permitted-Cross-Domain-Policies", "none"},
+	{"X-XSS-Protection", "0"},
+}
+
+// securityHeaders sets Strict-Transport-Security (Rails' force_ssl with
+// assume_ssl; TLS terminates at the Cloudflare tunnel) and Rails' default
+// headers on every response. A handler may replace any of them with Set. The
+// default Cache-Control is applied lazily, when the response starts, and only
+// if the handler left it unset.
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-		next.ServeHTTP(w, r)
+		h := w.Header()
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		for _, kv := range defaultSecurityHeaders {
+			if h.Get(kv[0]) == "" {
+				h.Set(kv[0], kv[1])
+			}
+		}
+		next.ServeHTTP(&cacheDefaultWriter{ResponseWriter: w}, r)
 	})
 }
+
+// cacheDefaultWriter adds the default Cache-Control when the response starts
+// without one.
+type cacheDefaultWriter struct {
+	http.ResponseWriter
+	started bool
+}
+
+func (w *cacheDefaultWriter) start() {
+	if w.started {
+		return
+	}
+	w.started = true
+	if h := w.Header(); h.Get("Cache-Control") == "" {
+		h.Set("Cache-Control", defaultCacheControl)
+	}
+}
+
+func (w *cacheDefaultWriter) WriteHeader(code int) {
+	// 1xx responses are interim; the final one is still to come.
+	if code >= 200 || code == http.StatusSwitchingProtocols {
+		w.start()
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *cacheDefaultWriter) Write(b []byte) (int, error) {
+	w.start()
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush implements http.Flusher.
+func (w *cacheDefaultWriter) Flush() {
+	w.start()
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap returns the underlying ResponseWriter.
+func (w *cacheDefaultWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // logRequests logs one slog line per request.
 func (s *Server) logRequests(next http.Handler) http.Handler {

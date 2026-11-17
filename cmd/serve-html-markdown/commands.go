@@ -41,13 +41,21 @@ func migrate(cfg config.Config, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// A database Rails never touched has no schema_migrations yet: count 0.
-	before := countMigrations(ctx, pool)
+	before, err := countMigrations(ctx, pool)
+	if err != nil {
+		fmt.Fprintf(stderr, "migrate: %v\n", err)
+		return 1
+	}
 	if err := db.Migrate(ctx, pool); err != nil {
 		fmt.Fprintf(stderr, "migrate: %v\n", err)
 		return 1
 	}
-	if n := countMigrations(ctx, pool) - before; n > 0 {
+	after, err := countMigrations(ctx, pool)
+	if err != nil {
+		fmt.Fprintf(stderr, "migrate: %v\n", err)
+		return 1
+	}
+	if n := after - before; n > 0 {
 		fmt.Fprintf(stdout, "Applied %d migration(s).\n", n)
 	} else {
 		fmt.Fprintln(stdout, "Database is up to date.")
@@ -55,12 +63,22 @@ func migrate(cfg config.Config, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func countMigrations(ctx context.Context, q store.DB) int {
+// countMigrations is the number of recorded versions. A database Rails never
+// touched has no schema_migrations table yet, which counts as 0; any other
+// failure is returned.
+func countMigrations(ctx context.Context, q store.DB) (int, error) {
+	var exists bool
+	if err := q.QueryRow(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("count migrations: %w", err)
+	}
+	if !exists {
+		return 0, nil
+	}
 	var n int
 	if err := q.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
-		return 0
+		return 0, fmt.Errorf("count migrations: %w", err)
 	}
-	return n
+	return n, nil
 }
 
 // seedAdmin is db/seeds.rb: it creates the user ADMIN_EMAIL, or resets the

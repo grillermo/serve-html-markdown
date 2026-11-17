@@ -31,6 +31,7 @@ func TestFindUserByEmailMissingIsNil(t *testing.T) {
 
 func TestUpsertUserCreatesThenUpdates(t *testing.T) {
 	pool := testdb.New(t)
+	advance := clock(t, t0)
 	first, err := store.UpsertUser(ctx, pool, " Admin@X.com ", "hash1")
 	must(t, err)
 	if first.Email != "admin@x.com" {
@@ -42,13 +43,13 @@ func TestUpsertUserCreatesThenUpdates(t *testing.T) {
 	if first.RememberCreatedAt != nil {
 		t.Fatalf("remember_created_at = %v, want nil", first.RememberCreatedAt)
 	}
-	time.Sleep(5 * time.Millisecond)
+	advance(time.Hour)
 	second, err := store.UpsertUser(ctx, pool, "admin@x.com", "hash2")
 	must(t, err)
 	if second.ID != first.ID || second.EncryptedPassword != "hash2" {
 		t.Fatalf("first %+v second %+v", first, second)
 	}
-	if !second.CreatedAt.Equal(first.CreatedAt) || !second.UpdatedAt.After(first.UpdatedAt) {
+	if !second.CreatedAt.Equal(t0) || !second.UpdatedAt.Equal(t0.Add(time.Hour)) {
 		t.Fatalf("timestamps: first %+v second %+v", first, second)
 	}
 	var n int
@@ -60,7 +61,7 @@ func TestUpsertUserCreatesThenUpdates(t *testing.T) {
 
 func TestUpsertUserRejectsBadEmail(t *testing.T) {
 	pool := testdb.New(t)
-	for _, email := range []string{"", "   ", "no-at-sign", "a b@x.com", "@x.com", "a@", "a@b@c"} {
+	for _, email := range []string{"", "   ", "no-at-sign", "a b@x.com", "@x.com", "a@", "a@b@c", "a\x00@x.com", "a\xff@x.com"} {
 		if _, err := store.UpsertUser(ctx, pool, email, "hash"); !errors.Is(err, store.ErrInvalidEmail) {
 			t.Errorf("%q: err = %v, want ErrInvalidEmail", email, err)
 		}
@@ -99,5 +100,30 @@ func TestSetExpansionModeUnknownUser(t *testing.T) {
 	pool := testdb.New(t)
 	if err := store.SetExpansionMode(ctx, pool, 999, "create_new"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestFindUserByEmailWithNulIsNotFound(t *testing.T) {
+	pool := testdb.New(t)
+	pool.Close() // must not touch the DB at all
+	got, err := store.FindUserByEmail(ctx, pool, "a\x00@x.com")
+	if err != nil || got != nil {
+		t.Fatalf("got %+v, %v; want nil, nil", got, err)
+	}
+}
+
+func TestFindUserByID(t *testing.T) {
+	pool := testdb.New(t)
+	u, err := store.UpsertUser(ctx, pool, "id@x.com", "hash")
+	must(t, err)
+	got, err := store.FindUserByID(ctx, pool, u.ID)
+	must(t, err)
+	if got == nil || got.ID != u.ID || got.Email != "id@x.com" {
+		t.Fatalf("got %+v", got)
+	}
+	missing, err := store.FindUserByID(ctx, pool, u.ID+1000)
+	must(t, err)
+	if missing != nil {
+		t.Fatalf("want nil, got %+v", missing)
 	}
 }

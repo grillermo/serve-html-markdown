@@ -70,15 +70,17 @@ func TestUpsertScrollPositionRejectsBadAnchors(t *testing.T) {
 func TestUpsertScrollPositionRejectsBlankFileName(t *testing.T) {
 	pool := testdb.New(t)
 	uid := newUser(t, pool, "s@x.com")
-	if err := store.UpsertScrollPosition(ctx, pool, uid, "", "intro"); !errors.Is(err, store.ErrInvalidFileName) {
-		t.Fatalf("err = %v, want ErrInvalidFileName", err)
+	for _, name := range []string{"", "  ", "a\x00.md", "bad\xff.md"} {
+		if err := store.UpsertScrollPosition(ctx, pool, uid, name, "intro"); !errors.Is(err, store.ErrInvalidFileName) {
+			t.Errorf("%q: err = %v, want ErrInvalidFileName", name, err)
+		}
 	}
 }
 
 func TestUpsertScrollPositionUnknownUserFails(t *testing.T) {
 	pool := testdb.New(t)
-	if err := store.UpsertScrollPosition(ctx, pool, 999, "a.md", "intro"); err == nil {
-		t.Fatal("want foreign key error")
+	if err := store.UpsertScrollPosition(ctx, pool, 999, "a.md", "intro"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
 

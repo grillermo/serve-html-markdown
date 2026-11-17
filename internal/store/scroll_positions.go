@@ -5,9 +5,9 @@ import (
 	"errors"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Ruby's \w is ASCII-only here, and \A...\z (not ^...$) so a trailing newline
@@ -17,19 +17,23 @@ var anchorPattern = regexp.MustCompile(`\A[A-Za-z0-9_\-:.]+\z`)
 // UpsertScrollPosition remembers the anchor the user last reached in a file.
 // One row exists per (user, file). The file name must not be blank
 // (ErrInvalidFileName) and the anchor must match [\w\-:.]+ (ErrInvalidAnchor),
-// since it is later interpolated into a page.
+// since it is later interpolated into a page. An unknown user gives ErrNotFound.
 func UpsertScrollPosition(ctx context.Context, db DB, userID int64, fileName, anchor string) error {
-	if strings.TrimSpace(fileName) == "" {
+	if strings.TrimSpace(fileName) == "" || !validText(fileName) {
 		return ErrInvalidFileName
 	}
 	if !anchorPattern.MatchString(anchor) {
 		return ErrInvalidAnchor
 	}
-	now := time.Now().UTC()
+	now := utcNow()
 	_, err := db.Exec(ctx, `INSERT INTO scroll_positions (user_id, file_name, anchor, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $4)
 		ON CONFLICT (user_id, file_name) DO UPDATE SET anchor = EXCLUDED.anchor, updated_at = EXCLUDED.updated_at`,
 		userID, fileName, anchor, now)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" { // foreign_key_violation: no such user
+		return ErrNotFound
+	}
 	return err
 }
 

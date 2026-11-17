@@ -49,6 +49,18 @@ func must(t *testing.T, err error) {
 	}
 }
 
+var t0 = time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
+
+// clock fixes the store's clock at start and returns a function that moves it
+// forward. Timestamps are asserted exactly (microsecond precision survives the
+// round trip), so tests need no sleeps.
+func clock(t *testing.T, start time.Time) (advance func(time.Duration)) {
+	t.Helper()
+	cur := start
+	store.SetNow(t, func() time.Time { return cur })
+	return func(d time.Duration) { cur = cur.Add(d) }
+}
+
 func assertNames(t *testing.T, pool *pgxpool.Pool, want ...string) {
 	t.Helper()
 	got := names(t, pool)
@@ -72,13 +84,14 @@ func TestRecordInsertsAllowedAndIgnoresUnsupported(t *testing.T) {
 
 func TestRecordTwiceKeepsOneRowAndFrozenCreatedAt(t *testing.T) {
 	pool := testdb.New(t)
+	advance := clock(t, t0)
 	must(t, store.RecordServedFile(ctx, pool, "a.md"))
-	first := row(t, pool, "a.md")
-	time.Sleep(5 * time.Millisecond)
+	advance(time.Hour)
 	must(t, store.RecordServedFile(ctx, pool, "a.md"))
 	assertNames(t, pool, "a.md")
-	if got := row(t, pool, "a.md"); !got.CreatedAt.Equal(first.CreatedAt) || !got.UpdatedAt.Equal(first.UpdatedAt) {
-		t.Fatalf("row changed: %+v -> %+v", first, got)
+	got := row(t, pool, "a.md")
+	if !got.CreatedAt.Equal(t0) || !got.UpdatedAt.Equal(t0) {
+		t.Fatalf("row changed: %+v, want both timestamps %v", got, t0)
 	}
 }
 
@@ -98,16 +111,16 @@ func TestRecordModificationCreatesWhenAbsent(t *testing.T) {
 
 func TestRecordModificationBumpsUpdatedAtOnly(t *testing.T) {
 	pool := testdb.New(t)
+	advance := clock(t, t0)
 	must(t, store.RecordServedFile(ctx, pool, "notes.md"))
-	first := row(t, pool, "notes.md")
-	time.Sleep(5 * time.Millisecond)
+	advance(time.Hour)
 	must(t, store.RecordServedFileModification(ctx, pool, "notes.md"))
 	got := row(t, pool, "notes.md")
-	if !got.CreatedAt.Equal(first.CreatedAt) {
-		t.Errorf("created_at moved: %v -> %v", first.CreatedAt, got.CreatedAt)
+	if !got.CreatedAt.Equal(t0) {
+		t.Errorf("created_at moved: %v -> %v", t0, got.CreatedAt)
 	}
-	if !got.UpdatedAt.After(first.CreatedAt) {
-		t.Errorf("updated_at %v not after created_at %v", got.UpdatedAt, first.CreatedAt)
+	if want := t0.Add(time.Hour); !got.UpdatedAt.Equal(want) {
+		t.Errorf("updated_at = %v, want %v", got.UpdatedAt, want)
 	}
 	assertNames(t, pool, "notes.md")
 }
@@ -201,14 +214,15 @@ func TestSyncInsertsAllowedFilesAndIgnoresOthers(t *testing.T) {
 func TestSyncIsIdempotentAndKeepsTimestamps(t *testing.T) {
 	pool := testdb.New(t)
 	dir := t.TempDir()
+	advance := clock(t, t0)
 	writeFile(t, dir, "a.html")
 	must(t, store.SyncServedFiles(ctx, pool, dir))
-	first := row(t, pool, "a.html")
-	time.Sleep(5 * time.Millisecond)
+	advance(time.Hour)
 	must(t, store.SyncServedFiles(ctx, pool, dir))
 	assertNames(t, pool, "a.html")
-	if got := row(t, pool, "a.html"); !got.CreatedAt.Equal(first.CreatedAt) || !got.UpdatedAt.Equal(first.UpdatedAt) {
-		t.Fatalf("row changed: %+v -> %+v", first, got)
+	got := row(t, pool, "a.html")
+	if !got.CreatedAt.Equal(t0) || !got.UpdatedAt.Equal(t0) {
+		t.Fatalf("row changed: %+v, want both timestamps %v", got, t0)
 	}
 }
 
@@ -248,4 +262,79 @@ func TestSyncMissingDirErrors(t *testing.T) {
 	if err := store.SyncServedFiles(ctx, pool, filepath.Join(t.TempDir(), "nope")); err == nil {
 		t.Fatal("want error")
 	}
+}
+
+func TestExtensionRuleMatchesRubyExtname(t *testing.T) {
+	pool := testdb.New(t)
+	dir := t.TempDir()
+	cases := map[string]bool{
+		".md":     false, // leading dot is not an extension separator
+		"..md":    false,
+		".x.md":   true,
+		"a.MD":    true,
+		"a.":      false,
+		"a.md.":   false,
+		"noext":   false,
+		".hidden": false,
+	}
+	for name, ok := range cases {
+		must(t, store.RecordServedFile(ctx, pool, name))
+		has := len(names(t, pool)) == 1
+		if has != ok {
+			t.Errorf("Record(%q): recorded = %v, want %v", name, has, ok)
+		}
+		_, err := pool.Exec(ctx, `DELETE FROM served_files`)
+		must(t, err)
+		writeFile(t, dir, name)
+	}
+	must(t, store.SyncServedFiles(ctx, pool, dir))
+	assertNames(t, pool, ".x.md", "a.MD")
+}
+
+func TestNulAndInvalidUTF8NamesAreIgnored(t *testing.T) {
+	pool := testdb.New(t)
+	for _, name := range []string{"a\x00.md", "bad\xff.md", "\x00"} {
+		must(t, store.RecordServedFile(ctx, pool, name))
+		must(t, store.RecordServedFileModification(ctx, pool, name))
+		must(t, store.RemoveServedFile(ctx, pool, name))
+	}
+	assertNames(t, pool)
+}
+
+func TestSyncSkipsNonUTF8NameButSyncsTheRest(t *testing.T) {
+	pool := testdb.New(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad\xff.md"), []byte("x"), 0o644); err != nil {
+		t.Skipf("filesystem rejects non-UTF-8 names: %v", err)
+	}
+	writeFile(t, dir, "good.md")
+	must(t, store.SyncServedFiles(ctx, pool, dir))
+	assertNames(t, pool, "good.md")
+}
+
+func TestSyncFollowsSymlinksToFilesOnly(t *testing.T) {
+	pool := testdb.New(t)
+	dir := t.TempDir()
+	target := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(target, "real.md"), []byte("x"), 0o644))
+	must(t, os.Symlink(filepath.Join(target, "real.md"), filepath.Join(dir, "link.md")))
+	must(t, os.Symlink(target, filepath.Join(dir, "dirlink.md")))
+	must(t, os.Symlink(filepath.Join(target, "gone.md"), filepath.Join(dir, "broken.md")))
+	must(t, store.SyncServedFiles(ctx, pool, dir))
+	assertNames(t, pool, "link.md")
+}
+
+// A row recorded after the sync started must survive the prune, even though
+// no file backs it in the directory snapshot.
+func TestSyncPruneSparesRowsCreatedAfterSyncStart(t *testing.T) {
+	pool := testdb.New(t)
+	dir := t.TempDir()
+	past := time.Now().UTC().Add(-time.Hour)
+	future := time.Now().UTC().Add(time.Hour)
+	for name, at := range map[string]time.Time{"past.md": past, "future.md": future} {
+		_, err := pool.Exec(ctx, `INSERT INTO served_files (name, created_at, updated_at) VALUES ($1, $2, $2)`, name, at)
+		must(t, err)
+	}
+	must(t, store.SyncServedFiles(ctx, pool, dir))
+	assertNames(t, pool, "future.md")
 }

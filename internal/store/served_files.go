@@ -3,6 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +17,14 @@ import (
 // AllowedExtensions are the file extensions that are served and listed.
 var AllowedExtensions = map[string]bool{".html": true, ".md": true, ".markdown": true}
 
-func allowed(name string) bool { return AllowedExtensions[strings.ToLower(filepath.Ext(name))] }
+// allowed mirrors Ruby's File.extname: leading dots are not an extension
+// separator, so ".md" and "..md" have none while ".x.md" has ".md". Names that
+// Postgres could not store are never allowed.
+func allowed(name string) bool { return validText(name) && hasAllowedExt(name) }
+
+func hasAllowedExt(name string) bool {
+	return AllowedExtensions[strings.ToLower(filepath.Ext(strings.TrimLeft(name, ".")))]
+}
 
 // ServedFile is a row of served_files.
 type ServedFile struct {
@@ -44,7 +54,7 @@ func RecordServedFile(ctx context.Context, db DB, name string) error {
 	if !allowed(name) {
 		return nil
 	}
-	now := time.Now().UTC()
+	now := utcNow()
 	_, err := db.Exec(ctx, `INSERT INTO served_files (name, created_at, updated_at) VALUES ($1, $2, $2)
 		ON CONFLICT (name) DO NOTHING`, name, now)
 	return err
@@ -52,14 +62,21 @@ func RecordServedFile(ctx context.Context, db DB, name string) error {
 
 // RemoveServedFile deletes the row for name, if any.
 func RemoveServedFile(ctx context.Context, db DB, name string) error {
+	if !validText(name) {
+		return nil
+	}
 	_, err := db.Exec(ctx, `DELETE FROM served_files WHERE name = $1`, name)
 	return err
 }
 
 // RecordServedFileModification bumps updated_at of name, creating the row when
-// absent. Like the Rails original it does not check the extension.
+// absent. Like the Rails original it does not check the extension (names with
+// NUL bytes or invalid UTF-8 are ignored).
 func RecordServedFileModification(ctx context.Context, db DB, name string) error {
-	now := time.Now().UTC()
+	if !validText(name) {
+		return nil
+	}
+	now := utcNow()
 	_, err := db.Exec(ctx, `INSERT INTO served_files (name, created_at, updated_at) VALUES ($1, $2, $2)
 		ON CONFLICT (name) DO UPDATE SET updated_at = EXCLUDED.updated_at`, name, now)
 	return err
@@ -104,8 +121,14 @@ func ServedFileNames(ctx context.Context, db DB, likePattern, exact string) ([]s
 // extension directly inside dir: missing rows are inserted (existing rows keep
 // their timestamps) and rows without a file are deleted. Subdirectories and
 // files with other extensions (including ".<name>.expansion.lock" files) are
-// ignored.
+// ignored, and so are names that are not valid UTF-8 (logged).
+//
+// It is not atomic: the directory listing, the insert and the prune are
+// separate statements. Callers that need atomicity can pass a pgx.Tx. A row
+// recorded after the sync started (created_at at or after the start of the
+// call) is never pruned, so a file added during the sync is not lost.
 func SyncServedFiles(ctx context.Context, db DB, dir string) error {
+	start := utcNow()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -113,22 +136,29 @@ func SyncServedFiles(ctx context.Context, db DB, dir string) error {
 	names := []string{} // non-nil: an empty array must delete every row
 	for _, e := range entries {
 		if !allowed(e.Name()) {
+			if hasAllowedExt(e.Name()) {
+				slog.Warn("served_files: skipping file name that is not valid UTF-8", "name", fmt.Sprintf("%q", e.Name()))
+			}
 			continue
 		}
-		// os.Stat follows symlinks, like Ruby's Pathname#file?.
-		if info, err := os.Stat(filepath.Join(dir, e.Name())); err != nil || !info.Mode().IsRegular() {
-			continue
+		regular := e.Type().IsRegular()
+		if e.Type()&fs.ModeSymlink != 0 {
+			// Follow symlinks, like Ruby's Pathname#file?.
+			info, err := os.Stat(filepath.Join(dir, e.Name()))
+			regular = err == nil && info.Mode().IsRegular()
 		}
-		names = append(names, e.Name())
+		if regular {
+			names = append(names, e.Name())
+		}
 	}
 	if len(names) > 0 {
-		now := time.Now().UTC()
+		now := utcNow()
 		if _, err := db.Exec(ctx, `INSERT INTO served_files (name, created_at, updated_at)
 			SELECT n, $2::timestamp, $2::timestamp FROM unnest($1::text[]) AS n
 			ON CONFLICT (name) DO NOTHING`, names, now); err != nil {
 			return err
 		}
 	}
-	_, err = db.Exec(ctx, `DELETE FROM served_files WHERE NOT (name = ANY($1::text[]))`, names)
+	_, err = db.Exec(ctx, `DELETE FROM served_files WHERE NOT (name = ANY($1::text[])) AND created_at < $2::timestamp`, names, start)
 	return err
 }

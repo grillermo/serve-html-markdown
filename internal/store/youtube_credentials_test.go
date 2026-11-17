@@ -70,10 +70,9 @@ func TestYoutubeRefreshTokenEmptyWhenNothing(t *testing.T) {
 
 func TestStoreYoutubeCredentialKeepsSingleRowAndOverwrites(t *testing.T) {
 	pool := testdb.New(t)
+	advance := clock(t, t0)
 	must(t, store.StoreYoutubeCredential(ctx, pool, "first"))
-	var created, obtained time.Time
-	must(t, pool.QueryRow(ctx, `SELECT created_at, obtained_at FROM youtube_credentials`).Scan(&created, &obtained))
-	time.Sleep(5 * time.Millisecond)
+	advance(time.Hour)
 	must(t, store.StoreYoutubeCredential(ctx, pool, "second"))
 
 	var n int
@@ -84,11 +83,8 @@ func TestStoreYoutubeCredentialKeepsSingleRowAndOverwrites(t *testing.T) {
 	if n != 1 || token != "second" {
 		t.Fatalf("rows = %d, token = %q", n, token)
 	}
-	if !created2.Equal(created) || !obtained2.After(obtained) || !updated2.Equal(obtained2) {
-		t.Fatalf("created %v->%v obtained %v->%v updated %v", created, created2, obtained, obtained2, updated2)
-	}
-	if d := time.Since(obtained2); d < 0 || d > time.Minute {
-		t.Fatalf("obtained_at %v not near now", obtained2)
+	if !created2.Equal(t0) || !obtained2.Equal(t0.Add(time.Hour)) || !updated2.Equal(obtained2) {
+		t.Fatalf("created %v obtained %v updated %v", created2, obtained2, updated2)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -34,7 +33,7 @@ func StoreYoutubeCredential(ctx context.Context, db DB, token string) error {
 	if strings.TrimSpace(token) == "" {
 		return ErrBlankToken
 	}
-	now := time.Now().UTC()
+	now := utcNow()
 	tag, err := db.Exec(ctx, `UPDATE youtube_credentials SET refresh_token = $1, obtained_at = $2, updated_at = $2
 		WHERE id = (SELECT max(id) FROM youtube_credentials)`, token, now)
 	if err != nil {

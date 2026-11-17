@@ -3,7 +3,9 @@ package store
 import "errors"
 
 var (
-	// ErrNotFound is returned by writes that target a row that does not exist.
+	// ErrNotFound is returned by writes that target a row that does not exist
+	// (SetExpansionMode, UpsertScrollPosition for an unknown user). Finders do
+	// not use it: they return nil, nil (or "") for a missing row.
 	ErrNotFound = errors.New("store: not found")
 	// ErrInvalidEmail: the email is blank or not shaped like an address.
 	ErrInvalidEmail = errors.New("store: invalid email")

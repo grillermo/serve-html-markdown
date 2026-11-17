@@ -229,6 +229,10 @@ func FailExpansion(ctx context.Context, db DB, id int64, detail string) error {
 // replaces its time. Failures are logged and never returned: timings are
 // diagnostics and must not break the request or job being measured.
 func StampExpansion(ctx context.Context, db DB, id int64, stage string, epochMS int64) {
+	if !validText(stage) {
+		slog.Error("[Expansion] stamp failed", "err", "stage is not valid text")
+		return
+	}
 	_, err := db.Exec(ctx, `UPDATE expansions SET `+mergeTiming(`$2`, `$3`)+`, updated_at = $4
 		WHERE id = $1`, id, stage, epochMS, utcNow())
 	if err != nil {

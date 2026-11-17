@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -40,9 +42,15 @@ func getInt(key string, def int) int {
 	return def
 }
 
-// Load reads .env (if present) without overriding the real environment, like dotenv-rails.
+// Load reads root/.env (if present) and builds a Config from the environment.
+// Like dotenv-rails it never overrides variables already set in the real
+// environment. Note that it mutates the process environment: values from .env
+// that are not already set are exported with os.Setenv. A missing .env is
+// ignored; any other error reading it is logged as a warning.
 func Load(root string) Config {
-	_ = godotenv.Load(filepath.Join(root, ".env"))
+	if err := godotenv.Load(filepath.Join(root, ".env")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("config: could not load .env", "root", root, "err", err)
+	}
 	c := FromEnv()
 	c.Root = root
 	c.FilesDir = get("FILES_DIR", filepath.Join(root, "files"))

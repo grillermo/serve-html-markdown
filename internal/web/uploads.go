@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"serve-html-markdown/internal/auth"
@@ -17,6 +19,20 @@ import (
 	"serve-html-markdown/internal/files"
 	"serve-html-markdown/internal/llm"
 	"serve-html-markdown/internal/store"
+)
+
+// Deadlines. The http.Server built by the serve wiring must not undercut them:
+// give it a ReadTimeout and WriteTimeout that are zero or longer than the
+// largest of these (the handlers extend their own deadlines per request with
+// http.NewResponseController), and keep ReadHeaderTimeout for slow headers.
+const (
+	// writeSlack is added to the OpenAI timeout for the rest of a create.
+	writeSlack = 15 * time.Second
+	// uploadDeadline is how long a client has to send an upload body and get
+	// its answer.
+	uploadDeadline = 5 * time.Minute
+	// recordTimeout bounds the served_files insert after a file is written.
+	recordTimeout = 10 * time.Second
 )
 
 const (
@@ -32,7 +48,11 @@ const (
 
 	msgBodyTooLarge = "Request body is too large."
 	msgBadBody      = "Invalid request body."
-	msgFormatFailed = "OpenAI formatting failed."
+	msgNotUTF8      = "File must be UTF-8 text."
+	// msgFileTooLarge: a file over the cap for what the server would show. The
+	// cap is that of the serve path (MaxRenderBytes for .md, MaxHTMLBytes for
+	// .html), so nothing is stored that GET /<name> would then refuse with 413.
+	msgFileTooLarge = "File is too large."
 )
 
 // Formatter turns the posted text into Markdown. The default is the
@@ -61,11 +81,38 @@ func (s *Server) publicURL(name string) string {
 	return "https://" + s.cfg.Host + "/" + name
 }
 
+// marshalJSON encodes v like Rails' to_json: <, > and & stay as they are
+// (U+2028 and U+2029 are still escaped), and there is no trailing newline.
+func marshalJSON(v any) []byte {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(v) // maps of strings cannot fail
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+}
+
+// extendDeadlines moves the request's read and write deadlines to now+read and
+// now+write (0 leaves one alone). A ResponseWriter that has no deadlines, such
+// as httptest's recorder, is fine.
+func extendDeadlines(w http.ResponseWriter, read, write time.Duration) {
+	rc := http.NewResponseController(w)
+	now := time.Now()
+	if read > 0 {
+		if err := rc.SetReadDeadline(now.Add(read)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			slog.Warn("set read deadline", "err", err)
+		}
+	}
+	if write > 0 {
+		if err := rc.SetWriteDeadline(now.Add(write)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			slog.Warn("set write deadline", "err", err)
+		}
+	}
+}
+
 // writeJSON answers 200 with body as JSON.
 func writeJSON(w http.ResponseWriter, body map[string]string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	b, _ := json.Marshal(body)
-	_, _ = w.Write(b)
+	_, _ = w.Write(marshalJSON(body))
 }
 
 // bodyError answers a failed body read or parse with 413 or 400.
@@ -80,8 +127,18 @@ func bodyError(w http.ResponseWriter, err error) {
 
 // recordCreated records name in served_files so /last finds it at once. The
 // file already exists on disk, so a database failure is a 500 but the file stays.
+//
+// The insert does not follow the request's context: a client that hangs up right
+// after the file is written would otherwise leave it without a row. A file
+// that still ends up without one is picked up by store.SyncServedFiles.
+//
+// TODO(serve wiring): call store.SyncServedFiles at startup so files written
+// without a row (a crash or a failed insert between the write and the insert)
+// heal.
 func (s *Server) recordCreated(w http.ResponseWriter, r *http.Request, name string) bool {
-	if err := store.RecordServedFile(r.Context(), s.pool, name); err != nil {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), recordTimeout)
+	defer cancel()
+	if err := store.RecordServedFile(ctx, s.pool, name); err != nil {
 		s.fileError(w, r, err)
 		return false
 	}
@@ -100,6 +157,8 @@ func (s *Server) createFile(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	// The formatter call can take as long as the OpenAI client waits.
+	extendDeadlines(w, 0, llm.DefaultTimeout+writeSlack)
 	params, err := parseParams(w, r, s.maxCreateBytes)
 	if err != nil {
 		bodyError(w, err)
@@ -110,6 +169,11 @@ func (s *Server) createFile(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusBadRequest, "Missing content.")
 		return
 	}
+	// Rails refuses a parameter that is not valid UTF-8 with a 400.
+	if !utf8.ValidString(content) {
+		writeDetail(w, http.StatusBadRequest, msgNotUTF8)
+		return
+	}
 	filename := params.get("filename")
 	if _, err := files.Stem(filename); err != nil {
 		s.fileError(w, r, err)
@@ -118,6 +182,11 @@ func (s *Server) createFile(w http.ResponseWriter, r *http.Request) {
 	formatted, err := s.formatter.Format(r.Context(), content)
 	if err != nil {
 		s.formatError(w, r, err)
+		return
+	}
+	// Like an upload, never store what the server would then refuse to show.
+	if int64(len(formatted)) > s.maxRenderBytes {
+		writeDetail(w, http.StatusRequestEntityTooLarge, msgFileTooLarge)
 		return
 	}
 	path, err := files.CreateUnique(s.cfg.FilesDir, filename, ".md", []byte(formatted))
@@ -138,7 +207,7 @@ func (s *Server) formatError(w http.ResponseWriter, r *http.Request, err error) 
 	var upstream *llm.Error
 	if errors.Is(err, llm.ErrConfiguration) || errors.As(err, &upstream) {
 		slog.Error("OpenAI formatting failed", "err", err.Error())
-		writeDetail(w, http.StatusBadGateway, msgFormatFailed)
+		writeDetail(w, http.StatusBadGateway, llm.FormattingFailed)
 		return
 	}
 	s.fileError(w, r, err)
@@ -156,6 +225,8 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+	// A big upload may take longer than the server's default deadlines.
+	extendDeadlines(w, uploadDeadline, uploadDeadline+writeSlack)
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
 	err := r.ParseMultipartForm(uploadMemory)
 	if r.MultipartForm != nil {
@@ -187,13 +258,27 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 		s.fileError(w, r, err)
 		return
 	}
-	data, err := readPart(header)
+	// The cap of the serve path for this kind of file; the size is known before
+	// the part is read.
+	limit := s.maxRenderBytes
+	if ext == ".html" {
+		limit = s.maxHTMLBytes
+	}
+	if header.Size > limit {
+		writeDetail(w, http.StatusRequestEntityTooLarge, msgFileTooLarge)
+		return
+	}
+	data, err := readPart(header, limit)
 	if err != nil {
 		s.fileError(w, r, err)
 		return
 	}
+	if int64(len(data)) > limit {
+		writeDetail(w, http.StatusRequestEntityTooLarge, msgFileTooLarge)
+		return
+	}
 	if !utf8.Valid(data) {
-		writeDetail(w, http.StatusBadRequest, "File must be UTF-8 text.")
+		writeDetail(w, http.StatusBadRequest, msgNotUTF8)
 		return
 	}
 	path, err := files.CreateUnique(s.cfg.FilesDir, filename, ext, data)
@@ -219,13 +304,13 @@ func uploadParam(r *http.Request, key string) string {
 	return ""
 }
 
-// readPart reads an uploaded part. Its size is already bounded by the cap on the
-// request body.
-func readPart(h *multipart.FileHeader) ([]byte, error) {
+// readPart reads an uploaded part, at most limit+1 bytes: one more than the
+// cap tells "at the cap" from "over it".
+func readPart(h *multipart.FileHeader, limit int64) ([]byte, error) {
 	f, err := h.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	return io.ReadAll(io.LimitReader(f, limit+1))
 }

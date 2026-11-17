@@ -31,5 +31,5 @@ func (f *Formatter) Format(ctx context.Context, content string) (string, error) 
 	if errors.Is(err, ErrConfiguration) {
 		return "", ErrConfiguration
 	}
-	return "", &Error{Message: msgFormattingError, cause: err}
+	return "", &Error{Message: FormattingFailed, cause: err}
 }

@@ -40,6 +40,16 @@ func TestBearerOK(t *testing.T) {
 	}
 }
 
+func TestBearerOKRejectsRepeatedAuthorizationHeaders(t *testing.T) {
+	for _, vals := range [][]string{{"Bearer tok", "Bearer tok"}, {"Bearer tok", "Bearer other"}, {"Bearer other", "Bearer tok"}} {
+		r := httptest.NewRequest("POST", "/", nil)
+		r.Header["Authorization"] = vals
+		if auth.BearerOK(r, "tok") {
+			t.Errorf("%q accepted", vals)
+		}
+	}
+}
+
 func TestUserContext(t *testing.T) {
 	ctx := context.Background()
 	if auth.UserFrom(ctx) != nil {

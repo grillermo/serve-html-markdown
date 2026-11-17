@@ -192,8 +192,10 @@ func TestGenerateTransportFailureIsGeneric(t *testing.T) {
 }
 
 func TestGenerateHonoursContextCancellation(t *testing.T) {
+	arrived := make(chan struct{})
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
 		select {
 		case <-release:
 		case <-r.Context().Done():
@@ -202,18 +204,29 @@ func TestGenerateHonoursContextCancellation(t *testing.T) {
 	defer srv.Close()
 	defer close(release)
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
-	start := time.Now()
-	_, err := clientFor(srv, "k").Generate(ctx, Request{Input: "x"})
+	result := make(chan error, 1)
+	go func() {
+		_, err := clientFor(srv, "k").Generate(ctx, Request{Input: "x"})
+		result <- err
+	}()
+	select {
+	case <-arrived: // the request is in flight: cancel it now
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request never reached the server")
+	}
+	cancel()
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Generate did not return after the context was cancelled")
+	}
 	var e *Error
 	if !errors.As(err, &e) || e.Message != "OpenAI request could not be completed." {
 		t.Fatalf("err = %v", err)
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("cancellation should unwrap to context.Canceled: %v", err)
-	}
-	if time.Since(start) > 5*time.Second {
-		t.Error("did not return promptly after cancel")
 	}
 }
 

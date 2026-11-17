@@ -57,9 +57,12 @@ func Authenticate(ctx context.Context, db store.DB, codec Codec, cookieValue str
 
 // BearerOK reports whether the request carries "Authorization: Bearer <token>".
 // It is false when token is empty, so an unset API_TOKEN never opens the API.
-// The whole header is compared in constant time.
+// The whole header is compared in constant time. A request with more than one
+// Authorization header is never OK.
 func BearerOK(r *http.Request, token string) bool {
-	if token == "" {
+	// Exactly one header: with two, a proxy and this server could each pick a
+	// different one.
+	if token == "" || len(r.Header.Values("Authorization")) != 1 {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) == 1

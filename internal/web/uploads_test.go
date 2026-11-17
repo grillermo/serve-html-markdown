@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"serve-html-markdown/internal/db/testdb"
 	"serve-html-markdown/internal/llm"
@@ -429,19 +430,177 @@ func TestCreateBodyIsCapped(t *testing.T) {
 // stops the OpenAI call, and nothing is created.
 func TestCreatePassesTheRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	f := &fakeFormatter{fn: func(ctx context.Context, _ string) (string, error) {
-		cancel()
-		<-ctx.Done()
-		return "", llm.ErrOpenAI("OpenAI formatting failed.")
-	}}
-	e := newUploadEnv(t, f)
+	defer cancel()
+	started := make(chan struct{})
+	seen := make(chan error, 1)
+	e := newUploadEnv(t, &fakeFormatter{fn: func(fctx context.Context, _ string) (string, error) {
+		close(started)
+		select {
+		case <-fctx.Done():
+			seen <- fctx.Err()
+		case <-time.After(5 * time.Second):
+			seen <- nil
+		}
+		return "", llm.ErrOpenAI("x")
+	}})
 	req := formReq("/file/new", url.Values{"content": {"x"}, "filename": {"a"}}, bearer).WithContext(ctx)
-	rec := e.serve(req)
-	if rec.Code != 502 {
-		t.Errorf("status = %d", rec.Code)
+	done := make(chan int, 1)
+	go func() { done <- e.serve(req).Code }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the formatter never ran")
+	}
+	cancel()
+	if err := <-seen; !errors.Is(err, context.Canceled) {
+		t.Errorf("the formatter's context error = %v, want context.Canceled", err)
+	}
+	if code := <-done; code != 502 {
+		t.Errorf("status = %d", code)
 	}
 	if len(e.children(t)) != 0 {
 		t.Error("a file was created")
+	}
+}
+
+func TestCreateRejectsInvalidUTF8Content(t *testing.T) {
+	e := newUploadEnv(t, returning("x"))
+	rec := e.serve(formReq("/file/new", url.Values{"content": {"ab\xff\xfe"}, "filename": {"a"}}, bearer))
+	wantDetail(t, "utf-8", rec, 400, "File must be UTF-8 text.")
+	if len(e.f.calls) != 0 || len(e.children(t)) != 0 {
+		t.Error("invalid content was processed")
+	}
+}
+
+// The coordinator's I1: nothing is stored that GET would then refuse (413).
+func TestCreateRejectsFormattedOutputOverTheServeCap(t *testing.T) {
+	e := newUploadEnv(t, returning(strings.Repeat("a", 2<<10)))
+	e.srv.maxRenderBytes = 2 << 10
+	wantURL(t, e.serve(formReq("/file/new", url.Values{"content": {"x"}, "filename": {"at-cap"}}, bearer)), "https://reader.example/at-cap.md")
+	e.f.fn = func(context.Context, string) (string, error) { return strings.Repeat("a", 2<<10+1), nil }
+	rec := e.serve(formReq("/file/new", url.Values{"content": {"x"}, "filename": {"over"}}, bearer))
+	wantDetail(t, "over the cap", rec, 413, "File is too large.")
+	if got := e.children(t); len(got) != 1 || got[0] != "at-cap.md" || e.servedCount(t) != 1 {
+		t.Errorf("files = %v, rows = %d", got, e.servedCount(t))
+	}
+	if New(testConfig(t), nil).maxRenderBytes != MaxRenderBytes {
+		t.Error("the default cap is not MaxRenderBytes")
+	}
+}
+
+func TestUploadCapsFollowTheServeCapOfTheExtension(t *testing.T) {
+	e := newUploadEnv(t, returning("x"))
+	e.srv.maxRenderBytes, e.srv.maxHTMLBytes = 1<<10, 4<<10
+	up := func(name string, n int) *httptest.ResponseRecorder {
+		return e.serve(multipartReq(t, "/file/upload", bearer, nil, filePart(name, strings.Repeat("a", n))))
+	}
+	wantURL(t, up("md-at-cap.md", 1<<10), "https://reader.example/md-at-cap.md")
+	wantDetail(t, "md over", up("md-over.md", 1<<10+1), 413, "File is too large.")
+	wantDetail(t, "markdown over", up("m.markdown", 2<<10), 413, "File is too large.")
+	wantURL(t, up("html-ok.html", 4<<10), "https://reader.example/html-ok.html")
+	wantURL(t, up("htm-ok.htm", 2<<10), "https://reader.example/htm-ok.html") // over the .md cap, fine as HTML
+	wantDetail(t, "html over", up("html-over.html", 4<<10+1), 413, "File is too large.")
+	if got := len(e.children(t)); got != 3 || e.servedCount(t) != 3 {
+		t.Errorf("files = %v, rows = %d, want the three that fit", e.children(t), e.servedCount(t))
+	}
+}
+
+// A 3.6 MB .md upload used to answer 200 and then 413 on GET.
+func TestUploadRejectsMarkdownTheServerWouldRefuseToShow(t *testing.T) {
+	e := newUploadEnv(t, returning("x"))
+	rec := e.serve(multipartReq(t, "/file/upload", bearer, nil, filePart("big.md", strings.Repeat("a", 3600000))))
+	wantDetail(t, "3.6 MB", rec, 413, "File is too large.")
+	if len(e.children(t)) != 0 {
+		t.Error("the file was stored")
+	}
+}
+
+// Deadlines are extended per request, so server-level timeouts do not cut off a
+// slow OpenAI call or a big upload.
+type deadlineWriter struct {
+	http.ResponseWriter
+	read, write time.Time
+}
+
+func (d *deadlineWriter) SetReadDeadline(t time.Time) error  { d.read = t; return nil }
+func (d *deadlineWriter) SetWriteDeadline(t time.Time) error { d.write = t; return nil }
+
+func near(got time.Time, want time.Duration) bool {
+	d := time.Until(got) - want
+	return d < 2*time.Second && d > -2*time.Second
+}
+
+func TestCreateAndUploadExtendTheirDeadlines(t *testing.T) {
+	e := newUploadEnv(t, returning("x"))
+	dw := &deadlineWriter{ResponseWriter: httptest.NewRecorder()}
+	e.srv.ServeHTTP(dw, formReq("/file/new", url.Values{"content": {"a"}, "filename": {"d"}}, bearer))
+	if !near(dw.write, llm.DefaultTimeout+15*time.Second) || !dw.read.IsZero() {
+		t.Errorf("create: write %v read %v", time.Until(dw.write), dw.read)
+	}
+	dw = &deadlineWriter{ResponseWriter: httptest.NewRecorder()}
+	e.srv.ServeHTTP(dw, multipartReq(t, "/file/upload", bearer, nil, filePart("d.md", "x")))
+	if !near(dw.read, 5*time.Minute) || !near(dw.write, 5*time.Minute+15*time.Second) {
+		t.Errorf("upload: read %v write %v", time.Until(dw.read), time.Until(dw.write))
+	}
+	// Unauthorized requests get no extension.
+	dw = &deadlineWriter{ResponseWriter: httptest.NewRecorder()}
+	e.srv.ServeHTTP(dw, formReq("/file/new", url.Values{"content": {"a"}}, "Bearer nope"))
+	if !dw.write.IsZero() {
+		t.Error("an unauthorized request extended its deadline")
+	}
+}
+
+// A client that hangs up right after the file is written must not leave it
+// without a served_files row.
+func TestCreateRecordsTheRowEvenIfTheClientWentAway(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	e := newUploadEnv(t, &fakeFormatter{fn: func(context.Context, string) (string, error) {
+		cancel() // the client hangs up while OpenAI answers
+		return "formatted", nil
+	}})
+	e.serve(formReq("/file/new", url.Values{"content": {"x"}, "filename": {"gone"}}, bearer).WithContext(ctx))
+	if ctx.Err() == nil {
+		t.Fatal("context not cancelled")
+	}
+	if e.read(t, "gone.md") != "formatted" || !e.served(t, "gone.md") {
+		t.Errorf("file written, row recorded = %v", e.served(t, "gone.md"))
+	}
+}
+
+func TestUploadRecordsTheRowEvenIfTheClientWentAway(t *testing.T) {
+	e := newUploadEnv(t, returning("x"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	e.serve(multipartReq(t, "/file/upload", bearer, nil, filePart("gone.md", "# Hi")).WithContext(ctx))
+	if e.read(t, "gone.md") != "# Hi" || !e.served(t, "gone.md") {
+		t.Errorf("row recorded = %v", e.served(t, "gone.md"))
+	}
+}
+
+// Bodies are encoded like Rails' to_json: <, > and & are not escaped.
+func TestResponseBodiesAreNotHTMLEscaped(t *testing.T) {
+	e := newUploadEnv(t, returning("x"))
+	rec := e.serve(formReq("/file/new", url.Values{"content": {"a"}, "filename": {"a&e<f>"}}, bearer))
+	if got, want := rec.Body.String(), `{"url":"https://reader.example/a&e<f>.md"}`; got != want {
+		t.Errorf("body = %q, want %q", got, want)
+	}
+	rec = e.serve(formReq("/file/new", url.Values{"content": {"a"}, "filename": {"r--v2"}}, bearer))
+	if got, want := rec.Body.String(), `{"detail":"Filenames may not use the reserved --v<number> suffix."}`; got != want {
+		t.Errorf("body = %q, want %q", got, want)
+	}
+}
+
+func TestCreateAndUploadRejectRepeatedAuthorizationHeaders(t *testing.T) {
+	e := newUploadEnv(t, returning("x"))
+	for _, req := range []*http.Request{
+		formReq("/file/new", url.Values{"content": {"a"}, "filename": {"a"}}, ""),
+		multipartReq(t, "/file/upload", "", nil, filePart("a.md", "x")),
+	} {
+		req.Header["Authorization"] = []string{bearer, bearer}
+		wantDetail(t, req.URL.Path, e.serve(req), 401, "Unauthorized")
+	}
+	if len(e.children(t)) != 0 {
+		t.Error("files created")
 	}
 }
 

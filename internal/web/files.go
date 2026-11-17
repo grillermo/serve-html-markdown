@@ -3,7 +3,6 @@ package web
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"html"
 	"html/template"
@@ -89,7 +88,7 @@ func (l *limiter) release() { <-l.slots }
 // Rack::ETag gives a response without an ETag (anything but a non-empty 200)
 // Cache-Control "no-cache" (config: `middleware.use Rack::ETag, "no-cache"`).
 func writeDetail(w http.ResponseWriter, status int, msg string) {
-	body, _ := json.Marshal(map[string]string{"detail": msg})
+	body := marshalJSON(map[string]string{"detail": msg})
 	h := w.Header()
 	h.Set("Content-Type", "application/json; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")

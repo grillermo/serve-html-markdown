@@ -57,7 +57,7 @@ func TestFormatterUpstreamFailuresAreGeneric(t *testing.T) {
 		srv, _ := fakeEndpoint(t, tc.status, tc.body)
 		_, err := NewFormatter(clientFor(srv, "k")).Format(context.Background(), "x")
 		var e *Error
-		if !errors.As(err, &e) || e.Message != "OpenAI formatting failed." {
+		if !errors.As(err, &e) || e.Message != FormattingFailed {
 			t.Errorf("%s: err = %v", name, err)
 			continue
 		}
@@ -133,15 +133,17 @@ func TestFormatPromptMatchesRubySource(t *testing.T) {
 	}
 }
 
-// TestFormatPromptMatchesRubyInterpreter evaluates the Ruby constant itself when
-// a Ruby is installed.
+// TestFormatPromptMatchesRubyInterpreter evaluates the Ruby constant itself. It
+// skips only when there is no ruby binary at all; a ruby that fails is a
+// failure. rbenv shims need the project's version (.ruby-version), so it is
+// passed as RBENV_VERSION on a second try.
 func TestFormatPromptMatchesRubyInterpreter(t *testing.T) {
 	rubySource(t) // skips when the source is gone
 	ruby, err := exec.LookPath("ruby")
 	if err != nil {
-		t.Skip("no ruby on PATH")
+		t.Skip("no ruby binary on PATH; TestFormatPromptMatchesRubySource and the golden hash still check the prompt")
 	}
-	script := `
+	const script = `
 src = File.read(ARGV[0])
 module OpenaiResponses; end
 class OpenaiFormatter; end
@@ -150,9 +152,24 @@ $stdout.binmode
 print $p
 `
 	path := filepath.Join("..", "..", "app", "services", "openai_formatter.rb")
-	out, err := exec.Command(ruby, "-e", script, path).Output()
+	run := func(env ...string) ([]byte, error) {
+		cmd := exec.Command(ruby, "-e", script, path)
+		cmd.Env = append(os.Environ(), env...)
+		return cmd.Output()
+	}
+	out, err := run()
 	if err != nil {
-		t.Skipf("ruby failed: %v", err)
+		if v, rerr := os.ReadFile(filepath.Join("..", "..", ".ruby-version")); rerr == nil {
+			out, err = run("RBENV_VERSION=" + strings.TrimSpace(string(v)))
+		}
+	}
+	if err != nil {
+		var stderr []byte
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			stderr = ee.Stderr
+		}
+		t.Fatalf("ruby (%s) failed: %v\n%s", ruby, err, stderr)
 	}
 	if string(out) != FormatPrompt {
 		t.Errorf("FormatPrompt differs from Ruby's FORMAT_PROMPT:\n go:   %q\n ruby: %q", FormatPrompt, out)

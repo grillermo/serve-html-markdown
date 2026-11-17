@@ -25,14 +25,17 @@ const (
 	maxResponseBytes = 8 << 20
 )
 
+// FormattingFailed is the one message the formatter's errors carry and the
+// web layer shows (as the 502 detail); it never includes the upstream's words.
+const FormattingFailed = "OpenAI formatting failed."
+
 // Messages of Error, as the Ruby client raised them.
 const (
-	msgRequestFailed   = "OpenAI request failed."
-	msgUnparseable     = "OpenAI returned an unparseable response."
-	msgNoOutput        = "OpenAI returned no output."
-	msgNotCompleted    = "OpenAI request could not be completed."
-	msgNotConfigured   = "OPENAI_API_KEY is not configured."
-	msgFormattingError = "OpenAI formatting failed."
+	msgRequestFailed = "OpenAI request failed."
+	msgUnparseable   = "OpenAI returned an unparseable response."
+	msgNoOutput      = "OpenAI returned no output."
+	msgNotCompleted  = "OpenAI request could not be completed."
+	msgNotConfigured = "OPENAI_API_KEY is not configured."
 )
 
 // Error is a failed OpenAI call. Message is generic and safe to show or log; it

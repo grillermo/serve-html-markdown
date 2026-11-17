@@ -1,0 +1,57 @@
+Commonmarker::Config::OPTIONS = {parse: {smart: false, default_info_string: "", relaxed_tasklist_matching: false, relaxed_autolinks: false}, render: {hardbreaks: true, github_pre_lang: true, full_info_string: false, width: 80, unsafe: false, escape: false, sourcepos: false, escaped_char_spans: true, ignore_setext: false, ignore_empty_links: false, gfm_quirks: false, prefer_fenced: false}, extension: {strikethrough: true, tagfilter: true, table: true, autolink: true, tasklist: true, superscript: false, header_ids: "", footnotes: false, description_lists: false, front_matter_delimiter: "", multiline_block_quotes: false, math_dollars: false, math_code: false, shortcodes: true, wikilinks_title_before_pipe: false, wikilinks_title_after_pipe: false, underline: false, spoiler: false, greentext: false}, format: [:html]}
+Commonmarker::Config::PLUGINS = {syntax_highlighter: {theme: "base16-ocean.dark", path: ""}}
+
+NOTE: the two lines above are Commonmarker 1.1.5's DEFAULTS, not what this app uses. FilesController::MARKDOWN_OPTIONS
+passes whole sub-hashes (:parse, :render, :extension). Commonmarker's process_*_options drops every key the
+caller's sub-hash does not mention (it is NOT a deep merge), so those keys fall back to comrak's own
+default, which is "off". The options actually applied are:
+
+  EFFECTIVE = {parse: {smart: true}, render: {unsafe: true}, extension: {autolink: true, header_ids: ""}}
+
+(Reproduce with Commonmarker::Config.process_options(FilesController::MARKDOWN_OPTIONS); the script prints it.)
+The syntax_highlighter plugin is NOT overridden, so the PLUGINS default above applies.
+
+Plain-English summary for goldmark (Task 4.3)
+---------------------------------------------
+ON:
+  - smart punctuation (curly quotes, "--" -> en dash, "---" -> em dash, "..." -> ellipsis)
+  - unsafe rendering: raw HTML passes through untouched (div, script, iframe, style, ...)
+  - autolink extension: bare http(s):// URLs, www.x.com (href gets http:// prefix) and emails
+  - header_ids "": every heading gets an anchor with a generated id
+  - syntax highlighter plugin, theme base16-ocean.dark (syntect inline styles, see below)
+OFF (these are NOT enabled, despite comrak's own defaults in Commonmarker):
+  - table: pipe tables render as plain paragraphs
+  - strikethrough: ~~x~~ stays literal text
+  - tasklist: "- [ ] a" renders as a plain list item with literal "[ ] a"
+  - tagfilter: <script>, <iframe>, <style>, <title>, <textarea>, ... are NOT escaped
+  - hardbreaks: a soft line break inside a paragraph stays a "\n" (no <br />); only two trailing
+    spaces or a backslash make <br />
+  - github_pre_lang: code blocks use <code class="language-x">, not <pre lang="x">
+  - footnotes, description lists, superscript, etc.
+
+Heading markup (see headings.html)
+----------------------------------
+  <h2><a href="#cafe-id" aria-hidden="true" class="anchor" id="cafe-id"></a>Heading text</h2>
+  (real example: <h2><a href="#café--quotes" aria-hidden="true" class="anchor" id="café--quotes"></a>Café &amp; “quotes”</h2>)
+  No `inert` attribute. The anchor is empty and precedes the text; one heading per line, no blank lines between
+  blocks. Id = lowercased text, punctuation removed, each space -> "-" (so "Café & “quotes”" -> "café--quotes",
+  with a double hyphen), non-ASCII letters and emoji-adjacent text kept as-is (emoji removed: "emoji--heading").
+  Duplicates get -1, -2 suffixes (duplicate, duplicate-1, duplicate-2). Inline markup inside the heading is
+  excluded from the id. Trailing "##" and setext underlines are handled normally.
+
+Code block markup (see code.html)
+---------------------------------
+  <pre style="background-color:#2b303b;"><code class="language-ruby"><span style="color:#b48ead;">def </span>...</code></pre>
+  Every fenced/indented block is wrapped in <pre style="background-color:#2b303b;">. Fenced blocks with a language
+  get <code class="language-LANG">; no-language and indented blocks get a bare <code>. The content is split into
+  per-token <span style="color:#RRGGBB;"> elements (base16-ocean.dark); even unknown or absent languages get
+  <span style="color:#c0c5ce;"> per line. Text is HTML-escaped (&quot; &lt; &gt; &amp;). Inline code is plain
+  <code>...</code>.
+
+Corpus notes
+------------
+  - Corpus files are *.md; this notes file is OPTIONS.txt (not README.md) so a *.md glob only sees corpus files.
+  - real documents: 2026-08-22-git-sync.md, pilou_models.md, 2026-08-30-promo-codes-design.md,
+    2026-08-22-permanent-highlighting-design.md, reporte-inicial.md. conversations.md (the 2nd biggest) was
+    skipped because it contains a DB password; the identical-size "-1" duplicate of permanent-highlighting was
+    skipped as a duplicate.

@@ -1,0 +1,311 @@
+<h1><a href="#model-duplication-analysis-report" aria-hidden="true" class="anchor" id="model-duplication-analysis-report"></a>Model Duplication Analysis Report</h1>
+<ul>
+<li>Analysis date: 2026-03-17</li>
+<li>Scope: pilou-bo-api, pilou-app-api, onboarding-webapp database models only, using main/master branch snapshots</li>
+<li>Branch snapshots used:
+<ul>
+<li><code>onboarding-webapp</code>: master (remote <code>github/master</code>, analyzed via worktree at commit <code>f716e9b</code>)</li>
+<li><code>pilou-app-api</code>: main (<code>4084f2e</code>)</li>
+<li><code>pilou-bo-api</code>: main (<code>ff2e848</code>)</li>
+</ul>
+</li>
+</ul>
+<h2><a href="#summary" aria-hidden="true" class="anchor" id="summary"></a>Summary</h2>
+<ul>
+<li>Total models found: <strong>151</strong>
+<ul>
+<li><code>onboarding-webapp</code>: 79 (Prisma: main + legacy schemas)</li>
+<li><code>pilou-bo-api</code>: 69 (Django models + unmanaged wrappers)</li>
+<li><code>pilou-app-api</code>: 3 (Django models)</li>
+</ul>
+</li>
+<li>Exact table-name duplicate groups across repos: <strong>22</strong></li>
+<li>High-confidence semantic duplicates with different table names: <strong>2</strong></li>
+<li>Highest-risk collision for one-schema migration: <code>movements</code> table means different things across systems (<code>transactions movements</code> vs <code>legacy portfolio movements</code>).</li>
+</ul>
+<h2><a href="#exact-duplicate-tables-across-repositories" aria-hidden="true" class="anchor" id="exact-duplicate-tables-across-repositories"></a>Exact Duplicate Tables Across Repositories</h2>
+<p>| Effective table | Models | Normalized field overlap | Confidence |
+|—|—|—:|—|
+| <code>Address</code> | <code>pilou-bo-api:PilouAddress</code>; <code>onboarding-webapp:Address</code> | 0.86 | High |
+| <code>balances</code> | <code>pilou-app-api:Balances</code>; <code>pilou-bo-api:Balances</code> | 1.00 | High |
+| <code>BankAccount</code> | <code>pilou-bo-api:Bankaccount</code>; <code>onboarding-webapp:BankAccount</code> | 0.86 | High |
+| <code>Beneficiary</code> | <code>pilou-bo-api:Beneficiary</code>; <code>onboarding-webapp:Beneficiary</code> | 0.84 | High |
+| <code>brockerage_houses</code> | <code>pilou-bo-api:BrockerageHouses</code>; <code>onboarding-webapp:brockerage_houses</code> | 0.80 | High |
+| <code>Contract</code> | <code>pilou-bo-api:PilouContract</code>; <code>onboarding-webapp:Contract</code> | 0.92 | High |
+| <code>contracts</code> | <code>pilou-app-api:Contract</code>; <code>pilou-bo-api:Contract</code> | 0.11 | Low |
+| <code>CSF</code> | <code>pilou-bo-api:Csf</code>; <code>onboarding-webapp:CSF</code> | 0.77 | High |
+| <code>EconomicActivity</code> | <code>pilou-bo-api:Economicactivity</code>; <code>onboarding-webapp:EconomicActivity</code> | 0.88 | High |
+| <code>friend_codes</code> | <code>pilou-bo-api:FriendCodes</code>; <code>onboarding-webapp:friend_codes</code> | 0.57 | Medium |
+| <code>investor_profiles</code> | <code>pilou-bo-api:InvestorProfiles</code>; <code>onboarding-webapp:investor_profiles</code> | 0.75 | High |
+| <code>InvestorProfile</code> | <code>pilou-bo-api:Investorprofile</code>; <code>onboarding-webapp:InvestorProfile</code> | 0.84 | High |
+| <code>Kyc</code> | <code>pilou-bo-api:PilouKyc</code>; <code>onboarding-webapp:Kyc</code> | 0.81 | High |
+| <code>kycs</code> | <code>pilou-bo-api:Kycs</code>; <code>onboarding-webapp:kycs</code> | 0.52 | Medium |
+| <code>movements</code> | <code>pilou-app-api:Movements</code>; <code>pilou-bo-api:Movements</code>; <code>onboarding-webapp:movements</code> | 0.07..1.00 | Conflict |
+| <code>Pep</code> | <code>pilou-bo-api:Pep</code>; <code>onboarding-webapp:Pep</code> | 0.78 | High |
+| <code>QuizAnswer</code> | <code>pilou-bo-api:Quizanswer</code>; <code>onboarding-webapp:QuizAnswer</code> | 0.40 | Medium |
+| <code>QuizQuestion</code> | <code>pilou-bo-api:Quizquestion</code>; <code>onboarding-webapp:QuizQuestion</code> | 0.57 | Medium |
+| <code>User</code> | <code>pilou-bo-api:PilouUser</code>; <code>onboarding-webapp:User</code> | 0.74 | Medium |
+| <code>user_brockerage_houses</code> | <code>pilou-bo-api:UserBrockerageHouses</code>; <code>onboarding-webapp:user_brockerage_houses</code> | 0.45 | Medium |
+| <code>UserBrokerAccount</code> | <code>pilou-bo-api:UserBrokerAccount</code>; <code>onboarding-webapp:UserBrokerAccount</code> | 0.38 | Low |
+| <code>users</code> | <code>pilou-bo-api:LegacyUser</code>; <code>onboarding-webapp:users</code> | 0.42 | Medium |</p>
+<h3><a href="#notes-on-critical-groups" aria-hidden="true" class="anchor" id="notes-on-critical-groups"></a>Notes on Critical Groups</h3>
+<ul>
+<li><code>balances</code>: <code>pilou-app-api</code> and <code>pilou-bo-api</code> are structurally identical (1.00 overlap).</li>
+<li><code>movements</code>: <code>pilou-app-api</code> and <code>pilou-bo-api</code> are identical (1.00), but <code>onboarding-webapp:movements</code> is a different legacy portfolio model (0.07 overlap vs app/bo).</li>
+<li><code>contracts</code>: both app and BO use table <code>contracts</code> but with very different shape (0.11 overlap) and duplicated AUM logic.</li>
+<li><code>Contract</code>, <code>Kyc</code>, <code>User</code>, <code>InvestorProfile</code>, <code>Address</code>, <code>Beneficiary</code>, <code>BankAccount</code>, <code>CSF</code>, <code>EconomicActivity</code>, <code>Pep</code>: BO <code>pilou_models.py</code> wrappers are largely a mirror of onboarding Prisma tables (0.74-0.92 overlap).</li>
+<li><code>users</code> and <code>kycs</code> are legacy-domain mirrors between BO and onboarding legacy schema (medium overlap due relations/adapter differences).</li>
+</ul>
+<h2><a href="#high-confidence-semantic-duplicates-different-table-names" aria-hidden="true" class="anchor" id="high-confidence-semantic-duplicates-different-table-names"></a>High-Confidence Semantic Duplicates (Different Table Names)</h2>
+<p>| Pair | Field overlap | Why it matters |
+|—|—:|—|
+| <code>pilou-app-api:Movements[movements]</code> ↔ <code>onboarding-webapp:gbm_movements[gbm_movements]</code> | 0.96 | Same transactional domain, different naming convention/prefix (<code>gbm_</code>). |
+| <code>pilou-app-api:Balances[balances]</code> ↔ <code>onboarding-webapp:gbm_balances[gbm_balances]</code> | 0.94 | Same transactional domain, different naming convention/prefix (<code>gbm_</code>). |</p>
+<h2><a href="#duplicated-model-logic" aria-hidden="true" class="anchor" id="duplicated-model-logic"></a>Duplicated Model Logic</h2>
+<p>| Topic | Models | Evidence |
+|—|—|—|
+| AUM computation duplicated in <code>contracts</code> domain | <code>pilou-app-api.Contract, pilou-bo-api.Contract</code> | Both expose <code>get_aum</code>; app API delegates to <code>contract_service</code>, BO API computes directly with <code>Balances</code> query + funding-state logic. (<code>pilou-app-api/src/api/models/contract.py, pilou-app-api/src/api/services/contract_service.py, pilou-bo-api/src/api/models/contract.py</code>) |
+| Movement retrieval logic split across model/service | <code>pilou-app-api.Contract (+ contract_service), pilou-bo-api.Contract</code> | App API exposes <code>get_movements</code> and <code>get_balances</code> from service; BO API has <code>get_amount_by_ticker</code> and <code>update_funded</code> using similar data source (transactions DB). (<code>pilou-app-api/src/api/services/contract_service.py, pilou-bo-api/src/api/models/contract.py</code>) |</p>
+<h2><a href="#proposed-migration-path-one-physical-db-one-schema" aria-hidden="true" class="anchor" id="proposed-migration-path-one-physical-db-one-schema"></a>Proposed Migration Path (One Physical DB, One Schema)</h2>
+<ol>
+<li>Create a canonical model contract document before moving data.
+<ul>
+<li>Define canonical table names in <strong>snake_case</strong> for the unified schema (avoid quoted CamelCase table names like <code>User</code>, <code>Kyc</code>, <code>Address</code> long-term).</li>
+<li>Mark each duplicate group as <code>canonical</code>, <code>compat adapter</code>, or <code>retire</code>.</li>
+</ul>
+</li>
+<li>Resolve conflicting names first (highest risk).
+<ul>
+<li>Split <code>movements</code> into explicit domains in the target schema (for example <code>transactions_movements</code> vs <code>portfolio_movements</code>) before any merge.</li>
+<li>Split <code>contracts</code> semantics: BO <code>contracts</code> entity vs onboarding <code>Contract</code> document workflow table.</li>
+</ul>
+</li>
+<li>Consolidate exact mirrors into single physical tables with compatibility views.
+<ul>
+<li>Keep one canonical table for each mirrored Prisma/BO pair (<code>User</code>, <code>Kyc</code>, <code>InvestorProfile</code>, <code>Address</code>, <code>Beneficiary</code>, <code>BankAccount</code>, <code>CSF</code>, <code>EconomicActivity</code>, <code>Pep</code>, <code>Contract</code>).</li>
+<li>Replace BO unmanaged wrappers in <code>pilou_models.py</code> with a shared client/repository layer over canonical tables.</li>
+</ul>
+</li>
+<li>Unify transactional models and logic.
+<ul>
+<li>Merge <code>Balances</code> and <code>Movements</code> models used by app+BO into one shared data-access package.</li>
+<li>Move AUM/balance/movement read logic from model methods into a single service module consumed by both APIs.</li>
+</ul>
+</li>
+<li>Execute migration in dual-read/dual-write phases.
+<ul>
+<li>Phase A: backfill canonical tables from current sources.</li>
+<li>Phase B: dual-write from BO/app/onboarding to canonical tables.</li>
+<li>Phase C: cut reads to canonical views; monitor parity checks.</li>
+<li>Phase D: retire legacy tables/adapters once parity is stable.</li>
+</ul>
+</li>
+<li>Add automated parity checks per duplicate group.
+<ul>
+<li>Row counts, key-field checksum, and business metric parity (<code>AUM</code>, deposit counts) between old and canonical tables during rollout.</li>
+</ul>
+</li>
+</ol>
+<h2><a href="#suggested-canonicalization-priority" aria-hidden="true" class="anchor" id="suggested-canonicalization-priority"></a>Suggested Canonicalization Priority</h2>
+<ul>
+<li><strong>P0 (do first):</strong> <code>movements</code>, <code>balances</code>, <code>contracts</code> logic merge, and <code>gbm_*</code> naming conflict resolution.</li>
+<li><strong>P1:</strong> Prisma mirror tables in BO (<code>User</code>, <code>Kyc</code>, <code>InvestorProfile</code>, <code>Address</code>, <code>Beneficiary</code>, <code>BankAccount</code>, <code>CSF</code>, <code>EconomicActivity</code>, <code>Pep</code>, <code>Contract</code>).</li>
+<li><strong>P2:</strong> Legacy mirror tables (<code>users</code>, <code>kycs</code>, <code>investor_profiles</code>, <code>friend_codes</code>, <code>user_brockerage_houses</code>).</li>
+<li><strong>P3:</strong> Medium-overlap join/quiz/account groups (<code>QuizAnswer</code>, <code>QuizQuestion</code>, <code>UserBrokerAccount</code>).</li>
+</ul>
+<h2><a href="#draft-canonical-target-schema-map-old-table---new-tableview" aria-hidden="true" class="anchor" id="draft-canonical-target-schema-map-old-table---new-tableview"></a>Draft Canonical Target Schema Map (Old Table -&gt; New Table/View)</h2>
+<p>This is a first-pass target map for one physical DB and one logical schema.<br />
+Naming convention in this draft: snake_case canonical physical tables + compatibility views for legacy names during transition.</p>
+<p>| Old table(s) | Proposed canonical physical table | Compatibility view(s) to keep temporarily | Migration action |
+|—|—|—|—|
+| <code>balances</code> (<code>pilou-app-api</code>, <code>pilou-bo-api</code>), <code>gbm_balances</code> (<code>onboarding-webapp</code> legacy) | <code>tx_balances</code> | <code>balances</code>, <code>gbm_balances</code> | Merge data model; backfill and dual-write until parity |
+| <code>movements</code> (<code>pilou-app-api</code>, <code>pilou-bo-api</code> transactions), <code>gbm_movements</code> (<code>onboarding-webapp</code> legacy) | <code>tx_movements</code> | <code>movements_tx</code>, <code>gbm_movements</code> | Merge transactional movement domain |
+| <code>movements</code> (<code>onboarding-webapp</code> legacy portfolio model) | <code>legacy_portfolio_movements</code> | <code>movements_legacy_portfolio</code> | Split from transactional <code>movements</code> meaning before cutover |
+| <code>contracts</code> (<code>pilou-app-api</code>, <code>pilou-bo-api</code>) | <code>core_contracts</code> | <code>contracts</code> | Keep contract/account domain here; move shared logic to service layer |
+| <code>Contract</code> (<code>onboarding-webapp</code>), <code>Contract</code> (<code>pilou-bo-api</code> unmanaged wrapper <code>PilouContract</code>) | <code>onboarding_contract_documents</code> | <code>&quot;Contract&quot;</code> | Separate from <code>core_contracts</code>; this is onboarding document workflow |
+| <code>User</code> (<code>onboarding-webapp</code>), <code>User</code> (<code>pilou-bo-api</code> unmanaged wrapper <code>PilouUser</code>) | <code>core_users</code> | <code>&quot;User&quot;</code> | Merge Prisma + BO mirror; replace BO unmanaged wrapper |
+| <code>Kyc</code> (<code>onboarding-webapp</code>), <code>Kyc</code> (<code>pilou-bo-api</code> unmanaged wrapper <code>PilouKyc</code>) | <code>core_kyc_profiles</code> | <code>&quot;Kyc&quot;</code> | Merge Prisma + BO mirror; keep canonical naming in snake_case |
+| <code>InvestorProfile</code> (<code>onboarding-webapp</code>), <code>InvestorProfile</code> (<code>pilou-bo-api</code> unmanaged wrapper <code>Investorprofile</code>) | <code>core_investor_profiles</code> | <code>&quot;InvestorProfile&quot;</code> | Merge Prisma + BO mirror |
+| <code>Address</code> (<code>onboarding-webapp</code>), <code>Address</code> (<code>pilou-bo-api</code> unmanaged wrapper <code>PilouAddress</code>) | <code>core_addresses</code> | <code>&quot;Address&quot;</code> | Merge Prisma + BO mirror |
+| <code>Beneficiary</code> (<code>onboarding-webapp</code>), <code>Beneficiary</code> (<code>pilou-bo-api</code>) | <code>core_beneficiaries</code> | <code>&quot;Beneficiary&quot;</code> | Merge Prisma + BO mirror |
+| <code>BankAccount</code> (<code>onboarding-webapp</code>), <code>BankAccount</code> (<code>pilou-bo-api</code> unmanaged <code>Bankaccount</code>) | <code>core_bank_accounts</code> | <code>&quot;BankAccount&quot;</code> | Merge Prisma + BO mirror |
+| <code>CSF</code> (<code>onboarding-webapp</code>), <code>CSF</code> (<code>pilou-bo-api</code> unmanaged <code>Csf</code>) | <code>core_csf_records</code> | <code>&quot;CSF&quot;</code> | Merge Prisma + BO mirror |
+| <code>EconomicActivity</code> (<code>onboarding-webapp</code>), <code>EconomicActivity</code> (<code>pilou-bo-api</code> unmanaged <code>Economicactivity</code>) | <code>core_economic_activities</code> | <code>&quot;EconomicActivity&quot;</code> | Merge Prisma + BO mirror |
+| <code>Pep</code> (<code>onboarding-webapp</code>), <code>Pep</code> (<code>pilou-bo-api</code>) | <code>core_pep_profiles</code> | <code>&quot;Pep&quot;</code> | Merge Prisma + BO mirror |
+| <code>UserBrokerAccount</code> (<code>onboarding-webapp</code>), <code>UserBrokerAccount</code> (<code>pilou-bo-api</code>) | <code>core_user_broker_accounts</code> | <code>&quot;UserBrokerAccount&quot;</code> | Merge gradually; currently medium overlap, reconcile missing account fields first |
+| <code>QuizQuestion</code> (<code>onboarding-webapp</code>), <code>QuizQuestion</code> (<code>pilou-bo-api</code>) | <code>core_quiz_questions</code> | <code>&quot;QuizQuestion&quot;</code> | Reconcile relation fields (<code>quizId</code>, reverse relations) then merge |
+| <code>QuizAnswer</code> (<code>onboarding-webapp</code>), <code>QuizAnswer</code> (<code>pilou-bo-api</code>) | <code>core_quiz_answers</code> | <code>&quot;QuizAnswer&quot;</code> | Reconcile M2M/link fields before merge |
+| <code>users</code> (<code>onboarding-webapp</code> legacy), <code>users</code> (<code>pilou-bo-api</code> legacy wrapper <code>LegacyUser</code>) | <code>legacy_users</code> | <code>users</code> | Keep as legacy domain until retirement plan completes |
+| <code>kycs</code> (<code>onboarding-webapp</code> legacy), <code>kycs</code> (<code>pilou-bo-api</code> legacy wrapper <code>Kycs</code>) | <code>legacy_kycs</code> | <code>kycs</code> | Keep as legacy domain; map to <code>core_kyc_profiles</code> only after business signoff |
+| <code>investor_profiles</code> (<code>onboarding-webapp</code> legacy), <code>investor_profiles</code> (<code>pilou-bo-api</code> legacy wrapper <code>InvestorProfiles</code>) | <code>legacy_investor_profiles</code> | <code>investor_profiles</code> | Legacy scoring profile domain; keep separate from <code>core_investor_profiles</code> |
+| <code>friend_codes</code> (<code>onboarding-webapp</code> legacy), <code>friend_codes</code> (<code>pilou-bo-api</code> legacy wrapper <code>FriendCodes</code>) | <code>legacy_friend_codes</code> | <code>friend_codes</code> | Merge as legacy bounded context |
+| <code>brockerage_houses</code> (<code>onboarding-webapp</code> legacy), <code>brockerage_houses</code> (<code>pilou-bo-api</code> legacy wrapper) | <code>legacy_brokerage_houses</code> | <code>brockerage_houses</code> | Canonical table fixes spelling; keep backward-compat view with old typo |
+| <code>user_brockerage_houses</code> (<code>onboarding-webapp</code> legacy), <code>user_brockerage_houses</code> (<code>pilou-bo-api</code> legacy wrapper) | <code>legacy_user_brokerage_houses</code> | <code>user_brockerage_houses</code> | Canonical table fixes spelling; keep old view name temporarily |</p>
+<h3><a href="#draft-implementation-rules" aria-hidden="true" class="anchor" id="draft-implementation-rules"></a>Draft Implementation Rules</h3>
+<ol>
+<li>For CamelCase legacy Prisma tables (<code>&quot;User&quot;</code>, <code>&quot;Kyc&quot;</code>, <code>&quot;Address&quot;</code>, etc.), create compatibility views after moving to snake_case physical tables.</li>
+<li>For spelling-fix tables (<code>brockerage</code> -&gt; <code>brokerage</code>), keep old typo as view name until all ORM mappings are updated.</li>
+<li>Do not merge <code>core_*</code> and <code>legacy_*</code> domains in the same phase; stabilize each with parity checks first.</li>
+<li>During cutover, point read paths to views first, then swap to canonical tables once code migrations are complete.</li>
+</ol>
+<h2><a href="#full-model-inventory" aria-hidden="true" class="anchor" id="full-model-inventory"></a>Full Model Inventory</h2>
+<h3><a href="#pilou-app-api" aria-hidden="true" class="anchor" id="pilou-app-api"></a>pilou-app-api</h3>
+<p>| Model | Effective table | Managed | Source |
+|—|—|—:|—|
+| <code>Balances</code> | <code>balances</code> | no | <code>src/api/models/balance.py</code> |
+| <code>Contract</code> | <code>contracts</code> | yes | <code>src/api/models/contract.py</code> |
+| <code>Movements</code> | <code>movements</code> | no | <code>src/api/models/movement.py</code> |</p>
+<h3><a href="#pilou-bo-api" aria-hidden="true" class="anchor" id="pilou-bo-api"></a>pilou-bo-api</h3>
+<p>| Model | Effective table | Managed | Source |
+|—|—|—:|—|
+| <code>Csftoquizanswer</code> | <code>_CSFToQuizAnswer</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Economicactivitytoquizanswer</code> | <code>_EconomicActivityToQuizAnswer</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Investorprofiletoquizanswer</code> | <code>_InvestorProfileToQuizAnswer</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Kyctoquizanswer</code> | <code>_KycToQuizAnswer</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Address</code> | <code>address</code> | yes | <code>src/api/models/address.py</code> |
+| <code>PilouAddress</code> | <code>Address</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Alert</code> | <code>alert</code> | yes | <code>src/api/models/alert.py</code> |
+| <code>AlertEmailGbm</code> | <code>alert_email_gbm</code> | yes | <code>src/api/models/alert_email_gbm.py</code> |
+| <code>Answer</code> | <code>api_answer</code> | yes | <code>src/api/models/catalogs/quiz.py</code> |
+| <code>Blacklist</code> | <code>api_blacklist</code> | yes | <code>src/api/models/blacklist.py</code> |
+| <code>Category</code> | <code>api_category</code> | yes | <code>src/api/models/catalogs/quiz.py</code> |
+| <code>ClientReview</code> | <code>api_clientreview</code> | yes | <code>src/api/models/client_review.py</code> |
+| <code>ClientRisk</code> | <code>api_clientrisk</code> | yes | <code>src/api/models/client_risk.py</code> |
+| <code>CNBVRecord</code> | <code>api_cnbvrecord</code> | yes | <code>src/api/models/cnbv_record.py</code> |
+| <code>EmailAddress</code> | <code>api_emailaddress</code> | yes | <code>src/api/models/email_address.py</code> |
+| <code>Gender</code> | <code>api_gender</code> | yes | <code>src/api/models/catalogs/gender.py</code> |
+| <code>InitialTransactionalProfile</code> | <code>api_initialtransactionalprofile</code> | yes | <code>src/api/models/initial_transactional_profile.py</code> |
+| <code>Kyc</code> | <code>api_kyc</code> | yes | <code>src/api/models/kyc.py</code> |
+| <code>Note</code> | <code>api_note</code> | yes | <code>src/api/models/note.py</code> |
+| <code>OFACBlacklist</code> | <code>api_ofacblacklist</code> | yes | <code>src/api/models/ofac_blacklist.py</code> |
+| <code>PilouUserStatus</code> | <code>api_pilouuserstatus</code> | yes | <code>src/api/models/pilou_user_status.py</code> |
+| <code>Question</code> | <code>api_question</code> | yes | <code>src/api/models/catalogs/quiz.py</code> |
+| <code>Quiz</code> | <code>api_quiz</code> | yes | <code>src/api/models/catalogs/quiz.py</code> |
+| <code>RiskProfileHistory</code> | <code>api_riskprofilehistory</code> | yes | <code>src/api/models/contract.py</code> |
+| <code>Balances</code> | <code>balances</code> | no | <code>src/api/models/balance.py</code> |
+| <code>Bankaccount</code> | <code>BankAccount</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Beneficiary</code> | <code>Beneficiary</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Blog</code> | <code>blog</code> | yes | <code>src/api/models/blog.py</code> |
+| <code>BlogCategory</code> | <code>blog_category</code> | yes | <code>src/api/models/catalogs/blog_category.py</code> |
+| <code>BrockerageHouses</code> | <code>brockerage_houses</code> | no | <code>src/api/models/legacy.py</code> |
+| <code>BalanceType</code> | <code>catalog_balance_type</code> | yes | <code>src/api/models/catalogs/balance_type.py</code> |
+| <code>Lifecycle</code> | <code>catalog_lifecycle</code> | yes | <code>src/api/models/catalogs/lifecycle.py</code> |
+| <code>CatalogOperationType</code> | <code>catalog_operation_type</code> | yes | <code>src/api/models/catalogs/operation_type.py</code> |
+| <code>SocialAccountType</code> | <code>catalog_social_account_type</code> | yes | <code>src/api/models/catalogs/social_account.py</code> |
+| <code>ContractType</code> | <code>catalog_type_contract</code> | yes | <code>src/api/models/catalogs/contract_type.py</code> |
+| <code>DocumentType</code> | <code>catalog_type_document</code> | yes | <code>src/api/models/catalogs/document_type.py</code> |
+| <code>EmailType</code> | <code>catalog_type_email</code> | yes | <code>src/api/models/catalogs/email_type.py</code> |
+| <code>PhoneType</code> | <code>catalog_type_phones</code> | yes | <code>src/api/models/catalogs/phone_type.py</code> |
+| <code>CatalogZipCode</code> | <code>catalog_zip_code</code> | yes | <code>src/api/models/catalogs/zip_code.py</code> |
+| <code>PilouContract</code> | <code>Contract</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Contract</code> | <code>contracts</code> | yes | <code>src/api/models/contract.py</code> |
+| <code>Country</code> | <code>countries</code> | yes | <code>src/api/models/catalogs/country.py</code> |
+| <code>Csf</code> | <code>CSF</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Document</code> | <code>document</code> | yes | <code>src/api/models/document.py</code> |
+| <code>Economicactivity</code> | <code>EconomicActivity</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>EngagementClient</code> | <code>engagement_client</code> | yes | <code>src/api/models/engagement_client.py</code> |
+| <code>FileImport</code> | <code>file_imports</code> | yes | <code>src/api/models/file_import.py</code> |
+| <code>FriendCodes</code> | <code>friend_codes</code> | no | <code>src/api/models/legacy.py</code> |
+| <code>InvestorProfiles</code> | <code>investor_profiles</code> | no | <code>src/api/models/legacy.py</code> |
+| <code>Investorprofile</code> | <code>InvestorProfile</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>PilouKyc</code> | <code>Kyc</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Kycs</code> | <code>kycs</code> | no | <code>src/api/models/legacy.py</code> |
+| <code>LeadToFileImport</code> | <code>lead_to_file_imports</code> | yes | <code>src/api/models/lead_to_file_import.py</code> |
+| <code>Movements</code> | <code>movements</code> | no | <code>src/api/models/movement.py</code> |
+| <code>Pep</code> | <code>Pep</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Person</code> | <code>person</code> | yes | <code>src/api/models/person.py</code> |
+| <code>Phone</code> | <code>phones</code> | yes | <code>src/api/models/phone.py</code> |
+| <code>PldReport</code> | <code>pld_report</code> | yes | <code>src/api/models/pld_report.py</code> |
+| <code>Provider</code> | <code>provider</code> | yes | <code>src/api/models/provider.py</code> |
+| <code>Quizanswer</code> | <code>QuizAnswer</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>Quizquestion</code> | <code>QuizQuestion</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>RiskProfile</code> | <code>risk_profile</code> | yes | <code>src/api/models/catalogs/risk_profile.py</code> |
+| <code>Source</code> | <code>sources</code> | yes | <code>src/api/models/source.py</code> |
+| <code>State</code> | <code>states</code> | yes | <code>src/api/models/catalogs/state.py</code> |
+| <code>Tax</code> | <code>taxes</code> | yes | <code>src/api/models/tax.py</code> |
+| <code>PilouUser</code> | <code>User</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>UserBrockerageHouses</code> | <code>user_brockerage_houses</code> | no | <code>src/api/models/legacy.py</code> |
+| <code>UserBrokerAccount</code> | <code>UserBrokerAccount</code> | no | <code>src/api/models/pilou_models.py</code> |
+| <code>LegacyUser</code> | <code>users</code> | no | <code>src/api/models/legacy.py</code> |</p>
+<h3><a href="#onboarding-webapp" aria-hidden="true" class="anchor" id="onboarding-webapp"></a>onboarding-webapp</h3>
+<p>| Model | Effective table | Managed | Source |
+|—|—|—:|—|
+| <code>action_text_rich_texts</code> | <code>action_text_rich_texts</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>active_storage_attachments</code> | <code>active_storage_attachments</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>active_storage_blobs</code> | <code>active_storage_blobs</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>active_storage_variant_records</code> | <code>active_storage_variant_records</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>Address</code> | <code>Address</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>admins</code> | <code>admins</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>AnonymousComplaint</code> | <code>AnonymousComplaint</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>ar_internal_metadata</code> | <code>ar_internal_metadata</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>BankAccount</code> | <code>BankAccount</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>Beneficiary</code> | <code>Beneficiary</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>blog_categories</code> | <code>blog_categories</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>blogs</code> | <code>blogs</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>boolean_answers</code> | <code>boolean_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>brockerage_houses</code> | <code>brockerage_houses</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>Broker</code> | <code>Broker</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>catalog_tickers</code> | <code>catalog_tickers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>cetes</code> | <code>cetes</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>CompanyPartnership</code> | <code>CompanyPartnership</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>Contract</code> | <code>Contract</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>ContractNumber</code> | <code>ContractNumber</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>CSF</code> | <code>CSF</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>date_answers</code> | <code>date_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>datetime_answers</code> | <code>datetime_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>documents</code> | <code>documents</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>early_accesses</code> | <code>early_accesses</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>EconomicActivity</code> | <code>EconomicActivity</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>equities</code> | <code>equities</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>Event</code> | <code>Event</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>field_options</code> | <code>field_options</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>fields</code> | <code>fields</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>file_answers</code> | <code>file_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>float_answers</code> | <code>float_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>form_sections</code> | <code>form_sections</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>forms</code> | <code>forms</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>friend_codes</code> | <code>friend_codes</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>gbm_balances</code> | <code>gbm_balances</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>gbm_movements</code> | <code>gbm_movements</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>GBMManualManagementType</code> | <code>GBMManualManagementType</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>history_exchanges</code> | <code>history_exchanges</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>InitialTransactionalProfile</code> | <code>InitialTransactionalProfile</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>integer_answers</code> | <code>integer_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>investment_plan_users</code> | <code>investment_plan_users</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>investment_plans</code> | <code>investment_plans</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>InvestmentPlan</code> | <code>InvestmentPlan</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>investor_profiles</code> | <code>investor_profiles</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>InvestorProfile</code> | <code>InvestorProfile</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>Kyc</code> | <code>Kyc</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>kycs</code> | <code>kycs</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>movements</code> | <code>movements</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>option_answers</code> | <code>option_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>options</code> | <code>options</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>OriginalSourceCatalog</code> | <code>OriginalSourceCatalog</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>Pep</code> | <code>Pep</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>pilou_docs</code> | <code>pilou_docs</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>plan_features</code> | <code>plan_features</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>plan_plan_features</code> | <code>plan_plan_features</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>plans</code> | <code>plans</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>PLDReport</code> | <code>PLDReport</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>portfolios</code> | <code>portfolios</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>profile_investments</code> | <code>profile_investments</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>Quiz</code> | <code>Quiz</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>QuizAnswer</code> | <code>QuizAnswer</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>QuizQuestion</code> | <code>QuizQuestion</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>schema_migrations</code> | <code>schema_migrations</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>section_fields</code> | <code>section_fields</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>sections</code> | <code>sections</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>text_answers</code> | <code>text_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>tickers</code> | <code>tickers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>time_answers</code> | <code>time_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>User</code> | <code>User</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>user_brockerage_houses</code> | <code>user_brockerage_houses</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>user_form_section_field_answers</code> | <code>user_form_section_field_answers</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>user_form_section_fields</code> | <code>user_form_section_fields</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>user_form_sections</code> | <code>user_form_sections</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>user_forms</code> | <code>user_forms</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>user_movements</code> | <code>user_movements</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |
+| <code>UserBrokerAccount</code> | <code>UserBrokerAccount</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>UserErrors</code> | <code>UserErrors</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/schema.prisma</code> |
+| <code>users</code> | <code>users</code> | yes | <code>libs/api/shared/data-access-warehouse/src/lib/legacy.schema.prisma</code> |</p>

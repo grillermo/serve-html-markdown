@@ -1,0 +1,220 @@
+<h1><a href="#permanent-text-highlighting--design" aria-hidden="true" class="anchor" id="permanent-text-highlighting--design"></a>Permanent text highlighting — design</h1>
+<p><strong>Date:</strong> 2026-08-22
+<strong>Status:</strong> Draft, pending approval</p>
+<p>A signed-in reader selects text on a manual page at <code>/manual-del-color-vivo/{section}</code>,
+a floating pill reading <strong>subrayar</strong> appears, and clicking it persists the highlight.
+The highlight is repainted every time that reader returns to the section.</p>
+<p>Deferred out of this version and documented separately in
+<a href="../../highlight-next-nice-to-haves.md"><code>docs/highlight-next-nice-to-haves.md</code></a>:
+a highlight-count marker in the table of contents, and a “mis subrayados” index page.</p>
+<h2><a href="#decisions" aria-hidden="true" class="anchor" id="decisions"></a>Decisions</h2>
+<p>| Question | Decision |
+| — | — |
+| Visibility | Private to the reader who made it |
+| Removal | Click an existing highlight → pill reads “quitar subrayado” |
+| Highlightable surface | The article body only |
+| Pill actions | “subrayar” only — no copy, no comment |
+| Mobile placement | Pill below the selection, clearing the native iOS/Android menu |
+| Overlaps | Merge into one highlight |
+| Multi-block selections | One row per block element |
+| Colour | A new <code>manual-theme</code> token, not the browser’s selection blue |
+| Orphaned highlights | Silently skipped at render, row kept |
+| Save feedback | Optimistic, reverted on failure |
+| Selection rules | Trim whitespace, minimum length, links allowed, maximum length |
+| Dismissal | Clearing the selection, scrolling, or Escape |
+| Accessibility | Pill is a real focusable button; keyboard selection works end to end |
+| Anchoring | Block hash + verified offsets |
+| Painting | CSS Custom Highlight API; pill hidden where unsupported |
+| Delivery | Inline prop on <code>manual#show</code> |
+| Merging | Client unions, server validates |
+| JS tests | Vitest, scoped to the anchoring library |</p>
+<h2><a href="#1-data-model" aria-hidden="true" class="anchor" id="1-data-model"></a>1. Data model</h2>
+<pre style="background-color:#2b303b;"><code><span style="color:#c0c5ce;">highlights
+</span><span style="color:#c0c5ce;">  id
+</span><span style="color:#c0c5ce;">  user_id       bigint  not null, fk
+</span><span style="color:#c0c5ce;">  section_path  string  not null      # &quot;el-origen-del-color/pigmentos&quot;
+</span><span style="color:#c0c5ce;">  group_key     uuid    not null      # links rows created by one selection
+</span><span style="color:#c0c5ce;">  block_hash    string  not null      # FNV-1a of the block&#39;s normalized text
+</span><span style="color:#c0c5ce;">  block_index   integer not null      # ordinal of the block within the article
+</span><span style="color:#c0c5ce;">  start_offset  integer not null      # into the block&#39;s *normalized* text
+</span><span style="color:#c0c5ce;">  end_offset    integer not null
+</span><span style="color:#c0c5ce;">  text          text    not null
+</span><span style="color:#c0c5ce;">  timestamps
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">index [user_id, section_path]         # the read path
+</span><span style="color:#c0c5ce;">index [user_id, group_key]            # removal
+</span><span style="color:#c0c5ce;">check  start_offset &gt;= 0 AND end_offset &gt; start_offset
+</span></code></pre>
+<p><code>section_path</code> is a string key, not a foreign key, because manual sections are not
+database rows — they come from the hardcoded <code>Manual::TABLE_OF_CONTENTS</code> tree in
+<code>app/models/manual.rb</code>. This follows <code>Comment</code> and <code>ManualVisit</code>.</p>
+<p><code>block_index</code> is consulted <em>only</em> when <code>block_hash</code> matches more than one block, so it
+never causes the positional drift that pure ordinal anchoring would.</p>
+<p><code>Highlight</code> validates <code>section_path</code> through <code>Manual.path?(section_path.split(&quot;/&quot;))</code>,
+reusing <code>Comment#section_path_must_exist</code>, and caps <code>text</code> at 5000 characters at both
+the validation and column level.</p>
+<p><code>User</code> gains <code>has_many :highlights, dependent: :destroy</code>.</p>
+<h2><a href="#2-anchoring-algorithm" aria-hidden="true" class="anchor" id="2-anchoring-algorithm"></a>2. Anchoring algorithm</h2>
+<p>Lives in <code>app/frontend/lib/highlights/anchor.js</code> as pure functions, which is what makes
+it testable under Vitest.</p>
+<h3><a href="#normalization" aria-hidden="true" class="anchor" id="normalization"></a>Normalization</h3>
+<p>A <strong>block</strong> is a leaf block element: <code>p</code>, <code>li</code>, <code>h2</code>, <code>h3</code>, <code>blockquote</code>, <code>dd</code> — the
+innermost element that contains text and no nested block. A recipe with eight steps has
+eight independent anchors, so editing step three orphans only step three.</p>
+<p>For each block, <code>normalizedText</code> is its <code>textContent</code> with runs of whitespace collapsed
+to a single space, then trimmed. A single <code>TreeWalker</code> pass produces both that string and
+an index map from each normalized character position back to a <code>(textNode, offset)</code> pair.</p>
+<p><strong>Every offset in the schema indexes this normalized string, never raw <code>textContent</code>.</strong></p>
+<h3><a href="#hashing" aria-hidden="true" class="anchor" id="hashing"></a>Hashing</h3>
+<p>FNV-1a 32-bit over <code>normalizedText</code>, rendered as hex. Chosen over SHA-256 because
+<code>crypto.subtle</code> is asynchronous; collisions across the ~10 blocks of a section are
+negligible, and <code>block_index</code> breaks ties.</p>
+<p><strong>This algorithm is frozen once shipped.</strong> Changing it orphans every existing row.</p>
+<h3><a href="#capture" aria-hidden="true" class="anchor" id="capture"></a>Capture</h3>
+<ol>
+<li>Reject if either endpoint of the selection falls outside the content wrapper.</li>
+<li>Trim whitespace inward from both edges.</li>
+<li>Enumerate the leaf blocks the range intersects.</li>
+<li>Per block, map the DOM sub-range through the index map into normalized offsets.</li>
+<li>Reject selections under 3 or over 5000 characters.</li>
+</ol>
+<h3><a href="#resolution" aria-hidden="true" class="anchor" id="resolution"></a>Resolution</h3>
+<p>Per stored row:</p>
+<ol>
+<li>Find candidate blocks by <code>block_hash</code>; disambiguate with <code>block_index</code>.</li>
+<li>Slice <code>[start_offset, end_offset)</code> out of the block’s normalized text.</li>
+<li><strong>Verify the slice equals the stored <code>text</code>.</strong></li>
+<li>On mismatch, fall back to <code>indexOf(text)</code> within that block.</li>
+<li>If still not found, skip silently and keep the row.</li>
+</ol>
+<p>Step 3 is what guarantees that a stale anchor never paints the <em>wrong</em> words — the
+failure mode is an invisible highlight, never a misplaced one.</p>
+<h2><a href="#3-painting" aria-hidden="true" class="anchor" id="3-painting"></a>3. Painting</h2>
+<p>One registry entry holds every range:</p>
+<pre style="background-color:#2b303b;"><code class="language-js"><span style="color:#ebcb8b;">CSS</span><span style="color:#c0c5ce;">.highlights.</span><span style="color:#8fa1b3;">set</span><span style="color:#c0c5ce;">(&#39;</span><span style="color:#a3be8c;">subrayado</span><span style="color:#c0c5ce;">&#39;, new </span><span style="color:#bf616a;">Highlight</span><span style="color:#c0c5ce;">(...</span><span style="color:#bf616a;">ranges</span><span style="color:#c0c5ce;">))
+</span></code></pre>
+<pre style="background-color:#2b303b;"><code class="language-css"><span style="color:#c0c5ce;">@</span><span style="color:#b48ead;">theme </span><span style="color:#bf616a;">manual-theme </span><span style="color:#c0c5ce;">{
+</span><span style="color:#c0c5ce;">  --color-manual-highlight: </span><span style="color:#65737e;">/* warm tint derived from --color-manual-orange */</span><span style="color:#c0c5ce;">;
+</span><span style="color:#c0c5ce;">}
+</span><span style="color:#8fa1b3;">::</span><span style="color:#b48ead;">highlight(subrayado</span><span style="color:#c0c5ce;">) { background-color: </span><span style="color:#96b5b4;">var</span><span style="color:#c0c5ce;">(--color-manual-highlight); }
+</span></code></pre>
+<p><code>::selection</code> uses the same token, so the live selection and the persisted highlight are
+visually identical.</p>
+<h3><a href="#browser-support" aria-hidden="true" class="anchor" id="browser-support"></a>Browser support</h3>
+<p>Feature gate on <code>'highlights' in CSS</code>. Where absent, the pill is hidden entirely, so no
+reader can create a highlight they will never see.</p>
+<p>| Browser | Shipped | Age at 2026-08 |
+| — | — | — |
+| Chrome / Edge 105 | Sept 2022 | ~4 years |
+| Safari 17.2 | Dec 2023 | ~2 yr 8 mo |
+| Firefox 140 | June 2025 | ~14 months |</p>
+<p>Baseline “newly available” since June 2025. The excluded population is essentially
+iPhones that cannot run iOS 17.2 — 2017 and earlier — since every iOS browser uses
+Safari’s engine. Android is effectively unaffected: Chrome updates through the Play Store
+independently of the OS version.</p>
+<h3><a href="#hit-testing-for-removal" aria-hidden="true" class="anchor" id="hit-testing-for-removal"></a>Hit-testing for removal</h3>
+<p><code>caretPositionFromPoint()</code>, falling back to <code>caretRangeFromPoint()</code> on WebKit, turns a
+click into a block plus a normalized offset, which is then matched against the loaded
+rows. More reliable than intersecting <code>Range.getClientRects()</code>.</p>
+<h3><a href="#re-render-safety" aria-hidden="true" class="anchor" id="re-render-safety"></a>Re-render safety</h3>
+<p>This is the one real hazard. <code>Range</code> objects point at live DOM nodes, and the <code>&lt;article&gt;</code>
+subtree is React-owned.</p>
+<p>Delivery is inline, so the <code>highlights</code> prop is stable — but <strong>the deferred <code>comments</code>
+prop still re-renders the page after first paint</strong>. The resolver therefore re-runs in a
+<code>useEffect</code> keyed on <code>[section, highlights, comments]</code>. Re-resolution costs a few
+milliseconds.</p>
+<p>The CSS Custom Highlight API was chosen over <code>&lt;mark&gt;</code> DOM wrapping precisely because it
+mutates nothing: a React re-render can invalidate ranges, but it cannot silently destroy
+markup we injected.</p>
+<h3><a href="#ssr" aria-hidden="true" class="anchor" id="ssr"></a>SSR</h3>
+<p>All of the above runs inside <code>useEffect</code>, with no browser globals at module scope, so the
+Vite/Inertia SSR path in <code>app/frontend/ssr/ssr.jsx</code> is unaffected.</p>
+<h2><a href="#4-interaction" aria-hidden="true" class="anchor" id="4-interaction"></a>4. Interaction</h2>
+<p>Selecting text inside <code>&lt;article&gt;</code> shows the pill anchored below
+<code>range.getBoundingClientRect().bottom</code> — below, not above, so it clears the native
+iOS/Android selection menu. It is a real focusable <code>&lt;button&gt;</code>, so keyboard selection with
+Shift+arrows works end to end. It is dismissed by collapsing the selection, by scrolling,
+or by Escape.</p>
+<p>Clicking an existing highlight shows the same pill reading <strong>quitar subrayado</strong>, which
+removes the entire <code>group_key</code> — so a three-paragraph highlight disappears as one thing.</p>
+<p>Saving is optimistic: the tint appears immediately and the request fires behind it. On
+failure the previous ranges are restored and a transient Spanish message is shown.</p>
+<h2><a href="#5-merge-semantics" aria-hidden="true" class="anchor" id="5-merge-semantics"></a>5. Merge semantics</h2>
+<p>Before posting, the client:</p>
+<ol>
+<li>Finds existing rows in the affected blocks whose ranges overlap or touch the new
+selection.</li>
+<li><strong>Expands to those rows’ full groups</strong> — a merge that touches one block of a
+three-block group absorbs all three.</li>
+<li>Unions the ranges per block.</li>
+<li>Posts the union, replacing every affected row with a fresh <code>group_key</code>.</li>
+</ol>
+<p>The invariant this preserves: what the reader sees as one continuous highlight is always
+exactly one group, so “quitar” always removes exactly that.</p>
+<pre style="background-color:#2b303b;"><code><span style="color:#c0c5ce;">POST /highlights
+</span><span style="color:#c0c5ce;">{
+</span><span style="color:#c0c5ce;">  section_path,
+</span><span style="color:#c0c5ce;">  blocks: [{ block_hash, block_index, start_offset, end_offset, text }],
+</span><span style="color:#c0c5ce;">  replaces: [id, ...]
+</span><span style="color:#c0c5ce;">}
+</span></code></pre>
+<p>The server validates, then performs one transaction — delete the replaced rows, insert
+the new ones under a fresh <code>group_key</code>:</p>
+<ul>
+<li><code>section_path</code> resolves through <code>Manual.path?</code></li>
+<li><code>end_offset &gt; start_offset &gt;= 0</code></li>
+<li><code>text.length == end_offset - start_offset</code> — a cheap consistency check that catches
+most client-side offset bugs</li>
+<li>every <code>replaces</code> id belongs to <code>Current.user</code> and to this <code>section_path</code></li>
+<li>every replaced row genuinely overlaps a submitted block with the same
+<code>block_hash</code> and <code>block_index</code></li>
+</ul>
+<p>Rails 8’s controller-level <code>rate_limit</code> guards the action, as
+<code>Users::SessionsController</code> already does.</p>
+<p><code>DELETE /highlights/:id</code> destroys the row’s whole group, scoped to <code>Current.user</code>.</p>
+<h2><a href="#6-delivery" aria-hidden="true" class="anchor" id="6-delivery"></a>6. Delivery</h2>
+<p><code>ManualController#show</code> adds an inline <code>highlights</code> prop — a single query on
+<code>[user_id, section_path]</code>, no serializer needed beyond a <code>select</code>. Inline rather than
+<code>InertiaRails.defer</code> so highlights paint on first render, with no flash of unhighlighted
+text.</p>
+<p>Plate pages (<code>node[:plate]</code>) receive neither the prop nor the component, the same way
+they already receive no comment thread.</p>
+<h2><a href="#7-files" aria-hidden="true" class="anchor" id="7-files"></a>7. Files</h2>
+<p>| File | Change |
+| — | — |
+| <code>db/migrate/*_create_highlights.rb</code> | new |
+| <code>app/models/highlight.rb</code> | new |
+| <code>app/models/user.rb</code> | <code>has_many :highlights</code> |
+| <code>app/controllers/highlights_controller.rb</code> | new |
+| <code>app/controllers/manual_controller.rb</code> | <code>highlights</code> prop on <code>#show</code> |
+| <code>config/routes.rb</code> | <code>resources :highlights, only: [:create, :destroy]</code> |
+| <code>app/frontend/lib/highlights/anchor.js</code> | new — pure anchoring functions |
+| <code>app/frontend/components/manual/Highlighter.jsx</code> | new — capture, pill, painting |
+| <code>app/frontend/components/ManualLayout.jsx</code> | mount <code>Highlighter</code> around the article |
+| <code>app/frontend/entrypoints/application.css</code> | token, <code>::highlight</code>, <code>::selection</code> |
+| <code>package.json</code>, <code>vitest.config.ts</code> | new dev dependency, jsdom environment |</p>
+<h2><a href="#8-testing" aria-hidden="true" class="anchor" id="8-testing"></a>8. Testing</h2>
+<p><strong>RSpec request specs</strong> — create; multi-block create; merge-and-replace; forged
+<code>section_path</code>; another user’s ids in <code>replaces</code>; non-overlapping <code>replaces</code> rejected;
+group destroy; destroy scoped to owner; rate limit.</p>
+<p><strong>Model spec</strong> — validations and the check constraint.</p>
+<p><strong>Vitest</strong>, scoped to <code>app/frontend/lib/highlights/</code> — normalization, the index map, hash
+stability, offset resolution, verify-and-fallback, orphan skip, merge unioning. This
+logic is genuinely unreachable from RSpec, which is the whole justification for adding a
+JS test runner to a repo that has none.</p>
+<p><strong>Manual browser verification</strong> — pill placement on desktop and mobile, Escape
+dismissal, and repaint after the deferred comments prop arrives.</p>
+<h2><a href="#9-judgment-calls-and-risks" aria-hidden="true" class="anchor" id="9-judgment-calls-and-risks"></a>9. Judgment calls and risks</h2>
+<p><strong>No per-section highlight cap.</strong> Declined during design, but delivery is inline on every
+manual page load, so the prop is unbounded. A pathological reader could bloat their own
+page loads. Blast radius is one user, so this is acceptable — but it is a self-inflicted
+risk on the read path, and the cap remains the obvious mitigation if it ever bites.</p>
+<p><strong><code>block_index</code> is the ordinal among leaf blocks article-wide</strong>, not per-parent, since it
+serves only as a tiebreak.</p>
+<p><strong>Server-side orphan detection is impossible.</strong> Page text lives in JSX shipped in the
+build, not in the database, so the server can never know whether a row still matches
+anything. “Silently skip” is necessarily a client-side decision, and any future
+server-side count of a reader’s highlights will overstate. This is the shared blocker for
+both deferred features.</p>
+<p><strong>The hash algorithm is a frozen interface.</strong> Any change to FNV-1a, to the normalization
+rules, or to the definition of a leaf block orphans every existing highlight.</p>

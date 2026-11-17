@@ -1,0 +1,299 @@
+<h1><a href="#promotional-codes--design" aria-hidden="true" class="anchor" id="promotional-codes--design"></a>Promotional codes — design</h1>
+<p>Date: 2026-08-30
+Status: approved (design), not yet implemented</p>
+<h2><a href="#problem" aria-hidden="true" class="anchor" id="problem"></a>Problem</h2>
+<p>There is no way to sell the manual at anything other than <code>Purchase::PRICE_CENTS</code>.
+Running a campaign today means either changing the constant for everyone or
+recording sales by hand through <code>/antesis-admin/enrollments</code>.</p>
+<p>We want a promotional code: a buyer types a string at <code>/pagar</code>, the total drops
+by a fixed amount, and the sale is recorded with the code that produced it.</p>
+<h2><a href="#scope" aria-hidden="true" class="anchor" id="scope"></a>Scope</h2>
+<p>In scope:</p>
+<ul>
+<li>One discount kind: a <strong>fixed amount off</strong>, in centavos. No percentages.</li>
+<li>An <strong>expiry datetime</strong> and an <strong>active/inactive</strong> flag.</li>
+<li><strong>Unlimited uses</strong>, globally and per buyer. A second purchase by the same
+email with the same code is a legitimate second sale, exactly as a repeat
+Stripe purchase already is.</li>
+<li>All three payment paths: Stripe Payment Element, PayPal, and the SPEI bank
+transfer.</li>
+<li>An admin screen to create codes, edit live ones, and see who redeemed each.</li>
+</ul>
+<p>Out of scope (YAGNI):</p>
+<ul>
+<li>Percentage discounts, per-code usage caps, per-email limits, product scoping,
+stacking two codes, free (100%-off) purchases, and attaching a code to an
+admin enrollment at <code>/antesis-admin/enrollments</code>.</li>
+</ul>
+<h2><a href="#decisions" aria-hidden="true" class="anchor" id="decisions"></a>Decisions</h2>
+<p>| Question | Decision |
+|—|—|
+| Discount kind | Fixed centavos off |
+| Payment methods | Stripe, PayPal, and bank transfer |
+| Expired / inactive code at payment time | <strong>Never honored.</strong> Every money endpoint re-validates on every call. |
+| Where the redemption is recorded | Columns on <code>purchases</code>, no join table |
+| Floor | Charge clamps at <code>MINIMUM_CHARGE_CENTS</code> (1000 = $10 MXN) |
+| Expiry | Required datetime |
+| Matching | Case-insensitive, admin-authored string |
+| Uses | Unlimited, no per-email check |
+| Admin UI | Own Inertia page under <code>/antesis-admin</code>, linked from <code>/a</code> |
+| Editing a code | All fields while it has zero redemptions; once redeemed, only <code>active</code> |</p>
+<h2><a href="#approach" aria-hidden="true" class="anchor" id="approach"></a>Approach</h2>
+<p><strong>A server-side price resolver, plus attribution carried in the processor
+object.</strong></p>
+<p>The client may send a <em>code string</em>. It may never send an amount. Every endpoint
+that spends money resolves the price itself through one object, re-validating
+<code>active</code> and <code>expires_at</code> on each call — so a code that expires between the
+buyer applying it and paying is simply not applied, and a hand-crafted POST
+quoting a dead code gets full price.</p>
+<p>Attribution has to survive into the <strong>webhook</strong>, which carries no request
+params and can be the path that records the purchase. So the resolved code id
+rides in the processor object the same way terms acceptance and the product tag
+already do: Stripe <code>metadata.promo_code_id</code>, PayPal <code>custom_id</code>.</p>
+<p>Two alternatives were rejected:</p>
+<ul>
+<li><strong>Session-carried code.</strong> Storing the validated code in the Rails session
+adds a second source of truth the webhook cannot read, and since expired codes
+are never honored, per-call re-validation is required regardless.</li>
+<li><strong>Pending-redemption row keyed by the idempotency key.</strong> PayPal’s capture id
+differs from the order id, so the key does not survive to the webhook.
+<code>custom_id</code> does.</li>
+</ul>
+<h2><a href="#data-model" aria-hidden="true" class="anchor" id="data-model"></a>Data model</h2>
+<h3><a href="#promo_codes-new" aria-hidden="true" class="anchor" id="promo_codes-new"></a><code>promo_codes</code> (new)</h3>
+<p>| Column | Type | Notes |
+|—|—|—|
+| <code>code</code> | string, not null | As typed by the admin. Unique index on <code>LOWER(code)</code> — the <code>users.nickname</code> pattern. |
+| <code>discount_cents</code> | bigint, not null | Validated <code>&gt; 0</code>. |
+| <code>expires_at</code> | datetime, not null | |
+| <code>active</code> | boolean, not null, default <code>true</code> | |</p>
+<p>Model:</p>
+<pre style="background-color:#2b303b;"><code class="language-ruby"><span style="color:#b48ead;">class </span><span style="color:#ebcb8b;">PromoCode </span><span style="color:#eff1f5;">&lt; </span><span style="color:#a3be8c;">ApplicationRecord
+</span><span style="color:#c0c5ce;">  MINIMUM_CHARGE_CENTS = </span><span style="color:#d08770;">1_000 </span><span style="color:#65737e;"># $10 MXN — Stripe&#39;s MXN floor.
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">  has_many </span><span style="color:#a3be8c;">:purchases
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">  validates </span><span style="color:#a3be8c;">:code</span><span style="color:#c0c5ce;">, </span><span style="color:#a3be8c;">presence: </span><span style="color:#d08770;">true</span><span style="color:#c0c5ce;">, </span><span style="color:#a3be8c;">uniqueness: </span><span style="color:#c0c5ce;">{ </span><span style="color:#a3be8c;">case_sensitive: </span><span style="color:#d08770;">false </span><span style="color:#c0c5ce;">}
+</span><span style="color:#c0c5ce;">  validates </span><span style="color:#a3be8c;">:discount_cents</span><span style="color:#c0c5ce;">, </span><span style="color:#a3be8c;">numericality: </span><span style="color:#c0c5ce;">{ </span><span style="color:#a3be8c;">only_integer: </span><span style="color:#d08770;">true</span><span style="color:#c0c5ce;">, </span><span style="color:#a3be8c;">greater_than: </span><span style="color:#d08770;">0 </span><span style="color:#c0c5ce;">}
+</span><span style="color:#c0c5ce;">  validates </span><span style="color:#a3be8c;">:expires_at</span><span style="color:#c0c5ce;">, </span><span style="color:#a3be8c;">presence: </span><span style="color:#d08770;">true
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">  </span><span style="color:#65737e;"># Lookup is case-insensitive, hitting the LOWER(code) index.
+</span><span style="color:#c0c5ce;">  </span><span style="color:#b48ead;">def </span><span style="color:#bf616a;">self</span><span style="color:#c0c5ce;">.</span><span style="color:#8fa1b3;">find_by_code</span><span style="color:#c0c5ce;">(</span><span style="color:#bf616a;">raw</span><span style="color:#c0c5ce;">)
+</span><span style="color:#c0c5ce;">    where(&quot;</span><span style="color:#a3be8c;">LOWER(code) = ?</span><span style="color:#c0c5ce;">&quot;, raw.</span><span style="color:#96b5b4;">to_s</span><span style="color:#c0c5ce;">.strip.downcase).first
+</span><span style="color:#c0c5ce;">  </span><span style="color:#b48ead;">end
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">  </span><span style="color:#b48ead;">def </span><span style="color:#8fa1b3;">redeemable?</span><span style="color:#c0c5ce;"> = </span><span style="color:#bf616a;">active</span><span style="color:#c0c5ce;">? &amp;&amp; </span><span style="color:#bf616a;">expires_at</span><span style="color:#c0c5ce;">.</span><span style="color:#bf616a;">future</span><span style="color:#c0c5ce;">?
+</span><span style="color:#c0c5ce;">  </span><span style="color:#b48ead;">def </span><span style="color:#8fa1b3;">redeemed?</span><span style="color:#c0c5ce;"> = </span><span style="color:#bf616a;">purchases</span><span style="color:#c0c5ce;">.</span><span style="color:#bf616a;">exists</span><span style="color:#c0c5ce;">?
+</span><span style="color:#b48ead;">end
+</span></code></pre>
+<p>As with <code>users.nickname</code>, the <strong>index is the authority</strong> and the validation only
+proposes: any insert path must be ready for both <code>RecordNotUnique</code> and a
+<code>RecordInvalid</code> with <code>code: :taken</code>, which mean the same thing.</p>
+<h3><a href="#purchases-altered" aria-hidden="true" class="anchor" id="purchases-altered"></a><code>purchases</code> (altered)</h3>
+<p>| Column | Type | Notes |
+|—|—|—|
+| <code>promo_code_id</code> | bigint, nullable, FK, indexed | Nil for a full-price sale. |
+| <code>discount_cents</code> | bigint, not null, default <code>0</code> | What this sale was discounted by. |</p>
+<p><code>amount_cents</code> keeps its existing meaning — <strong>what was actually charged</strong> — and
+stays sourced from the Stripe/PayPal object, never from a constant. The two new
+columns only annotate it. Consequently, editing a <code>promo_codes</code> row never
+rewrites what a past sale recorded, which is the same non-overwrite guarantee
+<code>amount_cents</code> was introduced for (see
+<code>db/migrate/20260825120000_add_amount_to_purchases.rb</code>).</p>
+<p>Migration backfills nothing: <code>promo_code_id</code> is nil and <code>discount_cents</code> is 0
+for every existing row, which is already true of them.</p>
+<h3><a href="#bank_transfer_payment_intents-altered" aria-hidden="true" class="anchor" id="bank_transfer_payment_intents-altered"></a><code>bank_transfer_payment_intents</code> (altered)</h3>
+<p>| Column | Type | Notes |
+|—|—|—|
+| <code>amount_cents</code> | bigint, not null | Backfilled with the literal <code>69000</code>, not <code>PRICE_CENTS</code>. |
+| <code>promo_code_id</code> | bigint, nullable, FK, indexed | |</p>
+<p>The reference is a ledger of what we <em>told a buyer to deposit</em>, so the amount we
+quoted has to be on the row: otherwise a deposit for an unexpected sum cannot be
+explained from the database. Same backfill-with-a-literal rule as the
+<code>purchases.amount_cents</code> migration — the constant may change later; history may
+not.</p>
+<h2><a href="#pricing" aria-hidden="true" class="anchor" id="pricing"></a>Pricing</h2>
+<p>One object is the authority for what a checkout costs:</p>
+<pre style="background-color:#2b303b;"><code class="language-ruby"><span style="color:#65737e;"># app/concepts/checkout/price.rb (or app/services/checkout_price.rb)
+</span><span style="color:#ebcb8b;">Checkout</span><span style="color:#c0c5ce;">::</span><span style="color:#ebcb8b;">Price</span><span style="color:#c0c5ce;">.resolve(code_string) </span><span style="color:#65737e;"># =&gt; Checkout::Price
+</span><span style="color:#65737e;">#   #amount_cents    what to charge, clamped at PromoCode::MINIMUM_CHARGE_CENTS
+</span><span style="color:#65737e;">#   #discount_cents  PRICE_CENTS - amount_cents (the *effective* discount)
+</span><span style="color:#65737e;">#   #promo_code      the PromoCode, or nil
+</span><span style="color:#65737e;">#   #label           &quot;$490 MXN&quot;
+</span></code></pre>
+<p>Rules:</p>
+<ul>
+<li>A blank, unknown, inactive or expired code resolves to full price with
+<code>promo_code: nil</code>. It is not an error at the payment endpoints — the buyer
+just pays full price, and the apply endpoint (below) is where a bad code
+produces a visible message.</li>
+<li><code>amount_cents = [PRICE_CENTS - discount_cents, MINIMUM_CHARGE_CENTS].max</code>.
+A code worth more than the manual charges $10 rather than going negative.</li>
+<li><code>discount_cents</code> is recomputed from the clamped amount, so a clamped sale
+records the discount it actually received, not the code’s nominal value.</li>
+</ul>
+<p><code>Purchase.price_label</code> gains an optional argument
+(<code>def self.price_label(cents = PRICE_CENTS)</code>) and keeps deriving the string from
+cents, so the shown and charged amounts still cannot drift.</p>
+<h2><a href="#checkout-endpoints" aria-hidden="true" class="anchor" id="checkout-endpoints"></a>Checkout endpoints</h2>
+<h3><a href="#post-pagarpromocion--apply" aria-hidden="true" class="anchor" id="post-pagarpromocion--apply"></a><code>POST /pagar/promocion</code> — apply</h3>
+<p><code>CheckoutsController#apply_promo_code</code>. CSRF-protected like its neighbours, and
+rate-limited under its own <code>name:</code> (<code>&quot;promo-code&quot;</code>, 10/min) — a shared <code>name:</code>
+would let one endpoint eat another’s budget, which is why the existing limits
+are already named.</p>
+<p>Request: <code>{ code }</code>. No email, no terms — this reveals nothing and spends
+nothing.</p>
+<p>Response, on a redeemable code:</p>
+<pre style="background-color:#2b303b;"><code class="language-json"><span style="color:#c0c5ce;">{ &quot;</span><span style="color:#a3be8c;">code</span><span style="color:#c0c5ce;">&quot;: &quot;</span><span style="color:#a3be8c;">LANZAMIENTO</span><span style="color:#c0c5ce;">&quot;, &quot;</span><span style="color:#a3be8c;">discountLabel</span><span style="color:#c0c5ce;">&quot;: &quot;</span><span style="color:#a3be8c;">-$200 MXN</span><span style="color:#c0c5ce;">&quot;,
+</span><span style="color:#c0c5ce;">  &quot;</span><span style="color:#a3be8c;">priceLabel</span><span style="color:#c0c5ce;">&quot;: &quot;</span><span style="color:#a3be8c;">$490 MXN</span><span style="color:#c0c5ce;">&quot;, &quot;</span><span style="color:#a3be8c;">amountCents</span><span style="color:#c0c5ce;">&quot;: </span><span style="color:#d08770;">49000 </span><span style="color:#c0c5ce;">}
+</span></code></pre>
+<p>Otherwise <code>422</code> with <code>{ &quot;error&quot;: &quot;invalid&quot; }</code>; the page renders one Spanish
+message (“Ese código no es válido o ya expiró”) for unknown, inactive and
+expired alike — distinguishing them would tell a stranger which codes exist.</p>
+<p><code>amountCents</code> is returned solely so the client can update the Stripe Elements
+options (see below). It is display data; the charge is still computed
+server-side on every payment call.</p>
+<h3><a href="#the-three-payment-endpoints" aria-hidden="true" class="anchor" id="the-three-payment-endpoints"></a>The three payment endpoints</h3>
+<p>Each takes an optional <code>promo_code</code> param, resolves it, and uses the resolved
+amount:</p>
+<ul>
+<li><strong><code>CheckoutsController#create_intent</code></strong> — creates the PaymentIntent at
+<code>price.amount_cents</code> and adds <code>promo_code_id</code> to the metadata beside the
+existing <code>product</code> and <code>terms_accepted_at</code>.</li>
+<li><strong><code>Paypal::CheckoutsController#create_order</code></strong> — creates the order at
+<code>price.amount_cents</code> and passes the code id into <code>custom_id</code>.</li>
+<li><strong><code>CheckoutsController#create_bank_transfer</code></strong> — passes
+<code>amount_cents:</code>/<code>promo_code:</code> into <code>BankTransferPaymentIntent.for</code>, which now
+<strong>updates</strong> those two columns on an existing row when they differ. The
+reference itself never changes; one email keeps one reference forever, which
+is the invariant that makes a deposit reconcilable.
+<code>#email_bank_transfer</code> and <code>BankTransferMailer#instructions</code> read
+<code>intent.amount_cents</code> instead of <code>Purchase.price_label</code>, so the mail always
+quotes what the modal quoted.</li>
+</ul>
+<h3><a href="#custom_id-format" aria-hidden="true" class="anchor" id="custom_id-format"></a><code>custom_id</code> format</h3>
+<p>Today: <code>&quot;#{MANUAL_PRODUCT}|#{email}&quot;</code>, parsed with <code>split(&quot;|&quot;, 2)</code>.
+New: <code>&quot;#{MANUAL_PRODUCT}|#{email}|#{promo_code_id}&quot;</code>, third part optional.</p>
+<p><code>Purchase.paypal_custom_parts</code> changes to <code>split(&quot;|&quot;, 3)</code> and must keep
+accepting a two-part value — orders created before this ships are still in
+flight when it deploys. PayPal caps <code>custom_id</code> at 127 characters; product tag
+plus a long email plus an integer id stays well inside it, but the builder
+should drop the promo part rather than truncate if the whole ever exceeds it.</p>
+<h2><a href="#recording-the-purchase" aria-hidden="true" class="anchor" id="recording-the-purchase"></a>Recording the purchase</h2>
+<p><code>Purchase::PaymentSource</code> gains two members, <code>promo_code_id</code> and
+<code>discount_cents</code>, filled by each constructor:</p>
+<ul>
+<li><code>.from_payment_intent</code> — reads <code>intent.metadata[&quot;promo_code_id&quot;]</code>, and derives
+<code>discount_cents</code> as <code>PRICE_CENTS - intent.amount</code> floored at 0. Deriving it
+from the intent’s own amount (rather than re-reading the code) keeps the rule
+that a sale records what it actually charged.</li>
+<li><code>.from_paypal_capture</code> — the same, from the third <code>custom_id</code> part and the
+capture’s own amount.</li>
+<li><code>.cash</code> — always <code>nil</code> / <code>0</code>. Attaching a code to an admin enrollment is out
+of scope; the admin types the amount they were actually paid.</li>
+</ul>
+<p><code>Purchase::Operation::Record#record_purchase</code> writes both new fields <strong>only
+inside the <code>create_or_find_by!</code> block</strong>, exactly like <code>amount_cents</code> — a
+re-delivered webhook or a second browser return must find the existing row and
+leave its recorded discount untouched.</p>
+<p>An unknown or since-deleted <code>promo_code_id</code> in metadata must not fail the
+purchase: the write is <code>promo_code_id: id if PromoCode.exists?(id)</code>, or the FK
+is left nil. A paid sale never fails over an annotation.</p>
+<h2><a href="#checkout-page-checkoutjsx" aria-hidden="true" class="anchor" id="checkout-page-checkoutjsx"></a>Checkout page (<code>Checkout.jsx</code>)</h2>
+<p>Below the PayPal button: a text link <strong>“agregar código promocional”</strong> that
+reveals a text input and an <strong>“aplicar”</strong> button (a <code>button</code>, not a nested
+form — the page already has one form and <code>handleSubmit</code> pays). On success:</p>
+<ul>
+<li>The summary aside shows the original price struck through above the new
+total, and the pay button reads <code>Pagar $490 MXN</code>.</li>
+<li>A small “código LANZAMIENTO aplicado” line with a way to remove it.</li>
+</ul>
+<p>Three implementation hazards, all of them the kind that pass a stubbed test and
+fail in a real browser:</p>
+<ol>
+<li><strong><code>&lt;Elements&gt;</code> mounts in deferred-intent mode with a fixed <code>amount</code>.</strong>
+Applying a code must change that option, or Stripe raises at confirm time on
+the amount mismatch. This means the applied-promo state must live in the
+top-level <code>Checkout</code> component (which renders <code>&lt;Elements&gt;</code>), not inside
+<code>CheckoutForm</code> — react-stripe-js forwards an <code>options.amount</code> change to
+<code>elements.update()</code>, so passing the new amount down is enough.</li>
+<li><strong>The PayPal button’s callbacks are zoid-hosted and capture stale
+closures.</strong> <code>Checkout.jsx</code> already routes <code>email</code> and “can pay” through
+<code>emailRef</code>/<code>canPayRef</code> for this reason; the applied code needs a
+<code>promoCodeRef</code> on the same pattern, or <code>createOrder</code> will post the code as it
+stood when the button rendered.</li>
+<li><strong><code>parsePrice</code></strong> parses the display label only to feed Elements’
+payment-method picker. With a discount the top-level component now has
+<code>amountCents</code> directly from the apply response; prefer it when present and
+keep <code>parsePrice(priceLabel)</code> as the no-code path.</li>
+</ol>
+<p>Everything else in the file’s existing conventions holds: default-theme tokens
+only, no browser globals outside effects/handlers (this page renders through
+SSR), straight corners, hairlines.</p>
+<p>The bank transfer modal needs no structural change — it already renders
+<code>details.amountLabel</code>, which the server now computes from the intent’s stored
+amount.</p>
+<h2><a href="#admin" aria-hidden="true" class="anchor" id="admin"></a>Admin</h2>
+<p>Route, inside the existing admin <code>authenticate</code> block and <strong>before</strong> the
+RailsAdmin mount (which owns the whole <code>/antesis-admin</code> prefix):</p>
+<pre style="background-color:#2b303b;"><code><span style="color:#c0c5ce;">get   &quot;/antesis-admin/promo-codes&quot;,     to: &quot;admin/promo_codes#index&quot;
+</span><span style="color:#c0c5ce;">post  &quot;/antesis-admin/promo-codes&quot;,     to: &quot;admin/promo_codes#create&quot;
+</span><span style="color:#c0c5ce;">patch &quot;/antesis-admin/promo-codes/:id&quot;, to: &quot;admin/promo_codes#update&quot;
+</span></code></pre>
+<p><code>Admin::PromoCodesController</code> renders one Inertia page, <code>Admin/PromoCodes</code>,
+following <code>Admin::EnrollmentsController</code>’s shape: a private <code>render_page</code> that
+re-renders the same component with an <code>error:</code> or a success marker, rather than
+redirect-and-flash.</p>
+<p>Props: each code with <code>code</code>, <code>discountLabel</code>, <code>expiresAt</code>, <code>active</code>,
+<code>redemptionCount</code>, <code>editable</code> (= <code>redemptionCount.zero?</code>), and its redemptions
+(buyer email, nickname, date, <code>discountLabel</code>, <code>amountLabel</code>) — one query with
+<code>includes(:purchases)</code>, not one per row.</p>
+<p>The page shows a create form, then a list of codes with state, expiry and
+redemption count, each expandable to its redemptions.</p>
+<p><strong>Editing rule.</strong> While a code has zero redemptions, every field is editable.
+Once it has been redeemed, only <code>active</code> may change — deactivating a live
+campaign has to stay possible, but silently renaming or re-pricing a code that
+buyers are holding must not. The controller enforces this server-side (it
+filters the permitted params by <code>redeemed?</code>); the page merely reflects it, since
+a disabled input is not a security boundary.</p>
+<p>A link is added to <code>Admin::HubController</code>’s <code>links</code> array: “Códigos
+promocionales” / “Crea y edita promociones, y mira quién las usó”.</p>
+<h2><a href="#testing" aria-hidden="true" class="anchor" id="testing"></a>Testing</h2>
+<p>RSpec (<code>spec/</code>):</p>
+<ul>
+<li><strong><code>PromoCode</code></strong> — case-insensitive lookup and uniqueness; <code>redeemable?</code> across
+active/inactive × future/past expiry.</li>
+<li><strong><code>Checkout::Price</code></strong> — full price for blank/unknown/inactive/expired;
+discounted price for a live code; the clamp, including that <code>discount_cents</code>
+reports the clamped (effective) discount, not the nominal one.</li>
+<li><strong><code>POST /pagar/promocion</code></strong> — success shape; one identical 422 for unknown,
+inactive and expired; rate limit.</li>
+<li><strong><code>create_intent</code></strong> — the intent is created at the discounted amount and
+carries <code>promo_code_id</code> in metadata; an expired code produces a full-price
+intent with no metadata code.</li>
+<li><strong>PayPal</strong> — <code>create_order</code> uses the discounted amount; <code>custom_id</code> round-trips
+three parts, and a legacy two-part value still parses.</li>
+<li><strong>Stripe webhook</strong> — a purchase recorded from a webhook alone (no browser
+return) lands with the right <code>promo_code_id</code> and <code>discount_cents</code>.</li>
+<li><strong><code>Purchase::Operation::Record</code></strong> — a second arrival for the same idempotency
+key leaves <code>discount_cents</code> and <code>promo_code_id</code> untouched; an unknown
+<code>promo_code_id</code> records the purchase with a nil code rather than failing.</li>
+<li><strong>Bank transfer</strong> — <code>.for</code> updates the amount on an existing reference without
+changing the reference number; the mailer quotes the stored amount.</li>
+<li><strong>Admin</strong> — non-admin is refused; create/edit; a redeemed code rejects every
+field but <code>active</code> even when the params are posted directly.</li>
+</ul>
+<p>No new Vitest coverage: the promo logic added to <code>Checkout.jsx</code> is React state
+and fetch, not the pure-function kind that <code>lib/highlights/</code> extracts. The
+Elements <code>amount</code> update and the PayPal ref are verified by driving the real
+page in a browser, which is the only thing that catches this class of bug (the
+<code>elements.submit()</code> ordering has the same property).</p>
+<h2><a href="#risks" aria-hidden="true" class="anchor" id="risks"></a>Risks</h2>
+<ul>
+<li><strong>The Elements amount mismatch</strong> (hazard 1) is silent under every stub and
+loud only against a live Payment Element. Verify in a browser before shipping.</li>
+<li><strong>In-flight PayPal orders</strong> created before deploy carry a two-part
+<code>custom_id</code>. The parser must stay tolerant.</li>
+<li><strong>A code edited mid-campaign</strong> changes future sales only. That is intended and
+is what the <code>redeemed?</code> lock plus per-purchase <code>discount_cents</code> guarantee.</li>
+</ul>

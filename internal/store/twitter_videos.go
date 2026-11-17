@@ -313,57 +313,116 @@ func IncrementCaptionAttempts(ctx context.Context, db DB, id int64) (int, error)
 	return attempts, err
 }
 
-// CheckpointsFor is the caption schedule in minutes after upload: the short one
+// checkpointsFor is the caption schedule in minutes after upload: the short one
 // for a YouTube link, the long one otherwise.
-func CheckpointsFor(youtube bool) []int {
+func checkpointsFor(youtube bool) []int {
 	if youtube {
 		return YoutubeLinkCheckpoints
 	}
 	return CaptionCheckpoints
 }
 
-// youtubeVideoID is the 11-character id Ruby's YoutubeUrl accepts.
-var youtubeVideoID = regexp.MustCompile(`\A[\w-]{11}\z`)
+var (
+	// youtubeVideoID is Ruby's YoutubeUrl::ID; \w is ASCII-only in both.
+	youtubeVideoID = regexp.MustCompile(`\A[\w-]{11}\z`)
+	// youtubePathID is Ruby's YoutubeUrl::PATH_ID: /shorts/ID, /live/ID, /embed/ID, /v/ID, /e/ID, /watch/ID.
+	youtubePathID = regexp.MustCompile(`\A/(?:shorts|live|embed|v|e|watch)/([^/?#]+)`)
+	hasScheme     = regexp.MustCompile(`(?i)\A[a-z][a-z0-9+.-]*://`)
+	youtubeHosts  = []string{"youtube.com", "m.youtube.com", "music.youtube.com", "gaming.youtube.com", "youtube-nocookie.com", "youtu.be"}
+)
 
-// IsYoutubeSource reports whether a stored source URL is a YouTube link. The
-// app only stores YouTube links as canonical watch URLs
-// ("https://www.youtube.com/watch?v=<id>", see StartYoutubeTwitterVideo), so
-// this recognises that form and the equivalent youtu.be one, rather than
-// porting all of Ruby's YoutubeUrl.video_id (that is internal/video's job; a
-// caller that has the result can use CheckpointsFor and NextCaptionWaitFor).
+// IsYoutubeSource reports whether a source URL is a YouTube link, mirroring
+// Ruby's YoutubeUrl.video_id(url) != nil: surrounding whitespace is ignored, a
+// missing scheme is allowed, the host is one of the YouTube hosts (case
+// insensitive, "www." dropped), and the 11-character id comes from youtu.be/ID,
+// /watch?v=ID (the last v= wins), /shorts|live|embed|v|e|watch/ID, or from an
+// /attribution_link whose u= is one of those paths on www.youtube.com.
+//
+// TODO(Task 9.1): replace with internal/video.YoutubeVideoID(...) != "" (that
+// package must not import store, hence this copy).
 func IsYoutubeSource(sourceURL string) bool {
-	u, err := url.Parse(strings.TrimSpace(sourceURL))
+	raw := strings.TrimSpace(sourceURL)
+	if !hasScheme.MatchString(raw) {
+		raw = "https://" + raw
+	}
+	// Ruby's URI.parse rejects spaces and control characters.
+	if strings.ContainsFunc(raw, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+		return false
+	}
+	u, err := url.Parse(raw)
 	if err != nil {
 		return false
 	}
-	switch strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.") {
-	case "youtube.com", "m.youtube.com", "music.youtube.com", "gaming.youtube.com", "youtube-nocookie.com":
-		return strings.TrimSuffix(u.Path, "/") == "/watch" && youtubeVideoID.MatchString(u.Query().Get("v"))
-	case "youtu.be":
-		id, _, _ := strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
-		return youtubeVideoID.MatchString(id)
+	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	if !slices.Contains(youtubeHosts, host) {
+		return false
 	}
-	return false
+	query, ok := decodeWWWForm(u.RawQuery)
+	if !ok {
+		return false
+	}
+	path := u.EscapedPath()
+	var id string
+	switch {
+	case host == "youtu.be":
+		id, _, _ = strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	case path == "/attribution_link":
+		return IsYoutubeSource("https://www.youtube.com" + query["u"])
+	case strings.TrimSuffix(path, "/") == "/watch":
+		id = query["v"]
+	default:
+		if m := youtubePathID.FindStringSubmatch(path); m != nil {
+			id = m[1]
+		}
+	}
+	return youtubeVideoID.MatchString(id)
+}
+
+// decodeWWWForm is Ruby's URI.decode_www_form(query).to_h: pairs split on "&"
+// (empty ones skipped), "+" and %XX decoded, the last duplicate key wins. ok is
+// false for malformed percent-encoding (Ruby raises there).
+func decodeWWWForm(query string) (map[string]string, bool) {
+	m := map[string]string{}
+	for pair := range strings.SplitSeq(query, "&") {
+		if pair == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(pair, "=")
+		key, err1 := url.QueryUnescape(k)
+		val, err2 := url.QueryUnescape(v)
+		if err1 != nil || err2 != nil {
+			return nil, false
+		}
+		m[key] = val
+	}
+	return m, true
 }
 
 // Checkpoints is the caption schedule of this video (see IsYoutubeSource).
-func (v *TwitterVideo) Checkpoints() []int { return CheckpointsFor(IsYoutubeSource(v.SourceURL)) }
+func (v *TwitterVideo) Checkpoints() []int { return checkpointsFor(IsYoutubeSource(v.SourceURL)) }
+
+// HasUploadTime reports whether upload_completed_at is set. Videos in
+// "awaiting_captions" always have it; check this before NextCaptionWait if a
+// missing time should not be read as "checkpoints exhausted".
+func (v *TwitterVideo) HasUploadTime() bool { return v.UploadCompletedAt != nil }
 
 // NextCaptionWait is how long to wait before the next caption check, given the
 // attempts made so far: upload_completed_at plus the checkpoint for that
 // attempt, minus now, in whole seconds and never negative. ok is false once the
-// checkpoints are used up, or when the upload time is unknown (Ruby raised on
-// that, which also ended the video as failed).
+// checkpoints are used up. It is also false when upload_completed_at is NULL
+// (Ruby raised NoMethodError there, which the job's rescue turned into a
+// failed video); that is indistinguishable from "exhausted" in the result, so
+// callers (the captions job) must decide on purpose how to treat a NULL upload
+// time, using HasUploadTime, instead of reporting "captions never became
+// available".
 func (v *TwitterVideo) NextCaptionWait(now time.Time) (wait time.Duration, ok bool) {
-	return NextCaptionWaitFor(v.Checkpoints(), v.CaptionAttempts, v.UploadCompletedAt, now)
-}
-
-// NextCaptionWaitFor is NextCaptionWait with the schedule and the video's
-// fields passed in.
-func NextCaptionWaitFor(checkpoints []int, attempts int, uploadCompletedAt *time.Time, now time.Time) (time.Duration, bool) {
-	if attempts < 0 || attempts >= len(checkpoints) || uploadCompletedAt == nil {
+	if v.UploadCompletedAt == nil || v.CaptionAttempts < 0 {
 		return 0, false
 	}
-	target := uploadCompletedAt.Add(time.Duration(checkpoints[attempts]) * time.Minute)
+	checkpoints := v.Checkpoints()
+	if v.CaptionAttempts >= len(checkpoints) {
+		return 0, false
+	}
+	target := v.UploadCompletedAt.Add(time.Duration(checkpoints[v.CaptionAttempts]) * time.Minute)
 	return max(target.Sub(now).Truncate(time.Second), 0), true
 }

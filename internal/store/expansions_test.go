@@ -427,3 +427,36 @@ func TestFindUserExpansionIsScopedToTheUser(t *testing.T) {
 		t.Fatalf("missing id got %+v", got)
 	}
 }
+
+func TestCompleteKeepsExistingTimings(t *testing.T) {
+	pool := testdb.New(t)
+	u := newExpansionUser(t, pool, "e@x.com")
+	e := newExpansion(t, pool, u.ID)
+	store.StampExpansion(ctx, pool, e.ID, "job_started", 7)
+	must(t, store.CompleteExpansion(ctx, pool, e.ID, "/n--expand-1.html"))
+	got, err := store.FindExpansion(ctx, pool, e.ID)
+	must(t, err)
+	if len(got.Timings) != 2 || got.Timings["job_started"] != 7 || got.Timings["completed"] == 0 {
+		t.Fatalf("timings = %v", got.Timings)
+	}
+}
+
+// Rails' stamp! rescued, so a broken timings column never lost the result.
+func TestCompleteSavesResultWhenTimingsIsNotJSON(t *testing.T) {
+	pool := testdb.New(t)
+	u := newExpansionUser(t, pool, "e@x.com")
+	e := newExpansion(t, pool, u.ID)
+	_, err := pool.Exec(ctx, `UPDATE expansions SET timings = 'garbage', error_detail = 'old' WHERE id = $1`, e.ID)
+	must(t, err)
+	must(t, store.CompleteExpansion(ctx, pool, e.ID, "/n--expand-1.html"))
+	got, err := store.FindExpansion(ctx, pool, e.ID)
+	must(t, err)
+	if got.Status != "completed" || got.URL == nil || *got.URL != "/n--expand-1.html" || got.ErrorDetail != nil {
+		t.Fatalf("got %+v", got)
+	}
+	var raw string
+	must(t, pool.QueryRow(ctx, `SELECT timings FROM expansions WHERE id = $1`, e.ID).Scan(&raw))
+	if raw != "garbage" {
+		t.Fatalf("timings = %q, want it left alone", raw)
+	}
+}

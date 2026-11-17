@@ -200,17 +200,22 @@ func mergeTiming(keyArg, valArg string) string {
 		|| jsonb_build_object(` + keyArg + `::text, ` + valArg + `::bigint))::text`
 }
 
-// CompleteExpansion records the generated page: status "completed", the url,
-// the error cleared and the "completed" stage stamped, in one statement.
-// ErrNotFound for a missing row.
+// CompleteExpansion records the generated page: status "completed", the url and
+// the error cleared; ErrNotFound for a missing row. The "completed" stage is
+// then stamped in a second statement whose failure is only logged (as in Ruby,
+// where stamp! rescues): a timings column that holds invalid JSON must not
+// lose the result.
 func CompleteExpansion(ctx context.Context, db DB, id int64, url string) error {
 	if !validText(url) {
 		return &InvalidExpansionError{"url", "is invalid"}
 	}
-	now := utcNow()
-	return requireRow(db.Exec(ctx, `UPDATE expansions
-		SET status = 'completed', url = $2, error_detail = NULL, `+mergeTiming(`'completed'`, `$3`)+`, updated_at = $4
-		WHERE id = $1`, id, url, now.UnixMilli(), now))
+	err := requireRow(db.Exec(ctx, `UPDATE expansions SET status = 'completed', url = $2, error_detail = NULL, updated_at = $3
+		WHERE id = $1`, id, url, utcNow()))
+	if err != nil {
+		return err
+	}
+	StampExpansion(ctx, db, id, "completed", NowMS())
+	return nil
 }
 
 // FailExpansion records a failure: status "failed", the url cleared and the

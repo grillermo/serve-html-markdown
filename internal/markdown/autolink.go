@@ -1,9 +1,11 @@
 package markdown
 
 import (
+	"bytes"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/parser"
@@ -52,11 +54,15 @@ func inBrackets(pc parser.Context) bool {
 	return v
 }
 
-// lineData returns the rest of the current line with exactly one trailing
-// newline. comrak scans the whole paragraph, so there is always at least one
-// more character after a URL candidate, which its domain check relies on.
+// lineData returns the rest of the current line without its line ending, as a
+// string that shares the memory of line (the parse source is never modified).
+// Copying it for every trigger character made inputs with many triggers
+// quadratic. comrak scans the whole paragraph, so there is always at least one
+// more character after a URL candidate; the scanners below model that
+// by treating the end of the data as a virtual newline.
 func lineData(line []byte) string {
-	return strings.TrimRight(string(line), "\r\n") + "\n"
+	line = bytes.TrimRight(line, "\r\n")
+	return unsafe.String(unsafe.SliceData(line), len(line))
 }
 
 func newExtLink(url, label string) *extLink {
@@ -121,7 +127,7 @@ func (wwwParser) Trigger() []byte { return []byte{' ', '(', '*', '_', '~', '\\'}
 
 func (wwwParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
 	line, seg := block.PeekLine()
-	if inBrackets(pc) {
+	if !wwwAhead(line) || inBrackets(pc) {
 		return nil
 	}
 	switch line[0] {
@@ -187,6 +193,26 @@ func (wwwParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) as
 	}
 }
 
+// wwwAhead reports, without allocating, whether "www." follows the trigger
+// character(s) at the start of line. The parser is invoked for every space,
+// parenthesis and so on, so this must be cheap and reject nearly everything.
+func wwwAhead(line []byte) bool {
+	www := []byte("www.")
+	switch line[0] {
+	case 'w':
+		return bytes.HasPrefix(line, www)
+	case '\\':
+		return len(line) >= 2 && strings.IndexByte("(*_~[", line[1]) >= 0 && bytes.HasPrefix(line[2:], www)
+	case '*', '_':
+		run := 1
+		for run < len(line) && line[run] == line[0] {
+			run++
+		}
+		return bytes.HasPrefix(line[run:], www)
+	}
+	return bytes.HasPrefix(line[1:], www)
+}
+
 // emphasisProcessor is goldmark's emphasis delimiter processor, which is not
 // exported; the wwwParser needs it to push "*" and "_" delimiters itself.
 type emphasisProcessor struct{}
@@ -214,146 +240,6 @@ func wwwEnd(data string) (int, bool) {
 	return linkEnd, linkEnd > 0
 }
 
-// emailTransformer links email addresses in runs of consecutive text nodes,
-// never inside links, images, code or raw HTML; a line break ends a run.
-type emailTransformer struct{}
-
-func (emailTransformer) Transform(doc *ast.Document, reader text.Reader, _ parser.Context) {
-	src := reader.Source()
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-		switch n.(type) {
-		case *ast.Link, *ast.Image, *ast.AutoLink, *ast.CodeSpan, *ast.RawHTML, *extLink:
-			return ast.WalkSkipChildren, nil
-		}
-		if n.FirstChild() != nil && n.FirstChild().Type() == ast.TypeInline {
-			emailChildren(n, src)
-		}
-		return ast.WalkContinue, nil
-	})
-}
-
-func emailChildren(parent ast.Node, src []byte) {
-	var run []ast.Node
-	flush := func() {
-		if len(run) > 0 {
-			emailRun(parent, run, src)
-			run = run[:0]
-		}
-	}
-	for c := parent.FirstChild(); c != nil; {
-		next := c.NextSibling() // the run, including c, may be replaced below
-		switch t := c.(type) {
-		case *ast.Text:
-			run = append(run, c)
-			if t.SoftLineBreak() || t.HardLineBreak() {
-				flush()
-			}
-		case *plainText:
-			run = append(run, c)
-		default:
-			flush()
-		}
-		c = next
-	}
-	flush()
-}
-
-func emailRun(parent ast.Node, run []ast.Node, src []byte) {
-	var sb strings.Builder
-	for _, n := range run {
-		switch t := n.(type) {
-		case *ast.Text:
-			sb.WriteString(decodeText(t.Segment.Value(src)))
-		case *plainText:
-			sb.WriteString(t.value)
-		}
-	}
-	s := sb.String()
-	if !strings.Contains(s, "@") {
-		return
-	}
-	pieces := splitEmails(s)
-	if pieces == nil {
-		return
-	}
-	// A trailing break flag lives on the last Text of the run; keep it.
-	var soft, hard bool
-	if t, ok := run[len(run)-1].(*ast.Text); ok {
-		soft, hard = t.SoftLineBreak(), t.HardLineBreak()
-	}
-	first := run[0]
-	for _, p := range pieces {
-		if p.url == "" {
-			parent.InsertBefore(parent, first, newPlainText(p.text))
-		} else {
-			parent.InsertBefore(parent, first, newExtLink(p.url, p.text))
-		}
-	}
-	if soft || hard {
-		t := ast.NewTextSegment(text.NewSegment(0, 0))
-		t.SetSoftLineBreak(soft)
-		t.SetHardLineBreak(hard)
-		parent.InsertBefore(parent, first, t)
-	}
-	for _, n := range run {
-		parent.RemoveChild(parent, n)
-	}
-}
-
-type autolinkPiece struct {
-	text string
-	url  string // empty for plain text
-}
-
-// splitEmails returns nil when s contains no email autolink.
-func splitEmails(s string) []autolinkPiece {
-	var out []autolinkPiece
-	found := false
-	for len(s) > 0 {
-		hit := false
-		depth := 0 // signed count of [ minus ] seen so far in this text node
-		for i := 0; i < len(s); i++ {
-			switch s[i] {
-			case '[':
-				depth++
-				continue
-			case ']':
-				depth--
-				continue
-			case '@':
-			default:
-				continue
-			}
-			if depth > 0 {
-				continue
-			}
-			url, rewind, skip, ok := emailMatch(s, i)
-			if !ok {
-				continue
-			}
-			start := i - rewind
-			if start > 0 {
-				out = append(out, autolinkPiece{text: s[:start]})
-			}
-			out = append(out, autolinkPiece{text: s[start : start+skip], url: url})
-			s = s[start+skip:]
-			hit, found = true, true
-			break
-		}
-		if !hit {
-			out = append(out, autolinkPiece{text: s})
-			break
-		}
-	}
-	if !found {
-		return nil
-	}
-	return out
-}
-
 func isASCIISpace(c byte) bool {
 	return c == ' ' || (c >= '\t' && c <= '\r')
 }
@@ -361,82 +247,13 @@ func isASCIISpace(c byte) bool {
 func isASCIIAlpha(c byte) bool { return c|0x20 >= 'a' && c|0x20 <= 'z' }
 func isASCIIAlnum(c byte) bool { return isASCIIAlpha(c) || (c >= '0' && c <= '9') }
 
-// emailMatch handles local@domain; i is the index of the "@". The local part
-// may carry a "mailto:" or "xmpp:" prefix, which is then part of the link
-// text and keeps the href as is (for xmpp it may be followed by a "/resource").
-func emailMatch(s string, i int) (url string, rewind, skip int, ok bool) {
-	prefixed, isXMPP := false, false
-	for rewind < i {
-		c := s[i-rewind-1]
-		if isASCIIAlnum(c) || c == '.' || c == '+' || c == '-' || c == '_' {
-			rewind++
-			continue
-		}
-		if c == ':' {
-			if word := prefixWord(s[:i-rewind-1]); word != "" {
-				rewind += 1 + len(word)
-				prefixed = true
-				isXMPP = isXMPP || word == "xmpp"
-				continue
-			}
-		}
-		break
-	}
-	if rewind == 0 {
-		return "", 0, 0, false
-	}
-	size := len(s)
-	linkEnd, nb, np := 0, 0, 0
-	for linkEnd < size-i {
-		c := s[i+linkEnd]
-		switch {
-		case isASCIIAlnum(c):
-		case c == '@':
-			nb++
-		case c == '.' && linkEnd < size-i-1 && isASCIIAlnum(s[i+linkEnd+1]):
-			np++
-		case c == '/' && isXMPP && nb == 1 && np > 0:
-		case c != '-' && c != '_':
-			goto done
-		}
-		linkEnd++
-	}
-done:
-	if linkEnd < 2 || nb != 1 || np == 0 || (!isASCIIAlpha(s[i+linkEnd-1]) && s[i+linkEnd-1] != '.') {
-		return "", 0, 0, false
-	}
-	linkEnd = autolinkDelim(s[i:], linkEnd)
-	if linkEnd == 0 {
-		return "", 0, 0, false
-	}
-	text := s[i-rewind : i+linkEnd]
-	if prefixed {
-		return text, rewind, rewind + linkEnd, true
-	}
-	return "mailto:" + text, rewind, rewind + linkEnd, true
-}
-
-// prefixWord returns "mailto" or "xmpp" when that word ends s and is not
-// directly preceded by a letter, otherwise "".
-func prefixWord(s string) string {
-	for _, w := range []string{"mailto", "xmpp"} {
-		if strings.HasSuffix(s, w) {
-			rest := s[:len(s)-len(w)]
-			if rest == "" || !isASCIIAlpha(rest[len(rest)-1]) {
-				return w
-			}
-		}
-	}
-	return ""
-}
-
 // checkDomain mirrors comrak's check_domain. Like comrak, which slices the
 // byte string in the middle of multi-byte characters, a non-ASCII character
 // ends the scan.
 func checkDomain(data string, allowShort bool) (int, bool) {
 	i, np, uscore1, uscore2 := 1, 0, 0, 0
-	for i < len(data)-1 {
-		if data[i] == '\\' && i < len(data)-2 {
+	for i < len(data) {
+		if data[i] == '\\' && i < len(data)-1 {
 			i++ // the escaped character is still examined below
 		}
 		c := data[i]
@@ -469,11 +286,15 @@ func isValidHostChar(s string) bool {
 	return !unicode.IsSpace(r) && !isUnicodePunct(r)
 }
 
-// autolinkDelim trims trailing punctuation and unbalanced closing parentheses.
+// autolinkDelim trims trailing punctuation and unbalanced closing parentheses
+// (comrak autolink.rs autolink_delim, itself from cmark-gfm). The parenthesis
+// counts are kept for data[:counted] and adjusted as linkEnd shrinks, so a
+// long run of ")" costs linear instead of quadratic time.
 func autolinkDelim(data string, linkEnd int) int {
 	if i := strings.IndexByte(data[:linkEnd], '<'); i >= 0 {
 		linkEnd = i
 	}
+	counted, opening, closing := -1, 0, 0
 	for linkEnd > 0 {
 		c := data[linkEnd-1]
 		switch {
@@ -490,8 +311,20 @@ func autolinkDelim(data string, linkEnd int) int {
 				linkEnd--
 			}
 		case c == ')':
-			opening := strings.Count(data[:linkEnd], "(")
-			closing := strings.Count(data[:linkEnd], ")")
+			if counted < 0 {
+				opening = strings.Count(data[:linkEnd], "(")
+				closing = strings.Count(data[:linkEnd], ")")
+			} else {
+				for _, r := range data[linkEnd:counted] {
+					switch r {
+					case '(':
+						opening--
+					case ')':
+						closing--
+					}
+				}
+			}
+			counted = linkEnd
 			if closing <= opening {
 				return linkEnd
 			}

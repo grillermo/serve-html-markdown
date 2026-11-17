@@ -3,6 +3,7 @@ package markdown
 import (
 	"bytes"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -84,6 +85,14 @@ func (codeRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 // still wrapped identically but rendered as plain text (one span per line).
 const highlightBudget = 32 << 10
 
+// maxHighlightLine is the longest line a block may contain and still be
+// highlighted. Chroma lexers are quadratic on long unbalanced lines (a 30 KB
+// line of "[" took 83 s), and minified code is not worth colouring anyway.
+const maxHighlightLine = 2048
+
+// highlightTimeout caps the wall-clock time spent lexing one block.
+var highlightTimeout = 100 * time.Millisecond
+
 // plainAttr marks a code block that is over the highlight budget.
 const plainAttr = "markdown-plain"
 
@@ -102,12 +111,15 @@ func (highlightBudgetTransformer) Transform(doc *ast.Document, reader text.Reade
 		if firstWord(decodeText(fb.Info.Segment.Value(src))) == "" {
 			return ast.WalkContinue, nil
 		}
-		size := 0
+		size, longLine := 0, false
 		for i := 0; i < fb.Lines().Len(); i++ {
 			seg := fb.Lines().At(i)
 			size += seg.Len()
+			longLine = longLine || seg.Len() > maxHighlightLine
 		}
-		if spent+size > highlightBudget {
+		if longLine {
+			fb.SetAttributeString(plainAttr, true)
+		} else if spent+size > highlightBudget {
 			fb.SetAttributeString(plainAttr, true)
 		} else {
 			spent += size
@@ -169,12 +181,23 @@ func writeHighlighted(w util.BufWriter, lang, code string) {
 		writePlain(w, code)
 		return
 	}
-	it, err := chroma.Coalesce(lexer).Tokenise(nil, code)
+	it, err := lexer.Tokenise(nil, code)
 	if err != nil {
 		writePlain(w, code)
 		return
 	}
-	tokens := it.Tokens()
+	// Chroma's regexp2 lexers can go quadratic on pathological input, so the
+	// tokens are pulled one at a time under a wall-clock cap; past it the work
+	// is discarded and the block is rendered plain.
+	deadline := time.Now().Add(highlightTimeout)
+	var tokens []chroma.Token
+	for tok := it(); tok != chroma.EOF; tok = it() {
+		tokens = append(tokens, tok)
+		if time.Now().After(deadline) {
+			writePlain(w, code)
+			return
+		}
+	}
 	// Some chroma lexers drop or duplicate characters on odd input; the text
 	// must survive intact, so fall back to plain text when it does not.
 	var sb strings.Builder

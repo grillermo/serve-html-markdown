@@ -35,6 +35,7 @@ func (linkRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(ast.KindAutoLink, renderAutoLink)
 	reg.Register(ast.KindImage, renderImage)
 	reg.Register(ast.KindHTMLBlock, renderHTMLBlock)
+	reg.Register(ast.KindListItem, renderListItem)
 }
 
 func writeOpenA(w util.BufWriter, href, title string) {
@@ -96,7 +97,7 @@ func renderImage(w util.BufWriter, src []byte, node ast.Node, entering bool) (as
 	writeHref(w, decodeText(n.Destination))
 	_, _ = w.WriteString(`" alt="`)
 	var alt bytes.Buffer
-	collectText(&alt, n, src)
+	collectAlt(&alt, n, src)
 	_, _ = w.Write(util.EscapeHTML(alt.Bytes()))
 	_ = w.WriteByte('"')
 	if n.Title != nil {
@@ -173,4 +174,25 @@ func hrefSafe(c byte) bool {
 		return false
 	}
 	return isASCIIAlnum(c) || strings.IndexByte("!#$%()*+,-./:;=?@_~", c) >= 0
+}
+
+// renderListItem is goldmark's list item renderer except that link reference
+// definitions, which render nothing, do not count as content: an item that
+// holds only a definition is `<li></li>` as in comrak, not `<li>\n</li>`.
+func renderListItem(w util.BufWriter, _ []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		_, _ = w.WriteString("</li>\n")
+		return ast.WalkContinue, nil
+	}
+	_, _ = w.WriteString("<li>")
+	fc := n.FirstChild()
+	for fc != nil && fc.Kind() == ast.KindLinkReferenceDefinition {
+		fc = fc.NextSibling()
+	}
+	if fc != nil {
+		if _, ok := fc.(*ast.TextBlock); !ok {
+			_ = w.WriteByte('\n')
+		}
+	}
+	return ast.WalkContinue, nil
 }

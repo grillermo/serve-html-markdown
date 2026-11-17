@@ -12,9 +12,11 @@ They are rare, structural corner cases; none occurs in the real corpus.
    the token boundaries and some colours differ. The test helper strips <span> tags inside
    <pre>...</pre> on both sides before comparing. Unknown or missing languages render exactly
    like syntect's plain text (one span per line).
-   Additionally each document gets a highlight budget of 32 KB of fenced code; blocks past it
-   are plain text (same wrapper). Chroma costs ~1.5 ms/KB, so without the budget the 200 KB
-   git-sync golden took ~170 ms; with it, ~40 ms.
+   Additionally highlighting is skipped (plain text, identical wrapper) for any block that has
+   a line longer than 2048 bytes, for fenced code past a 32 KB per-document budget, and for a
+   block whose lexing exceeds 100 ms (chroma lexers are quadratic on some pathological input
+   and a 30 KB line of "[" in a yaml block took 83 s). Chroma costs ~1.5 ms/KB, so without the
+   budget the 200 KB git-sync golden took ~170 ms; with it, ~40 ms.
 
 2. A single quote pairing across a partially overlapping emphasis
    `'a *b' c*`   comrak: ‘a <em>b’ c</em>     Go: ’a <em>b’ c</em>
@@ -23,18 +25,28 @@ They are rare, structural corner cases; none occurs in the real corpus.
    (opener outside, closer inside, emphasis not closed before the quote) differs, and only in
    the glyph of the opening quote. Properly nested or separate pairs match.
 
-3. Link reference definition immediately followed by a block that cmark treats as text
-   `[r]: /u` directly followed by an empty bullet line `- `, or by `---`, or by a lazy
-   continuation `1. a`/`   b` item. goldmark resolves reference definitions when the
-   paragraph closes, after the next line already interrupted it; cmark resolves them first.
-   Example: "[r]: /u\n---" comrak <p>—</p>, Go <hr />. Two-block definitions followed by a blank
-   line (the normal way to write them) match.
+3. Link reference definition directly followed by a block cmark treats as text
+   Inputs (verified against Commonmarker):
+     "[r]: /u\n---"          comrak <p>—</p>              Go <hr />
+     "[r]: /u\n- "           comrak <p>-</p>              Go an empty <ul><li></li></ul>
+   and, in a larger fuzz sample, a "[r]: /u" line followed by "1. a" / "   b" lines inside an
+   open list (Go made the item loose, comrak tight).
+   goldmark resolves reference definitions when the paragraph closes, after the next line
+   already interrupted it; cmark resolves them first. Definitions followed by a blank line
+   (the normal way to write them) match.
 
 4. Empty bullet followed by an indented nested list on the next line
-   "*\n  - nested"   comrak: one item containing the nested list; Go: an empty item, then the
-   nested list as a sibling. (A bullet that has text on its first line is unaffected.)
+   "*\n  - nested"   comrak: <ul><li><ul><li>nested</li></ul></li></ul>; Go: an empty
+   <ul><li></li></ul> followed by a separate <ul> with the nested item. (A bullet that has text on its first line is unaffected.)
 
-5. Invalid UTF-8 is an error, as in Rails
+5. A list item that holds a reference definition and more text
+   "- [r]: /u\n  [r]"        comrak <li><a href="/u">r</a></li>   Go <li>\n<p><a href="/u">r</a></p>\n</li>
+   "- [r]: /u\n\n  text"     comrak <li>text</li>                 Go <li>\n<p>text</p>\n</li>
+   goldmark keeps the definition as the item's first child, so the following paragraph is not
+   turned into a tight-list text block. (An item that holds ONLY a definition, "- [foo]: /url",
+   renders <li></li> in both.)
+
+6. Invalid UTF-8 is an error, as in Rails
    Commonmarker raises EncodingError for input that is not valid UTF-8; Render returns
    ErrInvalidUTF8 and the caller decides how to degrade. NUL bytes become U+FFFD, a leading BOM
    is dropped, CRLF and lone CR become LF, all exactly like comrak.

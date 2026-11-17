@@ -1,8 +1,8 @@
 package markdown
 
 import (
-	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -15,18 +15,34 @@ var rejected = regexp.MustCompile(`[^\p{L}\p{M}\p{N}\p{Pc} -]`)
 // anchorizer reproduces comrak's Anchorizer: ids are unique within one
 // document, later duplicates get -1, -2, … suffixes. A fresh one is created
 // for every Render call so there is no shared state between calls.
-type anchorizer struct{ seen map[string]struct{} }
+type anchorizer struct {
+	seen map[string]struct{}
+	// next remembers, per base id, the suffix to try next. Every smaller
+	// suffix is already taken (the set only grows), so skipping them gives the
+	// same ids as comrak's linear probe without quadratic work on repeats.
+	next map[string]int
+}
 
-func newAnchorizer() *anchorizer { return &anchorizer{seen: map[string]struct{}{}} }
+func newAnchorizer() *anchorizer {
+	return &anchorizer{seen: map[string]struct{}{}, next: map[string]int{}}
+}
 
 func (a *anchorizer) anchorize(text string) string {
 	base := strings.ReplaceAll(rejected.ReplaceAllString(rustLower(text), ""), " ", "-")
 	id := base
-	for i := 1; ; i++ {
-		if _, taken := a.seen[id]; !taken {
-			break
+	if _, taken := a.seen[id]; taken {
+		n := a.next[base]
+		if n < 1 {
+			n = 1
 		}
-		id = fmt.Sprintf("%s-%d", base, i)
+		for {
+			id = base + "-" + strconv.Itoa(n)
+			if _, taken := a.seen[id]; !taken {
+				break
+			}
+			n++
+		}
+		a.next[base] = n + 1
 	}
 	a.seen[id] = struct{}{}
 	return id

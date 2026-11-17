@@ -16,14 +16,18 @@ import (
 )
 
 // blockParsers are goldmark's defaults with the HTML block parser replaced.
+// The default is found by identity (it is a singleton), not by priority, and
+// the replacement is verified in TestHTMLBlockParserIsInstalled.
 func blockParsers() []util.PrioritizedValue {
 	ps := parser.DefaultBlockParsers()
+	stock := parser.NewHTMLBlockParser()
 	for i, p := range ps {
-		if p.Priority == 900 {
-			ps[i] = util.Prioritized(newHTMLBlockParser(), 900)
+		if p.Value == stock {
+			ps[i] = util.Prioritized(newHTMLBlockParser(), p.Priority)
+			return ps
 		}
 	}
-	return ps
+	panic("markdown: goldmark's HTML block parser not found among the default block parsers")
 }
 
 var md = goldmark.New(

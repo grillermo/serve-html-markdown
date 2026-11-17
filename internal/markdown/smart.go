@@ -99,9 +99,11 @@ type quoteState struct {
 	canOpen, canClose bool
 }
 
-// quoteTransformer pairs single quotes: scanning the children of every inline
-// container left to right, a closing quote turns the nearest unmatched opening
-// quote into ‘ (cmark's process_emphasis for the ' delimiter).
+// quoteTransformer pairs single and double quotes: scanning the children of
+// every inline container left to right, a quote that can close turns the
+// nearest unmatched opening quote of the same character into ‘ or “ (cmark's
+// process_emphasis for the ' and " delimiters). Unpaired quotes keep the glyph
+// chosen while parsing.
 type quoteTransformer struct{}
 
 func (quoteTransformer) Transform(doc *ast.Document, _ text.Reader, _ parser.Context) {

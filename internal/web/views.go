@@ -46,6 +46,20 @@ type ExpandBootstrap struct {
 	ExpandJS string
 }
 
+// normalize makes the data match what Ruby sent: a nil FileVersions becomes
+// [] (it would marshal as null), and a blank scroll anchor (empty or only
+// Unicode white space, Ruby's !present?) is dropped so window.__scrollAnchor is
+// not set.
+func (b ExpandBootstrap) normalize() ExpandBootstrap {
+	if b.FileVersions == nil {
+		b.FileVersions = []FileVersionEntry{}
+	}
+	if strings.TrimSpace(b.ScrollAnchor) == "" {
+		b.ScrollAnchor = ""
+	}
+	return b
+}
+
 var expandBootstrapTemplate = sync.OnceValue(func() *template.Template {
 	return template.Must(template.New("expand_bootstrap.html").
 		ParseFS(webfs.FS, "templates/expand_bootstrap.html"))
@@ -53,12 +67,12 @@ var expandBootstrapTemplate = sync.OnceValue(func() *template.Template {
 
 // ExpandBootstrapHTML renders the bootstrap <script> tags as one string.
 // It needs no Server, so the handler can splice it into a raw HTML document
-// before </body>. Values are JSON-encoded with "<", ">", "&" and "'" escaped,
-// so no value can close the script element.
+// before </body>. Values are JSON-encoded with "<", ">", "&", U+2028 and U+2029
+// escaped as \uXXXX, so no value can close the script element or break the
+// line. "'" is left alone, which is safe inside a double-quoted JS string. A
+// blank scroll anchor is omitted, as in Ruby (see normalize).
 func ExpandBootstrapHTML(b ExpandBootstrap) (template.HTML, error) {
-	if b.FileVersions == nil {
-		b.FileVersions = []FileVersionEntry{} // marshals as [], not null
-	}
+	b = b.normalize()
 	var buf bytes.Buffer
 	if err := expandBootstrapTemplate().ExecuteTemplate(&buf, "expand_bootstrap", b); err != nil {
 		return "", fmt.Errorf("render expand bootstrap: %w", err)
@@ -97,16 +111,16 @@ type markdownPage struct {
 }
 
 // renderMarkdownPage writes the markdown layout (layouts/markdown.html.erb):
-// title is the file name, renderedHTML the trusted output of the markdown
-// renderer, which is inserted unescaped, like @rendered.html_safe.
-func (s *Server) renderMarkdownPage(w http.ResponseWriter, title, renderedHTML string, bootstrap ExpandBootstrap) {
-	if bootstrap.FileVersions == nil {
-		bootstrap.FileVersions = []FileVersionEntry{}
-	}
+// title is the file name (escaped). renderedHTML is inserted unescaped, like
+// Rails' @rendered.html_safe: the markdown renderer allows raw HTML in the
+// document, which is acceptable because the app has a single owner who writes
+// every file it serves. Callers convert with template.HTML(...) on purpose; do
+// not pass text from anyone else.
+func (s *Server) renderMarkdownPage(w http.ResponseWriter, title string, renderedHTML template.HTML, bootstrap ExpandBootstrap) {
 	s.render(w, http.StatusOK, "markdown", markdownPage{
 		Title:     title,
-		Rendered:  template.HTML(renderedHTML),
-		Bootstrap: bootstrap,
+		Rendered:  renderedHTML,
+		Bootstrap: bootstrap.normalize(),
 	})
 }
 

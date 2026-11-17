@@ -3,6 +3,7 @@ package web
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	webfs "serve-html-markdown/web"
 )
@@ -175,4 +177,79 @@ func TestEmbeddedStylesheetsHaveNoAssetReferences(t *testing.T) {
 			t.Errorf("%s references another asset; teach newAssetTable to rewrite it", name)
 		}
 	}
+}
+
+func mustPanic(t *testing.T, want string, f func()) {
+	t.Helper()
+	defer func() {
+		t.Helper()
+		r := recover()
+		if r == nil {
+			t.Fatalf("no panic, want one containing %q", want)
+		}
+		if msg, _ := r.(string); !strings.Contains(msg, want) {
+			t.Fatalf("panic %v, want it to contain %q", r, want)
+		}
+	}()
+	f()
+}
+
+func TestNewAssetTableSkipsHiddenFiles(t *testing.T) {
+	fsys := fstest.MapFS{
+		"assets/app.css":      {Data: []byte("a{}")},
+		"assets/.DS_Store":    {Data: []byte("junk")},
+		"assets/_partial.css": {Data: []byte("b{}")},
+		"assets/.hidden/x":    {Data: []byte("c")}, // a hidden directory is skipped, not an error
+	}
+	tbl := newAssetTable(fsys)
+	if len(tbl.public) != 1 || len(tbl.byName) != 1 {
+		t.Fatalf("public %v, byName has %d", tbl.public, len(tbl.byName))
+	}
+	if _, ok := tbl.public["app.css"]; !ok {
+		t.Errorf("app.css missing: %v", tbl.public)
+	}
+}
+
+func TestNewAssetTableDigestsAndNames(t *testing.T) {
+	data := []byte("body{color:red}")
+	tbl := newAssetTable(fstest.MapFS{"assets/site.min.css": {Data: data}})
+	// path.Ext splits at the last dot: the digest goes before ".css".
+	want := "site.min-" + digest8(data) + ".css"
+	if got := tbl.public["site.min.css"]; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestNewAssetTableFailurePaths(t *testing.T) {
+	t.Run("no assets directory", func(t *testing.T) {
+		mustPanic(t, "unreadable", func() { newAssetTable(fstest.MapFS{"other/x.css": {}}) })
+	})
+	t.Run("empty directory", func(t *testing.T) {
+		mustPanic(t, "no files", func() { newAssetTable(fstest.MapFS{"assets": {Mode: fs.ModeDir}}) })
+	})
+	t.Run("only hidden files", func(t *testing.T) {
+		mustPanic(t, "no files", func() { newAssetTable(fstest.MapFS{"assets/.keep": {}}) })
+	})
+	t.Run("subdirectory", func(t *testing.T) {
+		mustPanic(t, "subdirectories are not supported", func() {
+			newAssetTable(fstest.MapFS{"assets/a.css": {Data: []byte("a")}, "assets/sub/b.css": {Data: []byte("b")}})
+		})
+	})
+	t.Run("unreadable file", func(t *testing.T) {
+		fsys := failingOpenFS{FS: fstest.MapFS{"assets/a.css": {Data: []byte("a")}}, bad: "assets/a.css"}
+		mustPanic(t, "read asset", func() { newAssetTable(fsys) })
+	})
+}
+
+// failingOpenFS fails to open one file, as a permission error would.
+type failingOpenFS struct {
+	fs.FS
+	bad string
+}
+
+func (f failingOpenFS) Open(name string) (fs.File, error) {
+	if name == f.bad {
+		return nil, errors.New("boom")
+	}
+	return f.FS.Open(name)
 }

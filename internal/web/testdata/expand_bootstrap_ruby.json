@@ -1,5 +1,179 @@
 {
-  "plain_empty": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>",
-  "anchor_versions": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"section-2\";window.__fileVersions = [{\"name\":\"notes.md\",\"url\":\"/notes.md\",\"version\":1,\"current\":false},{\"name\":\"notes-v2.md\",\"url\":\"/notes-v2.md\",\"version\":2,\"current\":true}];window.__expansionMode = \"edit_in_place\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>",
-  "nasty": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"a\\\"b\\u003c/script\\u003e\\u003c!--\\u0026'é  😀\";window.__fileVersions = [{\"name\":\"a b\\u0026c\\u003cd\\u003e\\\".md\",\"url\":\"/a%20b%26c%3Cd%3E%22.md\",\"version\":1,\"current\":true},{\"name\":\"é.md\",\"url\":\"/%C3%A9.md\",\"version\":2,\"current\":false}];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  "plain_empty": {
+    "input": {
+      "scroll_anchor": null,
+      "file_versions": [],
+      "expansion_mode": "create_new"
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "anchor_versions": {
+    "input": {
+      "scroll_anchor": "section-2",
+      "expansion_mode": "edit_in_place",
+      "file_versions": [
+        {
+          "name": "notes.md",
+          "url": "/notes.md",
+          "version": 1,
+          "current": false
+        },
+        {
+          "name": "notes-v2.md",
+          "url": "/notes-v2.md",
+          "version": 2,
+          "current": true
+        }
+      ]
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"section-2\";window.__fileVersions = [{\"name\":\"notes.md\",\"url\":\"/notes.md\",\"version\":1,\"current\":false},{\"name\":\"notes-v2.md\",\"url\":\"/notes-v2.md\",\"version\":2,\"current\":true}];window.__expansionMode = \"edit_in_place\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "nasty": {
+    "input": {
+      "scroll_anchor": "a\"b</script><!--&'é  😀",
+      "expansion_mode": "create_new",
+      "file_versions": [
+        {
+          "name": "a b&c<d>\".md",
+          "url": "/a%20b%26c%3Cd%3E%22.md",
+          "version": 1,
+          "current": true
+        },
+        {
+          "name": "é.md",
+          "url": "/%C3%A9.md",
+          "version": 2,
+          "current": false
+        }
+      ]
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"a\\\"b\\u003c/script\\u003e\\u003c!--\\u0026'é  😀\";window.__fileVersions = [{\"name\":\"a b\\u0026c\\u003cd\\u003e\\\".md\",\"url\":\"/a%20b%26c%3Cd%3E%22.md\",\"version\":1,\"current\":true},{\"name\":\"é.md\",\"url\":\"/%C3%A9.md\",\"version\":2,\"current\":false}];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "anchor_backslash_newline": {
+    "input": {
+      "scroll_anchor": "a\\b\nc\td\r\\n\u0000\u001f",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"a\\\\b\\nc\\td\\r\\\\n\\u0000\\u001f\";window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "anchor_cdata_comment": {
+    "input": {
+      "scroll_anchor": "x]]>y<!--z-->w<![CDATA[q",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"x]]\\u003ey\\u003c!--z--\\u003ew\\u003c![CDATA[q\";window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "anchor_line_separators_only": {
+    "input": {
+      "scroll_anchor": "  ",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "anchor_emoji_cjk": {
+    "input": {
+      "scroll_anchor": "😀👩‍💻 中文",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"😀👩‍💻 中文\";window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "mode_with_quotes_and_script": {
+    "input": {
+      "scroll_anchor": null,
+      "expansion_mode": "\"</script><b>'\\",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"\\\"\\u003c/script\\u003e\\u003cb\\u003e'\\\\\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "odd_version_names": {
+    "input": {
+      "scroll_anchor": null,
+      "expansion_mode": "create_new",
+      "file_versions": [
+        {
+          "name": "</script>.md",
+          "url": "/%3C%2Fscript%3E.md",
+          "version": 1,
+          "current": false
+        },
+        {
+          "name": "%41 +&=?#.md",
+          "url": "/%2541%20%2B%26%3D%3F%23.md",
+          "version": 2,
+          "current": true
+        },
+        {
+          "name": "  spaces  .md",
+          "url": "/%20%20spaces%20%20.md",
+          "version": 3,
+          "current": false
+        },
+        {
+          "name": "😀 .md",
+          "url": "/%F0%9F%98%80%E2%80%A8.md",
+          "version": 4,
+          "current": false
+        },
+        {
+          "name": "quote'\"back\\slash.md",
+          "url": "/quote%27%22back%5Cslash.md",
+          "version": 5,
+          "current": false
+        }
+      ]
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [{\"name\":\"\\u003c/script\\u003e.md\",\"url\":\"/%3C%2Fscript%3E.md\",\"version\":1,\"current\":false},{\"name\":\"%41 +\\u0026=?#.md\",\"url\":\"/%2541%20%2B%26%3D%3F%23.md\",\"version\":2,\"current\":true},{\"name\":\"  spaces  .md\",\"url\":\"/%20%20spaces%20%20.md\",\"version\":3,\"current\":false},{\"name\":\"😀 .md\",\"url\":\"/%F0%9F%98%80%E2%80%A8.md\",\"version\":4,\"current\":false},{\"name\":\"quote'\\\"back\\\\slash.md\",\"url\":\"/quote%27%22back%5Cslash.md\",\"version\":5,\"current\":false}];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "blank_anchor_space": {
+    "input": {
+      "scroll_anchor": " ",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "blank_anchor_spaces": {
+    "input": {
+      "scroll_anchor": "   ",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "blank_anchor_crlf": {
+    "input": {
+      "scroll_anchor": "\r\n",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "blank_anchor_tab_nbsp": {
+    "input": {
+      "scroll_anchor": "\t 　",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "blank_anchor_empty": {
+    "input": {
+      "scroll_anchor": "",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  },
+  "anchor_with_surrounding_space": {
+    "input": {
+      "scroll_anchor": " x ",
+      "expansion_mode": "create_new",
+      "file_versions": []
+    },
+    "output": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \" x \";window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+  }
 }

@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http/httptest"
 	"os"
 	"regexp"
@@ -14,65 +15,96 @@ import (
 
 const stubExpandJS = "/assets/expand-DIGEST.js"
 
-// rubyBootstrapCases mirror internal/web/testdata/expand_bootstrap_ruby.rb.
-func rubyBootstrapCases() map[string]ExpandBootstrap {
-	nasty1 := "a b&c<d>\".md"
-	return map[string]ExpandBootstrap{
-		"plain_empty": {ExpansionMode: "create_new", ExpandJS: stubExpandJS},
-		"anchor_versions": {
-			ScrollAnchor: "section-2", ExpansionMode: "edit_in_place", ExpandJS: stubExpandJS,
-			FileVersions: []FileVersionEntry{
-				NewFileVersionEntry("notes.md", 1, false),
-				NewFileVersionEntry("notes-v2.md", 2, true),
-			},
-		},
-		"nasty": {
-			ScrollAnchor: "a\"b</script><!--&'\u00e9\u2028\u2029\U0001F600", ExpansionMode: "create_new", ExpandJS: stubExpandJS,
-			FileVersions: []FileVersionEntry{
-				NewFileVersionEntry(nasty1, 1, true),
-				NewFileVersionEntry("é.md", 2, false),
-			},
-		},
-	}
+// rubyCase is one entry of testdata/expand_bootstrap_ruby.json: the arguments
+// given to the Rails helper and the string it returned. The inputs live in the
+// JSON, next to the output, so the Go and Ruby sides cannot drift.
+type rubyCase struct {
+	Input struct {
+		ScrollAnchor  *string `json:"scroll_anchor"`
+		ExpansionMode string  `json:"expansion_mode"`
+		FileVersions  []struct {
+			Name    string `json:"name"`
+			URL     string `json:"url"`
+			Version int    `json:"version"`
+			Current bool   `json:"current"`
+		} `json:"file_versions"`
+	} `json:"input"`
+	Output string `json:"output"`
 }
 
 // The expected strings are what ExpandBootstrapHelper#expand_bootstrap_tags
 // emitted (generated with bin/rails runner; see the .rb next to the JSON). The
 // only thing Go leaves out is the <meta name="csrf-token"> tag. The scripts
-// are byte for byte the same, including Rails' < > & escapes.
+// are byte for byte the same, including Rails' < > & escapes, except that
+// Rails leaves U+2028/U+2029 raw where Go writes the equivalent \u escapes.
 func TestExpandBootstrapMatchesRubyHelper(t *testing.T) {
 	raw, err := os.ReadFile("testdata/expand_bootstrap_ruby.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var want map[string]string
-	if err := json.Unmarshal(raw, &want); err != nil {
+	var cases map[string]rubyCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatal(err)
 	}
-	metaRe := regexp.MustCompile(`^<meta name="csrf-token" content="[^"]*">`)
-	cases := rubyBootstrapCases()
-	if len(want) != len(cases) {
-		t.Fatalf("%d Ruby cases, %d Go cases", len(want), len(cases))
+	if len(cases) < 10 {
+		t.Fatalf("only %d Ruby cases", len(cases))
 	}
-	for name, b := range cases {
+	metaRe := regexp.MustCompile(`^<meta name="csrf-token" content="[^"]*">`)
+	lineSeparators := strings.NewReplacer("\u2028", `\u2028`, "\u2029", `\u2029`)
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			exp, ok := want[name]
-			if !ok || !metaRe.MatchString(exp) {
-				t.Fatalf("Ruby output for %q missing or without the csrf meta: %q", name, exp)
+			if !metaRe.MatchString(c.Output) {
+				t.Fatalf("Ruby output lacks the csrf meta: %q", c.Output)
 			}
-			exp = metaRe.ReplaceAllString(exp, "")
-			// The one known difference: Rails leaves U+2028/U+2029 raw inside
-			// the string, Go writes the equivalent \u2028/\u2029 escapes
-			// (older JS engines treat the raw characters as line breaks).
-			exp = strings.NewReplacer("\u2028", `\u2028`, "\u2029", `\u2029`).Replace(exp)
+			want := lineSeparators.Replace(metaRe.ReplaceAllString(c.Output, ""))
+
+			b := ExpandBootstrap{ExpansionMode: c.Input.ExpansionMode, ExpandJS: stubExpandJS}
+			if c.Input.ScrollAnchor != nil {
+				b.ScrollAnchor = *c.Input.ScrollAnchor
+			}
+			for _, v := range c.Input.FileVersions {
+				e := NewFileVersionEntry(v.Name, v.Version, v.Current)
+				if e.URL != v.URL {
+					t.Errorf("url for %q: Go %q, Ruby %q", v.Name, e.URL, v.URL)
+				}
+				b.FileVersions = append(b.FileVersions, e)
+			}
 			got, err := ExpandBootstrapHTML(b)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(got) != exp {
-				t.Errorf("got\n%s\nwant\n%s", got, exp)
+			if string(got) != want {
+				t.Errorf("got\n%s\nwant\n%s", got, want)
 			}
 		})
+	}
+}
+
+func TestExpandBootstrapBlankScrollAnchorIsOmitted(t *testing.T) {
+	// Ruby: scroll_anchor.present? is false for "", whitespace, nbsp, U+3000, U+2028.
+	srv := newTestServerNoDB(t)
+	for _, anchor := range []string{"", " ", "  ", "\r\n", "\t", "\u00a0", "\u3000", "\u2028\u2029"} {
+		for label, got := range map[string]ExpandBootstrap{
+			"direct": {ScrollAnchor: anchor, ExpansionMode: "create_new", ExpandJS: stubExpandJS},
+			"new":    srv.NewExpandBootstrap(anchor, nil, "create_new"),
+		} {
+			html, err := ExpandBootstrapHTML(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(html), "__scrollAnchor") {
+				t.Errorf("%s: anchor %q not omitted: %s", label, anchor, html)
+			}
+		}
+		_, body := renderMarkdown(t, srv, "a.md", "<p>x</p>", srv.NewExpandBootstrap(anchor, nil, "create_new"))
+		if strings.Contains(body, "__scrollAnchor") {
+			t.Errorf("markdown page: anchor %q not omitted", anchor)
+		}
+	}
+	// Surrounding white space is kept, as in Ruby (only an all-blank value is absent).
+	html, _ := ExpandBootstrapHTML(ExpandBootstrap{ScrollAnchor: " x ", ExpansionMode: "m", ExpandJS: stubExpandJS})
+	if !strings.Contains(string(html), `window.__scrollAnchor = " x ";`) {
+		t.Errorf("got %s", html)
 	}
 }
 
@@ -132,7 +164,7 @@ func TestURLEncodeMatchesErbUtil(t *testing.T) {
 	}
 }
 
-func renderMarkdown(t *testing.T, srv *Server, title, rendered string, b ExpandBootstrap) (*httptest.ResponseRecorder, string) {
+func renderMarkdown(t *testing.T, srv *Server, title string, rendered template.HTML, b ExpandBootstrap) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	srv.renderMarkdownPage(rec, title, rendered, b)
@@ -298,8 +330,8 @@ func TestIndexTimestampsMexicoCityIncludingDST(t *testing.T) {
 	}
 }
 
-func TestNewPanicsWhenAssetMissing(t *testing.T) {
-	// Guard for the requiredAssets list: every name must be embedded.
+func TestRequiredAssetsAreEmbedded(t *testing.T) {
+	// requiredAssets is what New insists on; the real embed must provide it.
 	srv := newTestServerNoDB(t)
 	for _, name := range requiredAssets {
 		if _, ok := srv.digests.public[name]; !ok {

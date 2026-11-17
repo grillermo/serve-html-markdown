@@ -34,18 +34,22 @@ type assetTable struct {
 
 // newAssetTable reads every file of fsys's assets/ directory and names it
 // <stem>-<first 8 hex of SHA-256><ext>. It panics if the directory cannot be
-// read or is empty, and on a subdirectory: assets are flat.
+// read or has no files, on a subdirectory, and on an unreadable file: assets
+// are flat. Names starting with "." or "_" (.DS_Store, .gitkeep) are skipped.
 //
 // The stylesheets reference no other asset (no url() or @import), so, unlike
 // Propshaft, nothing is rewritten; TestEmbeddedStylesheetsHaveNoAssetReferences
 // fails if that ever changes.
 func newAssetTable(fsys fs.FS) *assetTable {
 	entries, err := fs.ReadDir(fsys, "assets")
-	if err != nil || len(entries) == 0 {
-		panic(fmt.Sprintf("web: embedded assets/ is missing or empty: %v", err))
+	if err != nil {
+		panic(fmt.Sprintf("web: embedded assets/ is unreadable: %v", err))
 	}
 	t := &assetTable{public: make(map[string]string, len(entries)), byName: make(map[string]*asset, len(entries))}
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") || strings.HasPrefix(e.Name(), "_") {
+			continue
+		}
 		if e.IsDir() {
 			panic(fmt.Sprintf("web: assets/%s: subdirectories are not supported", e.Name()))
 		}
@@ -59,6 +63,9 @@ func newAssetTable(fsys fs.FS) *assetTable {
 		name := strings.TrimSuffix(e.Name(), ext) + "-" + digest + ext
 		t.public[e.Name()] = name
 		t.byName[name] = &asset{data: data, ctype: assetContentType(ext), etag: `"` + digest + `"`}
+	}
+	if len(t.byName) == 0 {
+		panic("web: embedded assets/ has no files")
 	}
 	return t
 }
@@ -106,7 +113,7 @@ func (s *Server) assets() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		a := s.digests.byName[name]
-		if a == nil || strings.ContainsAny(name, `/\`) {
+		if a == nil { // a name with a slash, a backslash or ".." is never a key, so it lands here
 			http.NotFound(w, r)
 			return
 		}

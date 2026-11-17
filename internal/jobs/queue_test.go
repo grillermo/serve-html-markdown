@@ -12,9 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"serve-html-markdown/internal/db/testdb"
+	"serve-html-markdown/internal/store"
 )
 
 var ctx = context.Background()
@@ -413,7 +416,7 @@ func TestUnknownKindIsFinishedWithErrorAndNeverLoops(t *testing.T) {
 	eventually(t, "job finished", finished(t, pool, id))
 	stop()
 	row := load(t, pool, id)
-	if row.LastError == nil || *row.LastError != "unknown job kind" || row.Attempts != 1 {
+	if row.LastError == nil || *row.LastError != "unknown job kind: mystery" || row.Attempts != 1 {
 		t.Fatalf("row: %+v err=%v", row, row.LastError)
 	}
 }
@@ -558,9 +561,10 @@ func TestRunWithNoJobsReturnsPromptlyOnCancel(t *testing.T) {
 
 func TestHeartbeatKeepsALongRunningJobFromBeingReclaimed(t *testing.T) {
 	pool := testdb.New(t)
+	spy := &spyDB{DB: pool}
 	must(t, Enqueue(ctx, pool, "long", Args{ID: 1}, 0))
 	started, release := make(chan struct{}), make(chan struct{})
-	r := &Runner{DB: pool, Workers: 1, Poll: 5 * time.Millisecond, HeartbeatEvery: 20 * time.Millisecond,
+	r := &Runner{DB: spy, Workers: 1, Poll: 5 * time.Millisecond, HeartbeatEvery: 20 * time.Millisecond,
 		Handlers: map[string]Handler{
 			"long": func(context.Context, Args) error { close(started); <-release; return nil },
 		}}
@@ -585,29 +589,306 @@ func TestHeartbeatKeepsALongRunningJobFromBeingReclaimed(t *testing.T) {
 	}
 	close(release)
 	eventually(t, "job finished", finished(t, pool, id))
-	stop()
 
-	// Once the handler returned the heartbeat stops: it cannot touch the finished row.
-	var lockedBefore time.Time
-	must(t, pool.QueryRow(ctx, `SELECT locked_at FROM go_jobs WHERE id = $1`, id).Scan(&lockedBefore))
-	time.Sleep(60 * time.Millisecond)
-	var lockedAfter time.Time
-	must(t, pool.QueryRow(ctx, `SELECT locked_at FROM go_jobs WHERE id = $1`, id).Scan(&lockedAfter))
-	if !lockedBefore.Equal(lockedAfter) {
-		t.Fatal("heartbeat kept running after the job finished")
+	// The heartbeat goroutine is stopped before the job is marked finished:
+	// no more heartbeats are even attempted, several intervals later.
+	before := spy.heartbeats.Load()
+	if before == 0 {
+		t.Fatal("expected heartbeats while the handler ran")
+	}
+	time.Sleep(100 * time.Millisecond) // five heartbeat intervals
+	if after := spy.heartbeats.Load(); after != before {
+		t.Fatalf("heartbeat kept running after the handler returned: %d -> %d", before, after)
+	}
+	stop()
+}
+
+// spyDB wraps a DB, counting claims and heartbeats, and failing every
+// statement on demand (a database outage).
+type spyDB struct {
+	store.DB
+	fail       atomic.Bool
+	claims     atomic.Int32
+	heartbeats atomic.Int32
+}
+
+var errDown = errors.New("db down")
+
+func (s *spyDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "locked_at IS NOT NULL") {
+		s.heartbeats.Add(1)
+	}
+	if s.fail.Load() {
+		return pgconn.CommandTag{}, errDown
+	}
+	return s.DB.Exec(ctx, sql, args...)
+}
+
+func (s *spyDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.Contains(sql, "attempts + 1") {
+		s.claims.Add(1)
+	}
+	if s.fail.Load() {
+		return nil, errDown
+	}
+	return s.DB.Query(ctx, sql, args...)
+}
+
+func countLines(logs *logBuf, sub string) int {
+	n := 0
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestDatabaseOutageBacksOffLogsOnceAndRecovers(t *testing.T) {
+	pool := testdb.New(t)
+	spy := &spyDB{DB: pool}
+	spy.fail.Store(true)
+	logs := &logBuf{}
+	ran := make(chan struct{}, 4)
+	r := &Runner{DB: spy, Workers: 1, Poll: 2 * time.Millisecond, MaxBackoff: 40 * time.Millisecond,
+		Logger: slog.New(slog.NewTextHandler(logs, nil)),
+		Handlers: map[string]Handler{
+			"k": func(context.Context, Args) error { ran <- struct{}{}; return nil },
+		}}
+	stop := startRunner(t, r)
+
+	eventually(t, "claim attempts during the outage", func() bool { return spy.claims.Load() >= 4 })
+	time.Sleep(300 * time.Millisecond)
+	// Without backoff a 2 ms poll would try ~150 times; doubling up to 40 ms
+	// allows about a dozen.
+	if n := spy.claims.Load(); n > 30 {
+		t.Fatalf("no backoff: %d claim attempts in ~300ms", n)
+	}
+	if n := countLines(logs, "claim failed"); n != 1 {
+		t.Fatalf("want exactly one claim-failed line during the outage, got %d:\n%s", n, logs.String())
+	}
+
+	spy.fail.Store(false)
+	must(t, Enqueue(ctx, pool, "k", Args{ID: 1}, 0))
+	select {
+	case <-ran:
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker did not recover and run the job once the database came back")
+	}
+	stop()
+	if n := countLines(logs, "claim recovered"); n != 1 {
+		t.Fatalf("want one recovered line, got %d:\n%s", n, logs.String())
+	}
+	if n := countLines(logs, "claim failed"); n != 1 {
+		t.Fatalf("claim-failed lines: %d", n)
 	}
 }
 
-func TestRunDefaultsWorkersAndKeepsGoingWhenTheDatabaseFails(t *testing.T) {
-	// A closed pool makes every claim fail; Run must neither panic nor spin
-	// past cancellation.
+func TestDefaultsAndHeartbeatClamp(t *testing.T) {
+	logs := &logBuf{}
+	d := (Runner{Logger: slog.New(slog.NewTextHandler(logs, nil))}).withDefaults()
+	if d.Workers != 3 || d.Poll != time.Second || d.StaleAfter != 30*time.Minute ||
+		d.HeartbeatEvery != 5*time.Minute || d.ShutdownGrace != 30*time.Second || d.CleanupEvery != time.Hour {
+		t.Fatalf("defaults: %+v", d)
+	}
+	if logs.String() != "" {
+		t.Fatalf("defaults should not warn: %s", logs.String())
+	}
+	c := (Runner{StaleAfter: 30 * time.Second, HeartbeatEvery: 20 * time.Second, Logger: slog.New(slog.NewTextHandler(logs, nil))}).withDefaults()
+	if c.HeartbeatEvery != 10*time.Second {
+		t.Fatalf("heartbeat not clamped: %v", c.HeartbeatEvery)
+	}
+	if countLines(logs, "clamping") != 1 {
+		t.Fatalf("want one clamp warning: %s", logs.String())
+	}
+	if tiny := (Runner{StaleAfter: time.Nanosecond}).withDefaults(); tiny.HeartbeatEvery <= 0 {
+		t.Fatalf("heartbeat must stay positive: %v", tiny.HeartbeatEvery)
+	}
+}
+
+func TestRunnerWithoutWorkersSettingRunsThreeJobsAtOnce(t *testing.T) {
 	pool := testdb.New(t)
-	bad, err := pgxpool.New(ctx, pool.Config().ConnString())
-	must(t, err)
-	bad.Close()
-	r := &Runner{DB: bad, Poll: 5 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(&logBuf{}, nil)),
-		Handlers: map[string]Handler{}}
+	for i := 1; i <= 4; i++ {
+		must(t, Enqueue(ctx, pool, "k", Args{ID: int64(i)}, 0))
+	}
+	started, release := make(chan struct{}, 4), make(chan struct{})
+	r := &Runner{DB: pool, Poll: 5 * time.Millisecond, Handlers: map[string]Handler{
+		"k": func(context.Context, Args) error { started <- struct{}{}; <-release; return nil },
+	}}
 	stop := startRunner(t, r)
-	time.Sleep(30 * time.Millisecond)
+	for range 3 {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("expected three jobs running at once")
+		}
+	}
+	var locked int
+	must(t, pool.QueryRow(ctx, `SELECT count(*) FROM go_jobs WHERE locked_at IS NOT NULL`).Scan(&locked))
+	if locked != 3 {
+		t.Fatalf("with 3 busy workers exactly 3 jobs should be claimed, got %d", locked)
+	}
+	close(release) // the fourth runs once a worker frees up
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("fourth job never ran")
+	}
+	stop()
+}
+
+func TestShutdownGraceReleasesJobWhateverErrorTheKilledHandlerReturns(t *testing.T) {
+	pool := testdb.New(t)
+	must(t, Enqueue(ctx, pool, "slow", Args{ID: 1}, 0))
+	started := make(chan struct{})
+	r := &Runner{DB: pool, Workers: 1, Poll: 5 * time.Millisecond, ShutdownGrace: 50 * time.Millisecond,
+		Handlers: map[string]Handler{
+			"slow": func(hctx context.Context, _ Args) error {
+				close(started)
+				<-hctx.Done()
+				return errors.New("signal: killed") // exec.CommandContext's error
+			},
+		}}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { r.Run(runCtx); close(done) }()
+	<-started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	var id int64
+	must(t, pool.QueryRow(ctx, `SELECT id FROM go_jobs`).Scan(&id))
+	if row := load(t, pool, id); row.Finished || row.Locked || row.LastError != nil {
+		t.Fatalf("job must be released, not finished: %+v", row)
+	}
+}
+
+func TestHandlerThatCompletesAfterGraceCancellationIsFinishedNormally(t *testing.T) {
+	pool := testdb.New(t)
+	must(t, Enqueue(ctx, pool, "slow", Args{ID: 1}, 0))
+	started := make(chan struct{})
+	r := &Runner{DB: pool, Workers: 1, Poll: 5 * time.Millisecond, ShutdownGrace: 50 * time.Millisecond,
+		Handlers: map[string]Handler{
+			"slow": func(hctx context.Context, _ Args) error {
+				close(started)
+				<-hctx.Done()
+				return nil // it noticed the cancellation but had already done the work
+			},
+		}}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { r.Run(runCtx); close(done) }()
+	<-started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	var id int64
+	must(t, pool.QueryRow(ctx, `SELECT id FROM go_jobs`).Scan(&id))
+	if row := load(t, pool, id); !row.Finished || row.LastError != nil {
+		t.Fatalf("a nil return means it completed: %+v", row)
+	}
+}
+
+func TestPerKindTimeoutFailsTheJobAsNormalFailure(t *testing.T) {
+	pool := testdb.New(t)
+	must(t, Enqueue(ctx, pool, "hangs", Args{ID: 1}, 0))
+	must(t, Enqueue(ctx, pool, "unlimited", Args{ID: 2}, 0))
+	var unlimitedHadDeadline atomic.Bool
+	unlimitedDone := make(chan struct{})
+	r := &Runner{DB: pool, Workers: 2, Poll: 5 * time.Millisecond,
+		Timeouts: map[string]time.Duration{"hangs": 30 * time.Millisecond},
+		Handlers: map[string]Handler{
+			"hangs": func(hctx context.Context, _ Args) error { <-hctx.Done(); return hctx.Err() },
+			"unlimited": func(hctx context.Context, _ Args) error {
+				_, has := hctx.Deadline()
+				unlimitedHadDeadline.Store(has)
+				close(unlimitedDone)
+				return nil
+			},
+		}}
+	stop := startRunner(t, r)
+	<-unlimitedDone
+	var id int64
+	must(t, pool.QueryRow(ctx, `SELECT id FROM go_jobs WHERE kind = 'hangs'`).Scan(&id))
+	eventually(t, "timed out job finished", finished(t, pool, id))
+	stop()
+	row := load(t, pool, id)
+	if row.LastError == nil || *row.LastError != "job timed out after 30ms" {
+		t.Fatalf("last_error: %v", row.LastError)
+	}
+	if unlimitedHadDeadline.Load() {
+		t.Fatal("a kind without a timeout must be unlimited")
+	}
+}
+
+func TestOwnershipTokenStopsAStaleWorkerTouchingAReclaimedJob(t *testing.T) {
+	pool := testdb.New(t)
+	must(t, Enqueue(ctx, pool, "k", Args{ID: 1}, 0))
+	first, err := claim(ctx, pool, stale)
+	must(t, err)
+	_, err = pool.Exec(ctx, `UPDATE go_jobs SET locked_at = now() - interval '31 minutes' WHERE id = $1`, first.ID)
+	must(t, err)
+	second, err := claim(ctx, pool, stale)
+	must(t, err)
+	if second == nil || second.ID != first.ID || second.Attempt != first.Attempt+1 {
+		t.Fatalf("reclaim: first %+v second %+v", first, second)
+	}
+
+	if ok, err := heartbeat(ctx, pool, first.ID, first.Attempt); err != nil || ok {
+		t.Fatalf("stale worker heartbeat: owned=%v err=%v", ok, err)
+	}
+	if ok, err := release(ctx, pool, first.ID, first.Attempt); err != nil || ok {
+		t.Fatalf("stale worker release: owned=%v err=%v", ok, err)
+	}
+	if ok, err := finish(ctx, pool, first.ID, first.Attempt, "stale"); err != nil || ok {
+		t.Fatalf("stale worker finish: owned=%v err=%v", ok, err)
+	}
+	if row := load(t, pool, first.ID); row.Finished || !row.Locked || row.LastError != nil {
+		t.Fatalf("the stale worker changed the row: %+v", row)
+	}
+	if ok, err := finish(ctx, pool, second.ID, second.Attempt, ""); err != nil || !ok {
+		t.Fatalf("current owner finish: owned=%v err=%v", ok, err)
+	}
+	if ok, _ := finish(ctx, pool, second.ID, second.Attempt, ""); ok {
+		t.Fatal("a finished job cannot be finished twice")
+	}
+}
+
+func TestRunnerCleansUpAtStartAndOnTheTicker(t *testing.T) {
+	pool := testdb.New(t)
+	exists := func(id int64) bool {
+		var e bool
+		must(t, pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM go_jobs WHERE id = $1)`, id).Scan(&e))
+		return e
+	}
+	old := insertAt(t, pool, "k", "now()", "now()", "now() - interval '25 hours'")
+	recent := insertAt(t, pool, "k", "now()", "now()", "now() - interval '1 hour'")
+	r := &Runner{DB: pool, Workers: 1, Poll: 5 * time.Millisecond, CleanupEvery: 10 * time.Millisecond, Handlers: map[string]Handler{}}
+	stop := startRunner(t, r)
+	eventually(t, "cleanup at start", func() bool { return !exists(old) })
+	if !exists(recent) {
+		t.Fatal("recent finished job must stay")
+	}
+	// Now only the ticker can remove a later row.
+	later := insertAt(t, pool, "k", "now()", "now()", "now() - interval '26 hours'")
+	eventually(t, "cleanup on the ticker", func() bool { return !exists(later) })
+	stop()
+}
+
+func TestRunnerCleansUpOnceAtStartEvenWithLongInterval(t *testing.T) {
+	pool := testdb.New(t)
+	old := insertAt(t, pool, "k", "now()", "now()", "now() - interval '25 hours'")
+	stop := startRunner(t, &Runner{DB: pool, Handlers: map[string]Handler{}})
+	eventually(t, "cleanup at start", func() bool {
+		var e bool
+		must(t, pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM go_jobs WHERE id = $1)`, old).Scan(&e))
+		return !e
+	})
 	stop()
 }

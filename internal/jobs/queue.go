@@ -7,13 +7,24 @@
 //   - A job runs once. Errors and panics are recorded in last_error and the
 //     job is finished; nothing is retried (every Rails job rescued
 //     StandardError and there was no retry_on/discard_on).
-//   - The one exception is a crash: a job that was claimed but never finished
-//     (the process died) is claimed again once its lock is older than the
-//     stale window (30 minutes). Handlers must therefore be idempotent, or at
-//     least safe to run again after a partial run, which the Rails jobs
-//     already were (they re-read the record and check its status first).
+//   - The exceptions are a crash and a deploy. A job that was claimed but never
+//     finished (the process died) is claimed again once its lock is older than
+//     the stale window (30 minutes). A job whose handler was cut short by the
+//     shutdown grace period is released at once and runs again in the next
+//     process. So handlers must be safe to run again after a partial run:
+//     GenerateExpansionJob already is (it claim!s the expansion first) and so
+//     is TwitterVideoCaptionsJob (it only acts on status awaiting_captions),
+//     but TwitterVideoIngestJob does NOT check the video's status, so a re-run
+//     would download again (or reuse the file) and upload a duplicate YouTube
+//     video. The ingest handler (Task 9.6) must add a status/youtube_id guard.
 //   - Running jobs refresh their lock (heartbeat), so a long handler such as a
-//     yt-dlp download is never mistaken for a crashed one.
+//     yt-dlp download is never mistaken for a crashed one. The flip side: the
+//     heartbeat also keeps a hung job locked forever, so handlers that can
+//     hang (yt-dlp, HTTP calls) must set their own deadlines, and the Runner
+//     has per-kind Timeouts for it (the serve wiring passes them).
+//   - Heartbeat, finish and release only act while the worker still owns the
+//     claim (the attempts counter returned by claim is the token), so a worker
+//     whose lock went stale and was re-claimed elsewhere cannot touch the job.
 //
 // Time: every timestamp here is a timestamptz taken from the database clock
 // (now()), unlike the timestamp-without-time-zone columns in package store,
@@ -131,27 +142,33 @@ func claim(ctx context.Context, db store.DB, staleAfter time.Duration) (*job, er
 	return &j, rows.Err()
 }
 
+// The three writes below take the attempts value returned by claim as an
+// ownership token and report whether the row was still theirs.
+
 // heartbeat refreshes the lock of a job that is still running.
-func heartbeat(ctx context.Context, db store.DB, id int64) error {
-	_, err := db.Exec(ctx, `UPDATE go_jobs SET locked_at = now() WHERE id = $1 AND finished_at IS NULL`, id)
-	return err
+func heartbeat(ctx context.Context, db store.DB, id int64, attempt int) (bool, error) {
+	tag, err := db.Exec(ctx, `UPDATE go_jobs SET locked_at = now()
+WHERE id = $1 AND finished_at IS NULL AND locked_at IS NOT NULL AND attempts = $2`, id, attempt)
+	return tag.RowsAffected() > 0, err
 }
 
 // finish marks a job done; lastErr is empty on success.
-func finish(ctx context.Context, db store.DB, id int64, lastErr string) error {
+func finish(ctx context.Context, db store.DB, id int64, attempt int, lastErr string) (bool, error) {
 	var e *string
 	if lastErr != "" {
 		e = &lastErr
 	}
-	_, err := db.Exec(ctx, `UPDATE go_jobs SET finished_at = now(), last_error = $2 WHERE id = $1`, id, e)
-	return err
+	tag, err := db.Exec(ctx, `UPDATE go_jobs SET finished_at = now(), last_error = $3
+WHERE id = $1 AND finished_at IS NULL AND attempts = $2`, id, attempt, e)
+	return tag.RowsAffected() > 0, err
 }
 
 // release unlocks a job interrupted by shutdown so the next process runs it
 // without waiting for the stale window.
-func release(ctx context.Context, db store.DB, id int64) error {
-	_, err := db.Exec(ctx, `UPDATE go_jobs SET locked_at = NULL WHERE id = $1 AND finished_at IS NULL`, id)
-	return err
+func release(ctx context.Context, db store.DB, id int64, attempt int) (bool, error) {
+	tag, err := db.Exec(ctx, `UPDATE go_jobs SET locked_at = NULL
+WHERE id = $1 AND finished_at IS NULL AND attempts = $2`, id, attempt)
+	return tag.RowsAffected() > 0, err
 }
 
 // Cleanup deletes jobs finished more than 24 hours ago (what

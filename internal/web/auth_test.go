@@ -111,7 +111,7 @@ func TestSignInFormRenders(t *testing.T) {
 		`<input[^>]*type="checkbox"[^>]*name="user\[remember_me\]"`,
 		`<input[^>]*type="submit"[^>]*value="Sign in"`,
 		`<title>Sign in</title>`,
-		`<link rel="stylesheet" href="/assets/application.css">`,
+		`<link rel="stylesheet" href="/assets/application-[0-9a-f]{8}\.css">`,
 	} {
 		if !regexp.MustCompile(re).MatchString(body) {
 			t.Errorf("body lacks %s\n%s", re, body)

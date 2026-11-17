@@ -2,6 +2,7 @@
 package web
 
 import (
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -26,6 +27,10 @@ type Server struct {
 	codec auth.Codec
 	// pages holds the parsed page templates by name (see parsePages).
 	pages map[string]*template.Template
+	// digests maps asset names to digested paths and files (see newAssetTable).
+	digests *assetTable
+	// mexicoCity is the zone the index page shows timestamps in.
+	mexicoCity *time.Location
 }
 
 // Option customizes a Server before its routes are built. Later tasks add
@@ -52,7 +57,18 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 		opt(s)
 	}
 	s.codec = auth.NewCodec(cfg.SecretKeyBase, "session").WithClock(func() time.Time { return s.Clock() })
-	s.pages = parsePages(webfs.FS, "sign_in")
+	s.digests = newAssetTable(webfs.FS)
+	for _, name := range requiredAssets {
+		if _, ok := s.digests.public[name]; !ok {
+			panic(fmt.Sprintf("web: embedded asset %q is missing", name))
+		}
+	}
+	loc, err := time.LoadLocation("America/Mexico_City")
+	if err != nil {
+		panic(fmt.Sprintf("web: load time zone: %v", err))
+	}
+	s.mexicoCity = loc
+	s.pages = parsePages(webfs.FS, s.templateFuncs(), "sign_in", "markdown", "index")
 	s.handler = s.routes()
 	return s
 }

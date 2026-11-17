@@ -7,26 +7,29 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"slices"
 )
 
 // templateFuncs are available to every page template.
-func templateFuncs() template.FuncMap {
+func (s *Server) templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		// asset maps a stylesheet or script name to its URL. For now it is the
-		// plain /assets/<name> path; Task 4.4 replaces it with digested paths.
-		"asset": func(name string) string { return "/assets/" + name },
+		// asset maps a logical asset name to its digested URL path.
+		"asset": s.AssetPath,
 	}
 }
 
+// sharedTemplates are parsed into every page's template set.
+var sharedTemplates = []string{"templates/layout.html", "templates/expand_bootstrap.html"}
+
 // parsePages parses each page (templates/<page>.html) together with the shared
-// templates/layout.html into its own template set, so two pages may both
-// define "content" and "title". It panics if a file is missing or malformed,
-// which a test catches: the files are embedded.
-func parsePages(fsys fs.FS, pages ...string) map[string]*template.Template {
+// templates (layout.html, expand_bootstrap.html) into its own template set, so
+// two pages may both define "content" and "title". It panics if a file is
+// missing or malformed, which a test catches: the files are embedded.
+func parsePages(fsys fs.FS, funcs template.FuncMap, pages ...string) map[string]*template.Template {
 	set := make(map[string]*template.Template, len(pages))
 	for _, page := range pages {
-		t, err := template.New(page+".html").Funcs(templateFuncs()).
-			ParseFS(fsys, "templates/layout.html", "templates/"+page+".html")
+		files := append(slices.Clone(sharedTemplates), "templates/"+page+".html")
+		t, err := template.New(page+".html").Funcs(funcs).ParseFS(fsys, files...)
 		if err != nil {
 			panic(fmt.Sprintf("web: parse template %q: %v", page, err))
 		}

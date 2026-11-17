@@ -1,0 +1,5 @@
+{
+  "plain_empty": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__fileVersions = [];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>",
+  "anchor_versions": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"section-2\";window.__fileVersions = [{\"name\":\"notes.md\",\"url\":\"/notes.md\",\"version\":1,\"current\":false},{\"name\":\"notes-v2.md\",\"url\":\"/notes-v2.md\",\"version\":2,\"current\":true}];window.__expansionMode = \"edit_in_place\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>",
+  "nasty": "<meta name=\"csrf-token\" content=\"TOKEN\"><script>window.__scrollAnchor = \"a\\\"b\\u003c/script\\u003e\\u003c!--\\u0026'é  😀\";window.__fileVersions = [{\"name\":\"a b\\u0026c\\u003cd\\u003e\\\".md\",\"url\":\"/a%20b%26c%3Cd%3E%22.md\",\"version\":1,\"current\":true},{\"name\":\"é.md\",\"url\":\"/%C3%A9.md\",\"version\":2,\"current\":false}];window.__expansionMode = \"create_new\";</script><script src=\"/assets/expand-DIGEST.js\" defer></script>"
+}

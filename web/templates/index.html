@@ -1,0 +1,21 @@
+{{define "title"}}Files{{end}}
+
+{{define "content"}}<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Updated at</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Files}}
+      <tr>
+        <td><a href="{{.URL}}">{{.Name}}</a></td>
+        <td>{{.UpdatedAt}}</td>
+      </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{template "layout" .}}

@@ -12,9 +12,6 @@ func notImplemented(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"detail":"Not implemented."}` + "\n"))
 }
 
-// assets is a temporary 404; Task 4.4 replaces it with the embedded assets.
-func (s *Server) assets() http.Handler { return http.NotFoundHandler() }
-
 // Files (Task 4.5).
 func (s *Server) lastFile(w http.ResponseWriter, r *http.Request)             { notImplemented(w, r) }
 func (s *Server) indexFiles(w http.ResponseWriter, r *http.Request)           { notImplemented(w, r) }

@@ -11,18 +11,34 @@ import (
 	"serve-html-markdown/internal/config"
 )
 
-// Server is the application's http.Handler. Later tasks add the dependencies
-// their handlers need as fields set in New.
+// Server is the application's http.Handler.
 type Server struct {
-	cfg     config.Config
-	pool    *pgxpool.Pool
+	cfg  config.Config
+	pool *pgxpool.Pool
+	// Clock returns the current time; WithClock replaces it in tests.
+	Clock   func() time.Time
 	handler http.Handler
 }
 
-// New builds a Server and its route table. It panics, via http.ServeMux, if
-// two route patterns conflict.
-func New(cfg config.Config, pool *pgxpool.Pool) *Server {
-	s := &Server{cfg: cfg, pool: pool}
+// Option customizes a Server before its routes are built. Later tasks add
+// their own options for injected dependencies (templates, formatter,
+// expander, enqueuer).
+type Option func(*Server)
+
+// WithClock sets the Server's time source.
+func WithClock(clock func() time.Time) Option {
+	return func(s *Server) { s.Clock = clock }
+}
+
+// New builds a Server and its route table, applying opts first. pool may be
+// nil for tests that never touch the database. It panics at startup if two
+// route patterns conflict, an embedded public file is missing, or cfg.Host is
+// not a valid origin host.
+func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
+	s := &Server{cfg: cfg, pool: pool, Clock: time.Now}
+	for _, opt := range opts {
+		opt(s)
+	}
 	s.handler = s.routes()
 	return s
 }

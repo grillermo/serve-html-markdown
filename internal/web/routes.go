@@ -2,9 +2,11 @@ package web
 
 import (
 	"bytes"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"path"
+	"slices"
 	"time"
 
 	webfs "serve-html-markdown/web"
@@ -18,7 +20,7 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("HEAD /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
-	for _, name := range []string{"robots.txt", "icon.svg", "icon.png", "400.html", "404.html", "406-unsupported-browser.html", "422.html", "500.html"} {
+	for _, name := range publicNames {
 		mux.Handle("GET /"+name, s.publicFile(name))
 	}
 	mux.Handle("GET /assets/{name}", s.assets())
@@ -27,10 +29,12 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /users/sign_in", s.signIn)
 	mux.HandleFunc("DELETE /users/sign_out", s.signOut)
 
-	mux.HandleFunc("POST /file/new", s.createFile)                                           // bearer
-	mux.HandleFunc("POST /file/upload", s.uploadFile)                                        // bearer
-	mux.HandleFunc("POST /summarize-video", s.createVideoSummary)                            // bearer
-	mux.HandleFunc("POST /twitter-video", s.createVideoSummary)                              // legacy name for iOS Shortcuts
+	mux.HandleFunc("POST /file/new", s.createFile)                // bearer
+	mux.HandleFunc("POST /file/upload", s.uploadFile)             // bearer
+	mux.HandleFunc("POST /summarize-video", s.createVideoSummary) // bearer
+	mux.HandleFunc("POST /twitter-video", s.createVideoSummary)   // legacy name for iOS Shortcuts
+	// TODO(Tasks 8.3, 9.7): numericID lets ids larger than int64 through, so
+	// the real {id} handlers must treat a strconv parse error as 404.
 	mux.Handle("GET /summarize-video/{id}", numericID(http.HandlerFunc(s.showVideoSummary))) // public, like Rails
 	mux.Handle("GET /twitter-video/{id}", numericID(http.HandlerFunc(s.showVideoSummary)))
 
@@ -47,12 +51,30 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /index", s.requireUser(s.indexFiles))
 	mux.Handle("GET /{file_name}", s.requireUser(s.showFile))
 
-	return s.securityHeaders(http.NewCrossOriginProtection().Handler(s.logRequests(mux)))
+	// Outermost first: logging sees every response, including the 403s from
+	// cross-origin protection, and those still carry HSTS.
+	return s.logRequests(s.securityHeaders(s.crossOriginProtection().Handler(mux)))
+}
+
+// crossOriginProtection rejects browser-originated cross-origin unsafe
+// requests. The app sits behind a Cloudflare tunnel, where the browser's
+// Origin is https://<Host>, so that origin is trusted explicitly.
+func (s *Server) crossOriginProtection() *http.CrossOriginProtection {
+	cop := http.NewCrossOriginProtection()
+	if s.cfg.Host != "" && s.cfg.Host != "localhost" {
+		if err := cop.AddTrustedOrigin("https://" + s.cfg.Host); err != nil {
+			panic(fmt.Sprintf("web: invalid HOST %q for trusted origin: %v", s.cfg.Host, err))
+		}
+	}
+	return cop
 }
 
 // numericID answers 404 unless the {id} path value is all ASCII digits, like
 // the Rails route constraint `id: /\d+/`. It wraps outside requireUser so a
 // malformed id is a 404 for everyone, signed in or not.
+//
+// It only checks the characters: an id too large for int64 passes, so the
+// real handlers must treat a parse error as 404 too.
 func numericID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -77,13 +99,24 @@ var publicContentTypes = map[string]string{
 	".png":  "image/png",
 }
 
+// publicNames are the files served from web/public.
+var publicNames = []string{"robots.txt", "icon.svg", "icon.png", "400.html", "404.html", "406-unsupported-browser.html", "422.html", "500.html"}
+
 // publicFile serves one embedded file from web/public with a long-lived
 // Cache-Control, like config.public_file_server.headers in production.rb.
-// An unknown name yields a handler that answers 404. HEAD is supported.
+// A name outside publicNames yields a handler that answers 404; a listed name
+// whose embedded file is missing panics at startup. HEAD is supported.
 func (s *Server) publicFile(name string) http.Handler {
-	data, err := fs.ReadFile(webfs.FS, "public/"+name)
-	if err != nil {
+	if !slices.Contains(publicNames, name) {
 		return http.NotFoundHandler()
+	}
+	return servePublic(webfs.FS, name)
+}
+
+func servePublic(fsys fs.FS, name string) http.Handler {
+	data, err := fs.ReadFile(fsys, "public/"+name)
+	if err != nil {
+		panic(fmt.Sprintf("web: embedded public file %q is missing: %v", name, err))
 	}
 	ctype := publicContentTypes[path.Ext(name)]
 	if ctype == "" {

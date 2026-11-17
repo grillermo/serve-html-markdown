@@ -1,13 +1,31 @@
 package web
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
+
+	"serve-html-markdown/internal/config"
 )
 
-func TestHealthAndFavicon(t *testing.T) {
+// The one test that builds the server on a real pool, so the integration path
+// (New with a testdb pool) stays exercised. It must not call t.Parallel.
+func TestServerWithDatabase(t *testing.T) {
 	srv := newTestServer(t)
+	if srv.pool == nil {
+		t.Fatal("pool not set")
+	}
+	if rec := do(srv, "HEAD", "/health", nil); rec.Code != 200 {
+		t.Fatalf("HEAD /health: got %d", rec.Code)
+	}
+}
+
+func TestHealthAndFavicon(t *testing.T) {
+	srv := newTestServerNoDB(t)
 	cases := []struct {
 		method, path string
 		want         int
@@ -24,17 +42,13 @@ func TestHealthAndFavicon(t *testing.T) {
 			t.Errorf("%s %s: got %d want %d", c.method, c.path, rec.Code, c.want)
 		}
 	}
-}
-
-func TestHealthHeadHasEmptyBody(t *testing.T) {
-	rec := do(newTestServer(t), "HEAD", "/health", nil)
-	if rec.Code != 200 || rec.Body.Len() != 0 {
-		t.Fatalf("got %d with %d body bytes", rec.Code, rec.Body.Len())
+	if rec := do(srv, "HEAD", "/health", nil); rec.Body.Len() != 0 {
+		t.Errorf("HEAD /health: %d body bytes", rec.Body.Len())
 	}
 }
 
 func TestPublicFiles(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newTestServerNoDB(t)
 	cases := []struct{ path, ctype string }{
 		{"/robots.txt", "text/plain"},
 		{"/icon.svg", "image/svg+xml"},
@@ -70,11 +84,8 @@ func TestPublicFiles(t *testing.T) {
 	}
 }
 
-func TestPublicFileUnknownName(t *testing.T) {
-	srv := newTestServer(t)
-	if got := srv.publicFile("nope.txt"); got == nil {
-		t.Fatal("nil handler")
-	}
+func TestPublicFileUnlistedNameIs404(t *testing.T) {
+	srv := newTestServerNoDB(t)
 	rec := httptest.NewRecorder()
 	srv.publicFile("nope.txt").ServeHTTP(rec, httptest.NewRequest("GET", "/nope.txt", nil))
 	if rec.Code != 404 {
@@ -82,8 +93,21 @@ func TestPublicFileUnknownName(t *testing.T) {
 	}
 }
 
+func TestMissingEmbeddedPublicFilePanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected a panic")
+		}
+		if msg, _ := r.(string); !strings.Contains(msg, "robots.txt") || !strings.Contains(msg, "missing") {
+			t.Fatalf("unclear panic message: %v", r)
+		}
+	}()
+	servePublic(fstest.MapFS{}, "robots.txt")
+}
+
 func TestHSTSOnEveryResponse(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newTestServerNoDB(t)
 	for _, p := range [][2]string{
 		{"HEAD", "/health"}, {"GET", "/favicon.ico"}, {"GET", "/robots.txt"},
 		{"GET", "/assets/x"}, {"GET", "/index"}, {"GET", "/expansions/abc"},
@@ -98,7 +122,7 @@ func TestHSTSOnEveryResponse(t *testing.T) {
 }
 
 func TestNonDigitIDsAre404(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newTestServerNoDB(t)
 	for _, p := range []string{"/expansions/abc", "/summarize-video/abc", "/twitter-video/abc", "/expansions/12a", "/summarize-video/-1"} {
 		if rec := do(srv, "GET", p, nil); rec.Code != 404 {
 			t.Errorf("GET %s: got %d, want 404", p, rec.Code)
@@ -112,8 +136,21 @@ func TestNonDigitIDsAre404(t *testing.T) {
 	}
 }
 
+// numericID only checks characters, so an id larger than int64 passes it. The
+// real {id} handlers (Tasks 8.3, 9.7) must treat a parse error as 404.
+func TestHugeIDsPassTheDigitCheck(t *testing.T) {
+	srv := newTestServerNoDB(t)
+	for _, p := range []string{"/expansions/99999999999999999999", "/summarize-video/99999999999999999999"} {
+		if rec := do(srv, "GET", p, nil); rec.Code != 501 {
+			t.Errorf("GET %s: got %d, want 501 (reaches the handler)", p, rec.Code)
+		}
+	}
+}
+
+// TRIPWIRE: requireUser is a pass-through stub, so every guarded route answers
+// 501 here. Task 3.2 replaces requireUser and must update this test.
 func TestRoutePrecedence(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newTestServerNoDB(t)
 	// Every stubbed route answers 501 with the JSON detail until its task lands.
 	for _, p := range []string{"/", "/last", "/index", "/anything.md", "/users/sign_in"} {
 		rec := do(srv, "GET", p, nil)
@@ -139,10 +176,7 @@ func TestRoutePrecedence(t *testing.T) {
 			t.Errorf("%s %s: got %d, want 501", c[0], c[1], rec.Code)
 		}
 	}
-	// Specific static names beat the {file_name} wildcard.
-	if rec := do(srv, "GET", "/robots.txt", nil); rec.Code != 200 {
-		t.Errorf("GET /robots.txt: got %d", rec.Code)
-	}
+	// Static names beat the {file_name} wildcard; /assets/* is its own 404.
 	if rec := do(srv, "GET", "/assets/x", nil); rec.Code != 404 {
 		t.Errorf("GET /assets/x: got %d, want 404", rec.Code)
 	}
@@ -150,10 +184,9 @@ func TestRoutePrecedence(t *testing.T) {
 
 // Go's CrossOriginProtection only rejects browser-originated cross-origin
 // unsafe requests. Non-browser clients (bearer-token API callers such as iOS
-// Shortcuts) send neither Sec-Fetch-Site nor Origin and are let through; no
-// bypass paths are configured.
+// Shortcuts) send neither Sec-Fetch-Site nor Origin and are let through.
 func TestCrossOriginProtection(t *testing.T) {
-	srv := newTestServer(t)
+	srv := newTestServerNoDB(t)
 	rec := do(srv, "POST", "/scroll_position", map[string]string{"Sec-Fetch-Site": "cross-site"})
 	if rec.Code != 403 {
 		t.Errorf("cross-site POST: got %d, want 403", rec.Code)
@@ -172,5 +205,61 @@ func TestCrossOriginProtection(t *testing.T) {
 	}
 	if rec := do(srv, "GET", "/index", map[string]string{"Sec-Fetch-Site": "cross-site"}); rec.Code != 501 {
 		t.Errorf("cross-site GET (safe method): got %d, want 501", rec.Code)
+	}
+}
+
+func TestTrustedOriginFromHost(t *testing.T) {
+	srv := New(config.Config{FilesDir: t.TempDir(), Host: "files.example.test"}, nil)
+	trusted := do(srv, "POST", "/scroll_position", map[string]string{"Origin": "https://files.example.test"})
+	if trusted.Code != 501 {
+		t.Errorf("Origin https://<Host>: got %d, want 501 (allowed)", trusted.Code)
+	}
+	other := do(srv, "POST", "/scroll_position", map[string]string{"Origin": "https://evil.example.test"})
+	if other.Code != 403 {
+		t.Errorf("other Origin: got %d, want 403", other.Code)
+	}
+	// With HOST=localhost no origin is trusted beyond same-origin.
+	local := newTestServerNoDB(t)
+	if rec := do(local, "POST", "/scroll_position", map[string]string{"Origin": "https://files.example.test"}); rec.Code != 403 {
+		t.Errorf("localhost config, foreign Origin: got %d, want 403", rec.Code)
+	}
+}
+
+func TestInvalidHostPanicsAtStartup(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected a panic for a malformed HOST")
+		}
+	}()
+	New(config.Config{Host: "bad host/with path"}, nil)
+}
+
+// Not parallel: it swaps the slog default.
+func TestLogsRejectedCrossOriginRequests(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	srv := newTestServerNoDB(t)
+	if rec := do(srv, "POST", "/scroll_position", map[string]string{"Sec-Fetch-Site": "cross-site"}); rec.Code != 403 {
+		t.Fatalf("got %d, want 403", rec.Code)
+	}
+	line := buf.String()
+	for _, want := range []string{"method=POST", "path=/scroll_position", "status=403"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("log %q lacks %q", line, want)
+		}
+	}
+}
+
+func TestOptionsAppliedBeforeRoutes(t *testing.T) {
+	if got := newTestServerNoDB(t).Clock; got == nil {
+		t.Fatal("Clock has no default")
+	}
+	fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	srv := newTestServerNoDB(t, WithClock(func() time.Time { return fixed }))
+	if got := srv.Clock(); !got.Equal(fixed) {
+		t.Errorf("Clock() = %v, want %v", got, fixed)
 	}
 }

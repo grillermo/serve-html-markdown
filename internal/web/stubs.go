@@ -15,6 +15,9 @@ func notImplemented(w http.ResponseWriter, _ *http.Request) {
 // requireUser is a temporary PASS-THROUGH: Task 3.2 replaces it with the real
 // session check. That is safe only because every handler it guards is still a
 // 501 stub; do not port a guarded handler before Task 3.2 lands.
+//
+// TRIPWIRE: TestRoutePrecedence expects 501 behind requireUser; Task 3.2 must
+// replace this and update that test.
 func (s *Server) requireUser(next http.HandlerFunc) http.Handler { return next }
 
 // assets is a temporary 404; Task 4.4 replaces it with the embedded assets.

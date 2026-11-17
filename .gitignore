@@ -54,3 +54,4 @@ files/**
 
 # Git worktrees
 /.worktrees/
+/tmp/serve-html-markdown

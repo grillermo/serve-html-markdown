@@ -14,8 +14,8 @@ import (
 	"serve-html-markdown/internal/store"
 )
 
-// FirstVersion is the version number of the first rewrite (foo--v2.md).
-const FirstVersion = 2
+// firstVersion is the version number of the first rewrite (foo--v2.md).
+const firstVersion = 2
 
 var (
 	// versionPattern is strict: only v2 and up are versions, with no leading
@@ -76,15 +76,21 @@ func (f FileVersions) FamilyNames(ctx context.Context, db store.DB) ([]string, e
 	if err != nil {
 		return nil, err
 	}
-	family := names[:0]
+	type member struct {
+		name    string
+		version int
+	}
+	var members []member
 	for _, n := range names {
-		if ParseFileVersions(n).Stem == f.Stem {
-			family = append(family, n)
+		if p := ParseFileVersions(n); p.Stem == f.Stem {
+			members = append(members, member{n, p.Version})
 		}
 	}
-	slices.SortStableFunc(family, func(a, b string) int {
-		return cmp.Compare(ParseFileVersions(a).Version, ParseFileVersions(b).Version)
-	})
+	slices.SortStableFunc(members, func(a, b member) int { return cmp.Compare(a.version, b.version) })
+	family := make([]string, len(members))
+	for i, m := range members {
+		family[i] = m.name
+	}
 	return family, nil
 }
 
@@ -95,7 +101,7 @@ func (f FileVersions) NextPath(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for v := FirstVersion; ; v++ {
+	for v := firstVersion; ; v++ {
 		p := filepath.Join(root, f.NameFor(v))
 		taken, err := exists(p)
 		if err != nil {

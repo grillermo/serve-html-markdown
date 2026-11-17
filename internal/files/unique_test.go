@@ -1,8 +1,11 @@
 package files_test
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -136,4 +139,63 @@ func TestCreateUniqueConcurrentNeverCollides(t *testing.T) {
 	if entries, _ := os.ReadDir(dir); len(entries) != n {
 		t.Fatalf("%d files, want %d", len(entries), n)
 	}
+}
+
+func TestUniqueFunctionsOnlyAcceptServedExtensions(t *testing.T) {
+	dir := filesDir(t)
+	for _, ext := range []string{"/../a.md", ".lock", "", "md", ".txt", ".md.lock", ".md/", "/.md", ".md\x00"} {
+		_, err := files.UniquePath(dir, "ev", ext)
+		wantError(t, err, files.ErrBadRequest, 400, "Invalid filename.")
+		_, err = files.CreateUnique(dir, "ev", ext, nil)
+		wantError(t, err, files.ErrBadRequest, 400, "Invalid filename.")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("files created: %v", entries)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(dir)); len(entries) != 1 {
+		t.Fatalf("files created next to dir: %v", entries)
+	}
+	for _, ext := range []string{".MD", ".Html", ".markdown"} {
+		got, err := files.CreateUnique(dir, "ok", ext, []byte("x"))
+		if err != nil || got != filepath.Join(dir, "ok"+ext) {
+			t.Errorf("%s: %q, %v", ext, got, err)
+		}
+	}
+}
+
+func TestUniqueFunctionsGiveUpAfterManyAttempts(t *testing.T) {
+	dir := filesDir(t)
+	write(t, filepath.Join(dir, "x.md"), "x")
+	for i := 1; i < 10000; i++ {
+		write(t, filepath.Join(dir, fmt.Sprintf("x-%d.md", i)), "x")
+	}
+	_, err := files.UniquePath(dir, "x", ".md")
+	if err == nil || errors.Is(err, files.ErrBadRequest) {
+		t.Fatalf("UniquePath: %v", err)
+	}
+	_, err = files.CreateUnique(dir, "x", ".md", nil)
+	if err == nil || errors.Is(err, files.ErrBadRequest) {
+		t.Fatalf("CreateUnique: %v", err)
+	}
+}
+
+func TestUniqueFunctionsMapNameTooLong(t *testing.T) {
+	dir := filesDir(t)
+	long := strings.Repeat("a", 300)
+	_, err := files.UniquePath(dir, long, ".md")
+	wantError(t, err, files.ErrBadRequest, 400, "Invalid filename.")
+	_, err = files.CreateUnique(dir, long, ".md", nil)
+	wantError(t, err, files.ErrBadRequest, 400, "Invalid filename.")
+
+	// 250 + ".md" fits; the -10 suffix pushes the 11th name past 255 bytes.
+	stem := strings.Repeat("b", 250)
+	for i := range 10 {
+		if _, err := files.CreateUnique(dir, stem, ".md", []byte("x")); err != nil {
+			t.Fatalf("file %d: %v", i, err)
+		}
+	}
+	_, err = files.UniquePath(dir, stem, ".md")
+	wantError(t, err, files.ErrBadRequest, 400, "Invalid filename.")
+	_, err = files.CreateUnique(dir, stem, ".md", nil)
+	wantError(t, err, files.ErrBadRequest, 400, "Invalid filename.")
 }

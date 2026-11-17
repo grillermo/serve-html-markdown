@@ -8,32 +8,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	"serve-html-markdown/internal/store"
 )
-
-// rubyBasename is File.basename for a "/"-separated path: trailing slashes are
-// ignored, "" stays "" and "/" stays "/".
-func rubyBasename(s string) string {
-	if s == "" {
-		return ""
-	}
-	s = strings.TrimRight(s, "/")
-	if s == "" {
-		return "/"
-	}
-	return s[strings.LastIndex(s, "/")+1:]
-}
-
-// splitName is the Ruby base name, its extension (File.extname) and the base
-// name without that extension (File.basename(name, ext)).
-func splitName(name string) (base, ext, stem string) {
-	base = rubyBasename(name)
-	ext = store.Ext(base)
-	stem = strings.TrimSuffix(base, ext)
-	return base, ext, stem
-}
 
 // Stem sanitises a user-supplied file name the way uploads did: backslashes
 // become slashes, the base name is taken and its extension dropped. It fails
@@ -67,13 +46,34 @@ func candidate(root, stem string, n int, ext string) (string, error) {
 	return p, nil
 }
 
+// maxAttempts bounds how many names UniquePath and CreateUnique try.
+const maxAttempts = 10000
+
+// checkExt accepts only the served extensions (any case): ext becomes part of
+// a file name, so ".lock", "" or "/../a.md" must never get through.
+func checkExt(ext string) error {
+	if !store.AllowedExtensions[strings.ToLower(ext)] {
+		return BadRequest("Invalid filename.")
+	}
+	return nil
+}
+
+// nameError turns a file system error caused by the name itself (too long)
+// into the client's error; anything else is returned as is.
+func nameError(err error) error {
+	if errors.Is(err, syscall.ENAMETOOLONG) {
+		return BadRequest("Invalid filename.")
+	}
+	return err
+}
+
 // exists reports whether anything, a dangling symlink included, is at p.
 func exists(p string) (bool, error) {
 	_, err := os.Lstat(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
-	return err == nil, err
+	return err == nil, nameError(err)
 }
 
 // UniquePath returns the first free path in dir for a new file derived from
@@ -81,6 +81,9 @@ func exists(p string) (bool, error) {
 // <stem>-1<ext>, <stem>-2<ext>, and so on. It does not create anything, so
 // two callers can get the same path; use CreateUnique to claim it atomically.
 func UniquePath(dir, filename, ext string) (string, error) {
+	if err := checkExt(ext); err != nil {
+		return "", err
+	}
 	stem, err := Stem(filename)
 	if err != nil {
 		return "", err
@@ -89,7 +92,7 @@ func UniquePath(dir, filename, ext string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for n := 0; ; n++ {
+	for n := 0; n < maxAttempts; n++ {
 		p, err := candidate(root, stem, n, ext)
 		if err != nil {
 			return "", err
@@ -102,12 +105,20 @@ func UniquePath(dir, filename, ext string) (string, error) {
 			return p, nil
 		}
 	}
+	return "", errNoFreeName(stem)
 }
 
 // CreateUnique is UniquePath plus the write: it claims the name with
 // O_CREATE|O_EXCL, so concurrent callers never get the same file, then writes
 // data to it. It returns the path. A failed write removes the new file.
+//
+// The write is not atomic: the file is visible, empty or partly written, until
+// Write returns, so a reader that sees the name in that window gets a partial
+// document. ext must be one of the served extensions, as for UniquePath.
 func CreateUnique(dir, filename, ext string, data []byte) (string, error) {
+	if err := checkExt(ext); err != nil {
+		return "", err
+	}
 	stem, err := Stem(filename)
 	if err != nil {
 		return "", err
@@ -116,7 +127,7 @@ func CreateUnique(dir, filename, ext string, data []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for n := 0; ; n++ {
+	for n := 0; n < maxAttempts; n++ {
 		p, err := candidate(root, stem, n, ext)
 		if err != nil {
 			return "", err
@@ -126,7 +137,7 @@ func CreateUnique(dir, filename, ext string, data []byte) (string, error) {
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", nameError(err)
 		}
 		_, werr := f.Write(data)
 		if cerr := f.Close(); werr == nil {
@@ -138,4 +149,9 @@ func CreateUnique(dir, filename, ext string, data []byte) (string, error) {
 		}
 		return p, nil
 	}
+	return "", errNoFreeName(stem)
+}
+
+func errNoFreeName(stem string) error {
+	return fmt.Errorf("files: no free name for %q after %d attempts", stem, maxAttempts)
 }

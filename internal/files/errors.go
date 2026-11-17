@@ -41,11 +41,14 @@ func (e *Error) HTTPStatus() int {
 	return 404
 }
 
-// Kind sentinels for errors.Is; the real errors carry their own messages.
+// Kind sentinels, for errors.Is(err, files.ErrBadRequest) and the like. They
+// are shared values: never return or modify them as a real error (the errors
+// this package returns are fresh *Error values with their own messages), and
+// never change their fields.
 var (
 	ErrBadRequest = &Error{Kind: KindBadRequest, Message: "Bad request."}
 	ErrMissing    = &Error{Kind: KindMissing, Message: "File not found."}
-	// ErrUnsupported is returned as is by Resolve.
+	// ErrUnsupported is the sentinel for an extension that is not served.
 	ErrUnsupported = &Error{Kind: KindUnsupported, Message: "Only .html, .md, and .markdown files are supported."}
 )
 

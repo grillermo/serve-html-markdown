@@ -20,7 +20,7 @@ var AllowedExtensions = map[string]bool{".html": true, ".md": true, ".markdown":
 // allowed mirrors Ruby's File.extname: leading dots are not an extension
 // separator, so ".md" and "..md" have none while ".x.md" has ".md". Names that
 // Postgres could not store are never allowed.
-func allowed(name string) bool { return validText(name) && hasAllowedExt(name) }
+func allowed(name string) bool { return validText(name) && HasAllowedExtension(name) }
 
 func hasAllowedExt(name string) bool { return HasAllowedExtension(name) }
 
@@ -147,7 +147,7 @@ func SyncServedFiles(ctx context.Context, db DB, dir string) error {
 	names := []string{} // non-nil: an empty array must delete every row
 	for _, e := range entries {
 		if !allowed(e.Name()) {
-			if hasAllowedExt(e.Name()) {
+			if HasAllowedExtension(e.Name()) {
 				slog.Warn("served_files: skipping file name that is not valid UTF-8", "name", fmt.Sprintf("%q", e.Name()))
 			}
 			continue

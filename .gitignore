@@ -51,3 +51,6 @@ files/**
 
 /videos/
 /tmp/test-videos/
+
+# Git worktrees
+/.worktrees/

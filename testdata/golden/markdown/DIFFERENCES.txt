@@ -1,0 +1,46 @@
+Known differences between internal/markdown (goldmark) and Commonmarker (comrak)
+================================================================================
+Every golden pair in this directory (the original corpus and the extra-*.md pairs) matches
+exactly outside <pre> blocks, so the knownDifferences map in internal/markdown/golden_test.go
+is empty. The items below were found by differential testing against real Commonmarker
+(about 18,000 generated samples plus the 87 real documents) and are NOT covered by any golden.
+They are rare, structural corner cases; none occurs in the real corpus.
+
+1. Syntax highlighting is not byte-identical (by design)
+   Commonmarker colours code with syntect, the Go renderer with chroma. The <pre style=...>,
+   <code class="language-x"> wrappers, the escaped text and the one-<span>-per-token shape match;
+   the token boundaries and some colours differ. The test helper strips <span> tags inside
+   <pre>...</pre> on both sides before comparing. Unknown or missing languages render exactly
+   like syntect's plain text (one span per line).
+   Additionally each document gets a highlight budget of 32 KB of fenced code; blocks past it
+   are plain text (same wrapper). Chroma costs ~1.5 ms/KB, so without the budget the 200 KB
+   git-sync golden took ~170 ms; with it, ~40 ms.
+
+2. A single quote pairing across a partially overlapping emphasis
+   `'a *b' c*`   comrak: ‘a <em>b’ c</em>     Go: ’a <em>b’ c</em>
+   cmark pairs ' and " on one delimiter stack shared with emphasis; Go pairs them among the
+   siblings of one inline container. Only a quote pair that straddles an emphasis boundary
+   (opener outside, closer inside, emphasis not closed before the quote) differs, and only in
+   the glyph of the opening quote. Properly nested or separate pairs match.
+
+3. Link reference definition immediately followed by a block that cmark treats as text
+   `[r]: /u` directly followed by an empty bullet line `- `, or by `---`, or by a lazy
+   continuation `1. a`/`   b` item. goldmark resolves reference definitions when the
+   paragraph closes, after the next line already interrupted it; cmark resolves them first.
+   Example: "[r]: /u\n---" comrak <p>—</p>, Go <hr />. Two-block definitions followed by a blank
+   line (the normal way to write them) match.
+
+4. Empty bullet followed by an indented nested list on the next line
+   "*\n  - nested"   comrak: one item containing the nested list; Go: an empty item, then the
+   nested list as a sibling. (A bullet that has text on its first line is unaffected.)
+
+5. Invalid UTF-8 is an error, as in Rails
+   Commonmarker raises EncodingError for input that is not valid UTF-8; Render returns
+   ErrInvalidUTF8 and the caller decides how to degrade. NUL bytes become U+FFFD, a leading BOM
+   is dropped, CRLF and lone CR become LF, all exactly like comrak.
+
+Behaviours reproduced on purpose (so they are not differences): smart punctuation incl. dash runs
+("-----" becomes em+en), quote flanking rules, comrak's inline-time www/scheme autolinks on the
+raw source (never inside an open "["), post-parse email autolinks incl. mailto:/xmpp: prefixes and
+bracket depth, href escaping (&#x27;, %-encoding, &amp;), anchor ids incl. duplicates and Rust-style
+lowercasing, type 7 HTML blocks that start on lazy continuation lines and may end in a tab.

@@ -3,3 +3,6 @@
 
 # Mark any vendored files as having been vendored.
 vendor/* linguist-vendored
+
+# Golden Markdown corpus must stay byte-exact (CRLF, BOM, NUL-free control chars).
+testdata/golden/** -text

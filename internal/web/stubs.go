@@ -12,12 +12,8 @@ func notImplemented(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"detail":"Not implemented."}` + "\n"))
 }
 
-// Files (Task 4.5).
-func (s *Server) lastFile(w http.ResponseWriter, r *http.Request)             { notImplemented(w, r) }
-func (s *Server) indexFiles(w http.ResponseWriter, r *http.Request)           { notImplemented(w, r) }
-func (s *Server) showFile(w http.ResponseWriter, r *http.Request)             { notImplemented(w, r) }
-func (s *Server) createFile(w http.ResponseWriter, r *http.Request)           { notImplemented(w, r) }
-func (s *Server) updateScrollPosition(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
+// File creation (not part of the show/index/last task).
+func (s *Server) createFile(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
 
 // Uploads (Task 5.2).
 func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }

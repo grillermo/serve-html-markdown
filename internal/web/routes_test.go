@@ -182,12 +182,13 @@ func TestRoutePrecedence(t *testing.T) {
 	}
 }
 
-// With a valid session every guarded route reaches its handler: a 501 JSON
-// stub today. Not parallel: it uses the shared test database.
+// With a valid session every guarded route reaches its handler: the ported
+// ones answer for real, the others are 501 JSON stubs. Not parallel: it uses
+// the shared test database.
 func TestRoutePrecedenceSignedIn(t *testing.T) {
 	env := newAuthEnv(t)
 	h := map[string]string{"Cookie": env.cookieFor(env.user)}
-	for _, p := range []string{"/", "/last", "/index", "/anything.md", "/youtube/reauth", "/youtube/callback", "/youtube/debug", "/expansions/1"} {
+	for _, p := range []string{"/youtube/reauth", "/youtube/callback", "/youtube/debug", "/expansions/1"} {
 		rec := do(env.srv, "GET", p, h)
 		if rec.Code != 501 {
 			t.Errorf("GET %s: got %d, want 501", p, rec.Code)
@@ -200,9 +201,19 @@ func TestRoutePrecedenceSignedIn(t *testing.T) {
 			t.Errorf("GET %s: body %q", p, rec.Body.String())
 		}
 	}
-	for _, c := range [][2]string{{"POST", "/expansions"}, {"PATCH", "/scroll_position"}, {"POST", "/scroll_position"}} {
-		if rec := do(env.srv, c[0], c[1], h); rec.Code != 501 {
-			t.Errorf("%s %s: got %d, want 501", c[0], c[1], rec.Code)
+	if rec := do(env.srv, "POST", "/expansions", h); rec.Code != 501 {
+		t.Errorf("POST /expansions: got %d, want 501", rec.Code)
+	}
+	// Ported handlers: no files yet, so / and /last are 404 JSON, /index lists
+	// nothing, a file name is looked up, and the scroll position wants fields.
+	for p, want := range map[string]int{"/": 404, "/last": 404, "/index": 200, "/anything.md": 404, "/anything.txt": 404} {
+		if rec := do(env.srv, "GET", p, h); rec.Code != want {
+			t.Errorf("GET %s: got %d, want %d", p, rec.Code, want)
+		}
+	}
+	for _, m := range []string{"PATCH", "POST"} {
+		if rec := do(env.srv, m, "/scroll_position", h); rec.Code != 400 {
+			t.Errorf("%s /scroll_position: got %d, want 400", m, rec.Code)
 		}
 	}
 	// Exact paths still win over /{file_name}: signing in is not a file.

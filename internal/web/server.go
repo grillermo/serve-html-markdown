@@ -31,6 +31,16 @@ type Server struct {
 	digests *assetTable
 	// mexicoCity is the zone the index page shows timestamps in.
 	mexicoCity *time.Location
+	// renderConcurrency is how many Markdown renders may run at once; renderSlots
+	// is its semaphore (built in New, after the options).
+	renderConcurrency int
+	renderSlots       chan struct{}
+	// maxRenderBytes and maxHTMLBytes cap the size of a file shown as Markdown or
+	// as HTML (see MaxRenderBytes, MaxHTMLBytes); tests lower them.
+	maxRenderBytes, maxHTMLBytes int64
+	// Test seams: renderWaiting runs when a request has to queue for a render
+	// slot, renderAcquired once it holds one.
+	renderWaiting, renderAcquired func()
 }
 
 // Option customizes a Server before its routes are built. Later tasks add
@@ -43,6 +53,16 @@ func WithClock(clock func() time.Time) Option {
 	return func(s *Server) { s.Clock = clock }
 }
 
+// WithRenderConcurrency sets how many Markdown renders may run at once
+// (default DefaultRenderConcurrency); n below 1 is ignored.
+func WithRenderConcurrency(n int) Option {
+	return func(s *Server) {
+		if n >= 1 {
+			s.renderConcurrency = n
+		}
+	}
+}
+
 // New builds a Server and its route table, applying opts first. pool may be
 // nil for tests that never touch the database. It panics at startup if
 // cfg.SecretKeyBase is empty (an unsigned session cookie would be forgeable),
@@ -52,10 +72,15 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 	if cfg.SecretKeyBase == "" {
 		panic("web: SECRET_KEY_BASE is required to sign session cookies")
 	}
-	s := &Server{cfg: cfg, pool: pool, Clock: time.Now}
+	s := &Server{
+		cfg: cfg, pool: pool, Clock: time.Now,
+		renderConcurrency: DefaultRenderConcurrency,
+		maxRenderBytes:    MaxRenderBytes, maxHTMLBytes: MaxHTMLBytes,
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.renderSlots = make(chan struct{}, s.renderConcurrency)
 	s.codec = auth.NewCodec(cfg.SecretKeyBase, "session").WithClock(func() time.Time { return s.Clock() })
 	s.digests = newAssetTable(webfs.FS)
 	for _, name := range requiredAssets {

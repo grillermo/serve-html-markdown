@@ -223,16 +223,16 @@ func TestGuardAdmitsSignedInUserAndPutsItInContext(t *testing.T) {
 	if rec.Code != 204 || got == nil || got.ID != env.user.ID || got.Email != viewerEmail {
 		t.Fatalf("code %d user %+v", rec.Code, got)
 	}
-	// Through the real route table the (not yet ported) handler answers 501.
-	if rec := do(env.srv, "GET", "/index", map[string]string{"Cookie": env.cookieFor(env.user)}); rec.Code != 501 {
-		t.Errorf("GET /index with cookie: got %d, want 501", rec.Code)
+	// Through the real route table the handler runs.
+	if rec := do(env.srv, "GET", "/index", map[string]string{"Cookie": env.cookieFor(env.user)}); rec.Code != 200 {
+		t.Errorf("GET /index with cookie: got %d, want 200", rec.Code)
 	}
 }
 
 func TestSessionWithStaleSaltIsSignedOut(t *testing.T) {
 	env := newAuthEnv(t)
 	cookie := env.cookieFor(env.user)
-	if rec := do(env.srv, "GET", "/index", map[string]string{"Cookie": cookie}); rec.Code != 501 {
+	if rec := do(env.srv, "GET", "/index", map[string]string{"Cookie": cookie}); rec.Code != 200 {
 		t.Fatalf("before password change: got %d", rec.Code)
 	}
 	env.addUser(t, viewerEmail, "a-new-password") // same user, new hash
@@ -288,7 +288,7 @@ func TestSignInSetsRememberedCookie(t *testing.T) {
 		}
 	}
 	// The cookie opens the guard.
-	if rec := do(env.srv, "GET", "/index", map[string]string{"Cookie": sessionCookieName + "=" + c.Value}); rec.Code != 501 {
+	if rec := do(env.srv, "GET", "/index", map[string]string{"Cookie": sessionCookieName + "=" + c.Value}); rec.Code != 200 {
 		t.Errorf("issued cookie rejected: %d", rec.Code)
 	}
 }

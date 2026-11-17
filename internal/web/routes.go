@@ -24,6 +24,8 @@ func (s *Server) routes() http.Handler {
 		mux.Handle("GET /"+name, s.publicFile(name))
 	}
 	mux.Handle("GET /assets/{name}", s.assets())
+	// Beats /{file_name}/ below: the asset directory itself is not a file name.
+	mux.Handle("GET /assets/{$}", http.NotFoundHandler())
 
 	mux.HandleFunc("GET /users/sign_in", s.signInForm)
 	mux.HandleFunc("POST /users/sign_in", s.signIn)
@@ -46,10 +48,18 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("PATCH /scroll_position", s.requireUser(s.updateScrollPosition))
 	mux.Handle("POST /scroll_position", s.requireUser(s.updateScrollPosition))
 
-	mux.Handle("GET /{$}", s.requireUser(s.lastFile))
-	mux.Handle("GET /last", s.requireUser(s.lastFile))
-	mux.Handle("GET /index", s.requireUser(s.indexFiles))
-	mux.Handle("GET /{file_name}", s.requireUser(s.showFile))
+	// Rails ignores a trailing slash when routing, so "/last/" is "/last" and
+	// "/notes.md/" is "/notes.md". Go's mux does not, hence the extra patterns.
+	last := s.requireUser(conditionalGet(s.lastFile))
+	index := s.requireUser(conditionalGet(s.indexFiles))
+	show := s.requireUser(conditionalGet(s.showFile))
+	mux.Handle("GET /{$}", last)
+	mux.Handle("GET /last", last)
+	mux.Handle("GET /last/{$}", last)
+	mux.Handle("GET /index", index)
+	mux.Handle("GET /index/{$}", index)
+	mux.Handle("GET /{file_name}", show)
+	mux.Handle("GET /{file_name}/{$}", show)
 
 	// Outermost first: logging sees every response, including the 403s from
 	// cross-origin protection, and those still carry HSTS.

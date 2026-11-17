@@ -18,3 +18,12 @@ var (
 	// ErrBlankToken: the refresh token is blank.
 	ErrBlankToken = errors.New("store: refresh token can't be blank")
 )
+
+// ErrInvalidExpansion is matched (errors.Is) by every *InvalidExpansionError,
+// which says which field was rejected. A rejected mode also matches
+// ErrInvalidExpansionMode.
+var ErrInvalidExpansion = errors.New("store: invalid expansion")
+
+// ErrInvalidTwitterVideo is matched (errors.Is) by every
+// *InvalidTwitterVideoError, which says which field was rejected.
+var ErrInvalidTwitterVideo = errors.New("store: invalid twitter video")

@@ -16,7 +16,6 @@ func TestRunExitCodes(t *testing.T) {
 		{[]string{"-h"}, 0, "usage:", ""},
 		{[]string{"--help"}, 0, "usage:", ""},
 		{[]string{"help"}, 0, "usage:", ""},
-		{[]string{"sync-files"}, 1, "", "sync-files: not implemented"},
 		{[]string{"bogus"}, 2, "", "unknown command"},
 	}
 	for _, c := range cases {
@@ -30,11 +29,5 @@ func TestRunExitCodes(t *testing.T) {
 		if !strings.Contains(errb.String(), c.err) {
 			t.Errorf("%v: stderr %q missing %q", c.args, errb.String(), c.err)
 		}
-	}
-}
-
-func TestRunServeDefaultExitsZero(t *testing.T) {
-	if got := run(nil); got != 0 {
-		t.Fatalf("exit %d", got)
 	}
 }

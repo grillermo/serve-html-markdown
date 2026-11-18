@@ -12,7 +12,7 @@ import (
 const usage = `usage: serve-html-markdown [command]
 
 commands:
-  serve               run the HTTP server and job workers (default)
+  serve [--no-jobs]   run the HTTP server and job workers (default); --no-jobs leaves the workers off
   migrate             apply database migrations
   seed-admin          create the admin user from ADMIN_EMAIL / ADMIN_PASSWORD
   youtube-reauth-url  print the YouTube re-authorization URL
@@ -47,9 +47,7 @@ func runTo(args []string, stdout, stderr io.Writer) int {
 			slog.Error("getwd", "err", err)
 			return 1
 		}
-		cfg := config.Load(root)
-		slog.Info("serve: not implemented yet", "port", cfg.Port, "env", cfg.AppEnv)
-		return 0
+		return serve(config.Load(root), args[1:], stderr)
 	case "migrate", "seed-admin":
 		root, err := os.Getwd()
 		if err != nil {
@@ -69,8 +67,12 @@ func runTo(args []string, stdout, stderr io.Writer) int {
 		}
 		return youtubeReauthURL(config.Load(root), stdout)
 	case "sync-files":
-		fmt.Fprintf(stderr, "%s: not implemented\n", cmd)
-		return 1
+		root, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: getwd: %v\n", cmd, err)
+			return 1
+		}
+		return syncFiles(config.Load(root), stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usage)
 		return 2

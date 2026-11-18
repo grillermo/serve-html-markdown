@@ -261,3 +261,37 @@ func RecordExpansionResponse(ctx context.Context, db DB, id int64, provider stri
 	return requireRow(db.Exec(ctx, `UPDATE expansions SET provider_used = $2, html_bytes = $3 WHERE id = $1`,
 		id, provider, htmlBytes))
 }
+
+// ReleaseExpansion puts a "processing" expansion back to "pending" and reports
+// whether it did. The job handler uses it when a shutdown cut the generation
+// short, so the job's next run can claim the expansion again. Rows in any other
+// status are left alone.
+func ReleaseExpansion(ctx context.Context, db DB, id int64) (bool, error) {
+	tag, err := db.Exec(ctx, `UPDATE expansions SET status = 'pending', updated_at = $2
+		WHERE id = $1 AND status = 'processing'`, id, utcNow())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ReclaimExpansion puts a "processing" expansion back to "pending" when it was
+// last touched more than staleAfter ago (every stage stamp refreshes
+// updated_at), and reports whether it did. It recovers an expansion whose job
+// run died without finishing (a crash, a kill -9): the queue hands such a job
+// out again only after its own lock went stale, and a live run keeps stamping,
+// so a row this old has no live owner. Callers must pass a staleAfter well
+// below the queue's stale window and above the longest quiet gap between two
+// stamps of a healthy run. Trade-off: a healthy run that is silent for longer
+// than staleAfter and is somehow re-run concurrently would be taken over; the
+// queue's exclusive lock prevents that concurrency, and a take-over only
+// repeats an idempotent generation.
+func ReclaimExpansion(ctx context.Context, db DB, id int64, staleAfter time.Duration) (bool, error) {
+	now := utcNow()
+	tag, err := db.Exec(ctx, `UPDATE expansions SET status = 'pending', updated_at = $2
+		WHERE id = $1 AND status = 'processing' AND updated_at < $3`, id, now, now.Add(-staleAfter))
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}

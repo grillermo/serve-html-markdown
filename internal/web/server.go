@@ -14,6 +14,7 @@ import (
 	"serve-html-markdown/internal/auth"
 	"serve-html-markdown/internal/config"
 	"serve-html-markdown/internal/files"
+	"serve-html-markdown/internal/jobs"
 	"serve-html-markdown/internal/markdown"
 	webfs "serve-html-markdown/web"
 )
@@ -47,6 +48,9 @@ type Server struct {
 	// POST /file/new and /file/upload (tests lower them).
 	formatter                      Formatter
 	maxCreateBytes, maxUploadBytes int64
+	// enqueuer receives the generate_expansion job of POST /expansions (see
+	// WithEnqueuer); the default writes to go_jobs through pool.
+	enqueuer jobs.Enqueuer
 	// Test seams. openFile opens a served file, render converts Markdown, and
 	// renderDeadline starts the timer after which a request stops waiting for a
 	// render (it returns the channel and a stop function).
@@ -111,6 +115,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if s.enqueuer == nil && pool != nil {
+		s.enqueuer = jobs.DBEnqueuer{DB: pool}
 	}
 	if s.formatter == nil {
 		s.formatter = newFormatter(cfg)

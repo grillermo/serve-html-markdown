@@ -193,7 +193,7 @@ func TestRoutePrecedence(t *testing.T) {
 func TestRoutePrecedenceSignedIn(t *testing.T) {
 	env := newAuthEnv(t)
 	h := map[string]string{"Cookie": env.cookieFor(env.user)}
-	for _, p := range []string{"/youtube/reauth", "/youtube/callback", "/youtube/debug", "/expansions/1"} {
+	for _, p := range []string{"/youtube/reauth", "/youtube/callback", "/youtube/debug"} {
 		rec := do(env.srv, "GET", p, h)
 		if rec.Code != 501 {
 			t.Errorf("GET %s: got %d, want 501", p, rec.Code)
@@ -206,8 +206,12 @@ func TestRoutePrecedenceSignedIn(t *testing.T) {
 			t.Errorf("GET %s: body %q", p, rec.Body.String())
 		}
 	}
-	if rec := do(env.srv, "POST", "/expansions", h); rec.Code != 501 {
-		t.Errorf("POST /expansions: got %d, want 501", rec.Code)
+	// Expansions are ported: an empty POST is a 400 and an unknown id a 404, both JSON.
+	if rec := do(env.srv, "POST", "/expansions", h); rec.Code != 400 {
+		t.Errorf("POST /expansions: got %d, want 400", rec.Code)
+	}
+	if rec := do(env.srv, "GET", "/expansions/1", h); rec.Code != 404 {
+		t.Errorf("GET /expansions/1: got %d, want 404", rec.Code)
 	}
 	// Ported handlers: no files yet, so / and /last are 404 JSON, /index lists
 	// nothing, a file name is looked up, and the scroll position wants fields.

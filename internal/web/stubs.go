@@ -12,10 +12,6 @@ func notImplemented(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"detail":"Not implemented."}` + "\n"))
 }
 
-// Expansions (Task 8.3).
-func (s *Server) createExpansion(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
-func (s *Server) showExpansion(w http.ResponseWriter, r *http.Request)   { notImplemented(w, r) }
-
 // Videos (Task 9.7).
 func (s *Server) createVideoSummary(w http.ResponseWriter, r *http.Request) { notImplemented(w, r) }
 func (s *Server) showVideoSummary(w http.ResponseWriter, r *http.Request)   { notImplemented(w, r) }

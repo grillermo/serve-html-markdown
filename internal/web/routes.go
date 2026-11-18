@@ -35,8 +35,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /file/upload", s.uploadFile)             // bearer
 	mux.HandleFunc("POST /summarize-video", s.createVideoSummary) // bearer
 	mux.HandleFunc("POST /twitter-video", s.createVideoSummary)   // legacy name for iOS Shortcuts
-	// TODO(Tasks 8.3, 9.7): numericID lets ids larger than int64 through, so
-	// the real {id} handlers must treat a strconv parse error as 404.
+	// numericID lets ids larger than int64 through, so the {id} handlers must
+	// treat a strconv parse error as 404 (showExpansion does; Task 9.7 must too).
 	mux.Handle("GET /summarize-video/{id}", numericID(http.HandlerFunc(s.showVideoSummary))) // public, like Rails
 	mux.Handle("GET /twitter-video/{id}", numericID(http.HandlerFunc(s.showVideoSummary)))
 
@@ -44,7 +44,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /youtube/callback", s.requireUser(s.youtubeCallback))
 	mux.Handle("GET /youtube/debug", s.requireUser(s.youtubeDebug))
 	mux.Handle("POST /expansions", s.requireUser(s.createExpansion))
-	mux.Handle("GET /expansions/{id}", numericID(s.requireUser(s.showExpansion)))
+	mux.Handle("GET /expansions/{id}", numericID(s.requireUser(conditionalGet(s.showExpansion))))
 	mux.Handle("PATCH /scroll_position", s.requireUser(s.updateScrollPosition))
 	mux.Handle("POST /scroll_position", s.requireUser(s.updateScrollPosition))
 

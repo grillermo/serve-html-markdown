@@ -495,3 +495,66 @@ func TestTimingsAreReadKeyByKey(t *testing.T) {
 		t.Fatalf("timings = %v, want %v", got.Timings, want)
 	}
 }
+
+func TestReleaseExpansionPutsProcessingBackToPending(t *testing.T) {
+	pool := testdb.New(t)
+	clock(t, t0)
+	u := newExpansionUser(t, pool, "e@x.com")
+	e := newExpansion(t, pool, u.ID)
+
+	released, err := store.ReleaseExpansion(ctx, pool, e.ID)
+	must(t, err)
+	if released {
+		t.Fatal("a pending expansion is not released")
+	}
+	_, err = store.ClaimExpansion(ctx, pool, e.ID)
+	must(t, err)
+	released, err = store.ReleaseExpansion(ctx, pool, e.ID)
+	must(t, err)
+	if !released {
+		t.Fatal("a processing expansion should be released")
+	}
+	won, err := store.ClaimExpansion(ctx, pool, e.ID)
+	must(t, err)
+	if !won {
+		t.Fatal("a released expansion can be claimed again")
+	}
+	must(t, store.CompleteExpansion(ctx, pool, e.ID, "/x.html"))
+	if released, _ = store.ReleaseExpansion(ctx, pool, e.ID); released {
+		t.Fatal("a completed expansion must stay completed")
+	}
+}
+
+func TestReclaimExpansionOnlyTakesStaleProcessingRows(t *testing.T) {
+	pool := testdb.New(t)
+	advance := clock(t, t0)
+	u := newExpansionUser(t, pool, "e@x.com")
+	e := newExpansion(t, pool, u.ID)
+	stale := 15 * time.Minute
+
+	reclaimed, err := store.ReclaimExpansion(ctx, pool, e.ID, stale)
+	must(t, err)
+	if reclaimed {
+		t.Fatal("pending rows are not reclaimed")
+	}
+	_, err = store.ClaimExpansion(ctx, pool, e.ID)
+	must(t, err)
+	advance(stale - time.Second)
+	if reclaimed, err = store.ReclaimExpansion(ctx, pool, e.ID, stale); err != nil || reclaimed {
+		t.Fatalf("a recent processing row is live: reclaimed=%v err=%v", reclaimed, err)
+	}
+	advance(2 * time.Second)
+	if reclaimed, err = store.ReclaimExpansion(ctx, pool, e.ID, stale); err != nil || !reclaimed {
+		t.Fatalf("a stale processing row should be reclaimed: reclaimed=%v err=%v", reclaimed, err)
+	}
+	got, err := store.FindExpansion(ctx, pool, e.ID)
+	must(t, err)
+	if got.Status != "pending" {
+		t.Fatalf("status = %q, want pending", got.Status)
+	}
+	must(t, store.FailExpansion(ctx, pool, e.ID, "nope"))
+	advance(time.Hour)
+	if reclaimed, _ = store.ReclaimExpansion(ctx, pool, e.ID, stale); reclaimed {
+		t.Fatal("a failed row is never reclaimed")
+	}
+}

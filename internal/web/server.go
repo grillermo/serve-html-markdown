@@ -29,6 +29,12 @@ type Server struct {
 	// codec signs the session cookie (purpose "session"); it reads the time
 	// from Clock, so tests that move the clock also move cookie expiry.
 	codec auth.Codec
+	// oauthCodec signs the YouTube OAuth state cookie (purpose "oauth-state").
+	oauthCodec auth.Codec
+	// youtubeAuth returns the authorizer of one YouTube OAuth request (see
+	// WithYoutubeAuthorizer); the default is built from the YouTube settings and
+	// fails while they are incomplete.
+	youtubeAuth func() (YoutubeAuthorizer, error)
 	// pages holds the parsed page templates by name (see parsePages).
 	pages map[string]*template.Template
 	// digests maps asset names to digested paths and files (see newAssetTable).
@@ -119,12 +125,16 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 	if s.enqueuer == nil && pool != nil {
 		s.enqueuer = jobs.DBEnqueuer{DB: pool}
 	}
+	if s.youtubeAuth == nil {
+		s.youtubeAuth = s.defaultYoutubeAuthorizer
+	}
 	if s.formatter == nil {
 		s.formatter = newFormatter(cfg)
 	}
 	s.renders = newLimiter(s.renderConcurrency)
 	s.htmlLimit = newLimiter(s.htmlConcurrency)
 	s.codec = auth.NewCodec(cfg.SecretKeyBase, "session").WithClock(func() time.Time { return s.Clock() })
+	s.oauthCodec = auth.NewCodec(cfg.SecretKeyBase, "oauth-state").WithClock(func() time.Time { return s.Clock() })
 	s.digests = newAssetTable(webfs.FS)
 	for _, name := range requiredAssets {
 		if _, ok := s.digests.public[name]; !ok {
@@ -136,7 +146,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 		panic(fmt.Sprintf("web: load time zone: %v", err))
 	}
 	s.mexicoCity = loc
-	s.pages = parsePages(webfs.FS, s.templateFuncs(), "sign_in", "markdown", "index")
+	s.pages = parsePages(webfs.FS, s.templateFuncs(), "sign_in", "markdown", "index", "youtube_create", "youtube_problem")
 	s.handler = s.routes()
 	return s
 }

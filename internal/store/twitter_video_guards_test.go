@@ -274,3 +274,37 @@ func TestAwaitingCaptionVideos(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestRestartFailedYoutubeVideoIsGuardedAndClearsTheError(t *testing.T) {
+	pool := testdb.New(t)
+	failed := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "https://x.com/a/status/1", Status: "failed"})
+	must(t, store.UpdateTwitterVideo(ctx, pool, failed.ID, store.TwitterVideoChanges{
+		YoutubeID: new("KpILHX2D-AA"), ErrorDetail: new("boom"), CaptionAttempts: new(9)}))
+
+	ok, err := store.RestartFailedYoutubeVideo(ctx, pool, failed.ID)
+	must(t, err)
+	got := mustFind(t, pool, failed.ID)
+	if !ok || got.Status != "awaiting_captions" || got.CaptionAttempts != 0 || got.ErrorDetail != nil ||
+		got.UploadCompletedAt == nil || time.Since(*got.UploadCompletedAt) > time.Minute || got.YoutubeID == nil || *got.YoutubeID != "KpILHX2D-AA" {
+		t.Fatalf("ok=%v %+v", ok, got)
+	}
+
+	// A second call finds it already restarted: nothing to do.
+	if ok, err = store.RestartFailedYoutubeVideo(ctx, pool, failed.ID); ok || err != nil {
+		t.Fatalf("second restart: %v %v", ok, err)
+	}
+	// A failed row without an id is not this function's business (ingest is).
+	noID := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "https://x.com/a/status/2", Status: "failed"})
+	if ok, err = store.RestartFailedYoutubeVideo(ctx, pool, noID.ID); ok || err != nil || mustFind(t, pool, noID.ID).Status != "failed" {
+		t.Fatalf("no id: %v %v", ok, err)
+	}
+	// Neither is a row in another status, or a missing one.
+	done := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "https://x.com/a/status/3", Status: "done"})
+	must(t, store.UpdateTwitterVideo(ctx, pool, done.ID, store.TwitterVideoChanges{YoutubeID: new("KpILHX2D-AA")}))
+	if ok, err = store.RestartFailedYoutubeVideo(ctx, pool, done.ID); ok || err != nil || mustFind(t, pool, done.ID).Status != "done" {
+		t.Fatalf("done: %v %v", ok, err)
+	}
+	if ok, err = store.RestartFailedYoutubeVideo(ctx, pool, 99999); ok || err != nil {
+		t.Fatalf("missing: %v %v", ok, err)
+	}
+}

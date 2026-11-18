@@ -61,7 +61,14 @@ func runTo(args []string, stdout, stderr io.Writer) int {
 			return migrate(cfg, stdout, stderr)
 		}
 		return seedAdmin(cfg, stdout, stderr)
-	case "youtube-reauth-url", "sync-files":
+	case "youtube-reauth-url":
+		root, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: getwd: %v\n", cmd, err)
+			return 1
+		}
+		return youtubeReauthURL(config.Load(root), stdout)
+	case "sync-files":
 		fmt.Fprintf(stderr, "%s: not implemented\n", cmd)
 		return 1
 	default:

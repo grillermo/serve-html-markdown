@@ -226,6 +226,24 @@ func StartYoutubeTwitterVideo(ctx context.Context, db DB, watchURL, youtubeID st
 	return v, true, err
 }
 
+// RestartFailedYoutubeVideo is the resubmit of a failed video that already has a
+// YouTube id (the upload worked, the captions step failed): in one statement,
+// guarded by "failed" and a stored id, it becomes awaiting_captions again with
+// no caption attempts, upload_completed_at now and the error cleared, the reset
+// StartYoutubeTwitterVideo does for a YouTube link. It reports whether the row
+// was restarted; a row in another status, without an id or gone is "false, nil".
+// The caller then queues the first caption check.
+func RestartFailedYoutubeVideo(ctx context.Context, db DB, id int64) (bool, error) {
+	now := utcNow()
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos
+		SET status = 'awaiting_captions', caption_attempts = 0, upload_completed_at = $2, error_detail = NULL, updated_at = $2
+		WHERE id = $1 AND status = 'failed' AND COALESCE(youtube_id, '') <> ''`, id, now)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // DownloadedSiblings are the rows for the same tweet (query string ignored)
 // that have a video_path, the given row first and then newest first: the
 // candidates for reusing an earlier download.

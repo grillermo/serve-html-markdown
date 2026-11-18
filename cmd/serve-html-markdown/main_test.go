@@ -16,7 +16,6 @@ func TestRunExitCodes(t *testing.T) {
 		{[]string{"-h"}, 0, "usage:", ""},
 		{[]string{"--help"}, 0, "usage:", ""},
 		{[]string{"help"}, 0, "usage:", ""},
-		{[]string{"youtube-reauth-url"}, 1, "", "youtube-reauth-url: not implemented"},
 		{[]string{"sync-files"}, 1, "", "sync-files: not implemented"},
 		{[]string{"bogus"}, 2, "", "unknown command"},
 	}

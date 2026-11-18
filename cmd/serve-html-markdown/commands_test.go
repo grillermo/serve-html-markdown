@@ -151,3 +151,25 @@ func TestCountMigrationsPropagatesErrors(t *testing.T) {
 		t.Error("closed pool: want an error")
 	}
 }
+
+// Ruby: lib/tasks/youtube.rake. It needs no database and cannot fail: the URL is
+// only HOST, YOUTUBE_REAUTH_URL and string work.
+func TestYoutubeReauthURLPrintsTheRakeText(t *testing.T) {
+	const tail = "Open this, approve access, and the new refresh token is stored for you:\n\n"
+	const instructions = "\n\nYou must be signed in to the app first — the page is behind the sign-in page.\n"
+	for _, c := range []struct{ name, host, override, want string }{
+		{"host", "reader.example", "", "https://reader.example/youtube/reauth"},
+		{"default host", "", "", "https://localhost:8009/youtube/reauth"},
+		{"override", "reader.example", "https://other.example/go", "https://other.example/go"},
+		{"blank override", "reader.example", "  ", "https://reader.example/youtube/reauth"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("HOST", c.host)
+			t.Setenv("YOUTUBE_REAUTH_URL", c.override)
+			code, out, errOut := runCmd("youtube-reauth-url")
+			if code != 0 || errOut != "" || out != tail+c.want+instructions {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+			}
+		})
+	}
+}

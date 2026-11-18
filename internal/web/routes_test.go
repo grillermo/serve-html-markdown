@@ -128,31 +128,24 @@ func TestNonDigitIDsAre404(t *testing.T) {
 			t.Errorf("GET %s: got %d, want 404", p, rec.Code)
 		}
 	}
-	// Digit ids reach the guard (expansions) or the (not yet ported) public handlers.
+	// Digit ids reach the guard (expansions); the video statuses are public and
+	// have their own tests (videos_test.go), since they need a database.
 	if rec := do(srv, "GET", "/expansions/12", nil); rec.Code != 302 {
 		t.Errorf("GET /expansions/12: got %d, want 302 (guard)", rec.Code)
-	}
-	for _, p := range []string{"/summarize-video/12", "/twitter-video/12"} {
-		if rec := do(srv, "GET", p, nil); rec.Code != 501 {
-			t.Errorf("GET %s: got %d, want 501", p, rec.Code)
-		}
 	}
 }
 
 // numericID only checks characters, so an id larger than int64 passes it. The
-// real {id} handlers (Tasks 8.3, 9.7) must treat a parse error as 404.
+// real {id} handlers must treat a parse error as 404.
 func TestHugeIDsPassTheDigitCheck(t *testing.T) {
 	srv := newTestServerNoDB(t)
 	if rec := do(srv, "GET", "/expansions/99999999999999999999", nil); rec.Code != 302 {
 		t.Errorf("GET /expansions/<huge>: got %d, want 302 (reaches the guard)", rec.Code)
 	}
-	if rec := do(srv, "GET", "/summarize-video/99999999999999999999", nil); rec.Code != 501 {
-		t.Errorf("GET /summarize-video/<huge>: got %d, want 501 (reaches the handler)", rec.Code)
-	}
 }
 
 // Guarded routes send an anonymous visitor to the sign-in page and let a
-// signed-in one reach the handler (still a 501 stub until its task lands).
+// signed-in one reach the handler.
 func TestRoutePrecedence(t *testing.T) {
 	srv := newTestServerNoDB(t)
 	for _, p := range []string{"/", "/last", "/index", "/anything.md", "/youtube/reauth", "/expansions/1"} {
@@ -169,16 +162,10 @@ func TestRoutePrecedence(t *testing.T) {
 	}
 	// Bearer routes are not behind the session guard: without a token they
 	// answer 401 JSON, not a redirect to sign-in.
-	for _, c := range [][2]string{{"POST", "/file/new"}, {"POST", "/file/upload"}} {
+	for _, c := range [][2]string{{"POST", "/file/new"}, {"POST", "/file/upload"}, {"POST", "/summarize-video"}, {"POST", "/twitter-video"}} {
 		rec := do(srv, c[0], c[1], nil)
 		if rec.Code != 401 || strings.TrimSpace(rec.Body.String()) != `{"detail":"Unauthorized"}` {
 			t.Errorf("%s %s: got %d %q, want 401 Unauthorized", c[0], c[1], rec.Code, rec.Body.String())
-		}
-	}
-	// Public or bearer routes of later tasks are still stubs.
-	for _, c := range [][2]string{{"POST", "/summarize-video"}, {"POST", "/twitter-video"}} {
-		if rec := do(srv, c[0], c[1], nil); rec.Code != 501 {
-			t.Errorf("%s %s: got %d, want 501", c[0], c[1], rec.Code)
 		}
 	}
 	// Static names beat the {file_name} wildcard; /assets/* is its own 404.
@@ -187,23 +174,17 @@ func TestRoutePrecedence(t *testing.T) {
 	}
 }
 
-// With a valid session every guarded route reaches its handler: the ported
-// ones answer for real, the others are 501 JSON stubs. Not parallel: it uses
-// the shared test database.
+// With a valid session every guarded route reaches its handler. Not parallel:
+// it uses the shared test database.
 func TestRoutePrecedenceSignedIn(t *testing.T) {
 	env := newAuthEnv(t)
 	h := map[string]string{"Cookie": env.cookieFor(env.user)}
-	for _, p := range []string{"/youtube/reauth", "/youtube/callback", "/youtube/debug"} {
-		rec := do(env.srv, "GET", p, h)
-		if rec.Code != 501 {
-			t.Errorf("GET %s: got %d, want 501", p, rec.Code)
-			continue
-		}
-		if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
-			t.Errorf("GET %s: Content-Type %q", p, got)
-		}
-		if strings.TrimSpace(rec.Body.String()) != `{"detail":"Not implemented."}` {
-			t.Errorf("GET %s: body %q", p, rec.Body.String())
+	// The YouTube pages answer for real: no client id is configured here, so
+	// reauth is a 500 problem page, a callback without a cookie a 400, and the
+	// debug report a 200.
+	for p, want := range map[string]int{"/youtube/reauth": 500, "/youtube/callback": 400, "/youtube/debug": 200} {
+		if rec := do(env.srv, "GET", p, h); rec.Code != want {
+			t.Errorf("GET %s: got %d, want %d", p, rec.Code, want)
 		}
 	}
 	// Expansions are ported: an empty POST is a 400 and an unknown id a 404, both JSON.

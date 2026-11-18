@@ -11,6 +11,7 @@ import (
 	"serve-html-markdown/internal/config"
 	"serve-html-markdown/internal/db"
 	"serve-html-markdown/internal/store"
+	"serve-html-markdown/internal/video"
 )
 
 // Devise's validatable bounds (config.password_length in devise.rb); the Rails
@@ -117,5 +118,18 @@ func seedAdmin(cfg config.Config, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "Seeded user %s\n", cfg.AdminEmail)
+	return 0
+}
+
+// youtubeReauthURL is lib/tasks/youtube.rake: it prints the URL a signed-in
+// human opens to re-authorize YouTube uploads. The URL comes from HOST and
+// YOUTUBE_REAUTH_URL alone (no Google call, no database), so unlike a consent
+// URL it needs no client id and cannot fail.
+func youtubeReauthURL(cfg config.Config, stdout io.Writer) int {
+	fmt.Fprintln(stdout, "Open this, approve access, and the new refresh token is stored for you:")
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, video.YoutubeReauthURL(cfg.YoutubeReauthURL, cfg.YoutubeHost, ""))
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "You must be signed in to the app first — the page is behind the sign-in page.")
 	return 0
 }

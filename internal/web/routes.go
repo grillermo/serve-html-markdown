@@ -12,9 +12,8 @@ import (
 	webfs "serve-html-markdown/web"
 )
 
-// routes builds the full route table. Patterns for handlers that are not
-// ported yet already live here (their handlers are 501 stubs in stubs.go), so
-// precedence between routes is decided in one place:
+// routes builds the full route table, so precedence between routes is decided
+// in one place:
 // exact paths beat /{file_name}, and /{$} matches only the root.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
@@ -35,8 +34,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /file/upload", s.uploadFile)             // bearer
 	mux.HandleFunc("POST /summarize-video", s.createVideoSummary) // bearer
 	mux.HandleFunc("POST /twitter-video", s.createVideoSummary)   // legacy name for iOS Shortcuts
-	// numericID lets ids larger than int64 through, so the {id} handlers must
-	// treat a strconv parse error as 404 (showExpansion does; Task 9.7 must too).
+	// numericID lets ids larger than int64 through, so the {id} handlers treat a
+	// strconv parse error as 404 (showExpansion and showVideoSummary do).
 	mux.Handle("GET /summarize-video/{id}", numericID(http.HandlerFunc(s.showVideoSummary))) // public, like Rails
 	mux.Handle("GET /twitter-video/{id}", numericID(http.HandlerFunc(s.showVideoSummary)))
 

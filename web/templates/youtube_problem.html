@@ -1,0 +1,12 @@
+{{define "title"}}YouTube authorization failed{{end}}
+
+{{define "content"}}<main class="signin">
+  <h1>YouTube authorization failed</h1>
+
+  <p>{{.Message}}</p>
+
+  <p><a href="/youtube/reauth">Try again</a></p>
+</main>
+{{end}}
+
+{{template "layout" .}}

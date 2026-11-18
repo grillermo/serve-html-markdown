@@ -1,0 +1,16 @@
+{{define "title"}}YouTube re-authorized{{end}}
+
+{{define "content"}}<main class="signin">
+  <h1>YouTube re-authorized</h1>
+
+  <p>The new refresh token is stored. Nothing to copy, nothing to restart.</p>
+
+  {{if .VideoID}}
+    <p>Re-queued twitter video #{{.VideoID}} — the upload resumes from the file already on disk.</p>
+  {{else}}
+    <p>No video was waiting on this, so nothing was re-queued.</p>
+  {{end}}
+</main>
+{{end}}
+
+{{template "layout" .}}

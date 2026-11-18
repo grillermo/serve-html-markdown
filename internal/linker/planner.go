@@ -4,23 +4,22 @@ import "sort"
 
 const crossBlockMessage = "Selection spans multiple paragraphs — select within one."
 
-// Plan ports Planner.plan: it turns a plain-text match into the source ranges
+// planSegments ports Planner.plan: it turns a plain-text match into the source ranges
 // to wrap in links, or an UnsafeMatch error.
-func Plan(m *Map, plain Range, source string) ([]Range, error) {
+func planSegments(m *docMap, plain srcRange, source string) ([]srcRange, error) {
 	if err := rejectCrossBlock(m.BlockIDs[plain.Begin:plain.End]); err != nil {
 		return nil, err
 	}
-	r := m.SourceRange(plain)
+	r := m.sourceRange(plain)
 	if err := rejectUnlinkable(m, r); err != nil {
 		return nil, err
 	}
 	r = snap(m, r)
-	lo, hi := m.PlainIndicesWithin(r)
-	if err := rejectCrossBlock(m.BlockIDs[lo:hi]); err != nil {
-		return nil, err
+	if m.crossesBlocks(r) {
+		return nil, unsafeMatch(crossBlockMessage)
 	}
 
-	var segments []Range
+	var segments []srcRange
 	for _, seg := range segment(m, r) {
 		if !meaningful(m, seg) {
 			continue
@@ -45,8 +44,25 @@ func rejectCrossBlock(ids []int32) error {
 	return nil
 }
 
+// crossesBlocks ports reject_cross_block!(block_ids_within(map, range)): do the
+// plain bytes within the source range carry more than one distinct block id?
+func (m *docMap) crossesBlocks(r srcRange) bool {
+	var first int32
+	seen, cross := false, false
+	m.plainWithin(r, func(i int) bool {
+		switch id := m.BlockIDs[i]; {
+		case !seen:
+			first, seen = id, true
+		case id != first:
+			cross = true
+		}
+		return !cross
+	})
+	return cross
+}
+
 // rejectUnlinkable ports reject_unlinkable!.
-func rejectUnlinkable(m *Map, r Range) error {
+func rejectUnlinkable(m *docMap, r srcRange) error {
 	for _, zone := range m.UnlinkableRanges {
 		if zone.Begin >= r.End || zone.End <= r.Begin {
 			continue
@@ -60,7 +76,7 @@ func rejectUnlinkable(m *Map, r Range) error {
 // partially overlapped: an element with exactly one of its tags inside the
 // range is pulled in whole. Elements fully inside or fully containing the
 // range are fine. Like the Ruby, the range is updated while iterating.
-func snap(m *Map, r Range) Range {
+func snap(m *docMap, r srcRange) srcRange {
 	for {
 		changed := false
 		for _, el := range m.InlineRanges {
@@ -73,7 +89,7 @@ func snap(m *Map, r Range) Range {
 			if el.Begin < r.Begin && el.End > r.End {
 				continue
 			}
-			r = Range{min(r.Begin, el.Begin), max(r.End, el.End)}
+			r = srcRange{min(r.Begin, el.Begin), max(r.End, el.End)}
 			changed = true
 		}
 		if !changed {
@@ -90,8 +106,8 @@ func snap(m *Map, r Range) Range {
 // its pieces and the result is exactly the set difference, which one sweep
 // over the begin-sorted links computes. Links that do not overlap the range
 // cannot affect it and are skipped.
-func segment(m *Map, r Range) []Range {
-	links := make([]Range, 0, 8)
+func segment(m *docMap, r srcRange) []srcRange {
+	links := make([]srcRange, 0, 8)
 	for _, l := range m.LinkRanges {
 		if l.Begin < r.End && l.End > r.Begin {
 			links = append(links, l)
@@ -99,34 +115,33 @@ func segment(m *Map, r Range) []Range {
 	}
 	sort.SliceStable(links, func(i, j int) bool { return links[i].Begin < links[j].Begin })
 
-	var out []Range
+	var out []srcRange
 	cursor := r.Begin
 	for _, l := range links {
 		if l.Begin > cursor {
-			out = append(out, Range{cursor, l.Begin})
+			out = append(out, srcRange{cursor, l.Begin})
 		}
 		cursor = max(cursor, l.End)
 	}
 	if cursor < r.End {
-		out = append(out, Range{cursor, r.End})
+		out = append(out, srcRange{cursor, r.End})
 	}
 	return out
 }
 
 // meaningful ports Planner.meaningful?: the segment covers at least one
 // non-whitespace plain byte.
-func meaningful(m *Map, seg Range) bool {
-	lo, hi := m.PlainIndicesWithin(seg)
-	for _, b := range m.Plain[lo:hi] {
-		if !isSpace(b) {
-			return true
-		}
-	}
-	return false
+func meaningful(m *docMap, seg srcRange) bool {
+	found := false
+	m.plainWithin(seg, func(i int) bool {
+		found = !isSpace(m.Plain[i])
+		return !found
+	})
+	return found
 }
 
 // trim ports Planner.trim: strip source whitespace from both segment edges.
-func trim(seg Range, source string) (Range, bool) {
+func trim(seg srcRange, source string) (srcRange, bool) {
 	from, upto := seg.Begin, seg.End
 	for from < upto && isSpace(source[from]) {
 		from++
@@ -135,7 +150,7 @@ func trim(seg Range, source string) (Range, bool) {
 		upto--
 	}
 	if from == upto {
-		return Range{}, false
+		return srcRange{}, false
 	}
-	return Range{from, upto}, true
+	return srcRange{from, upto}, true
 }

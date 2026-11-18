@@ -25,11 +25,11 @@ import (
 //   - open raw-HTML tags use one stack per name (see htmlBuilder.open).
 type mdBuilder struct {
 	src     string
-	m       *Map
+	m       *docMap
 	blockID int32
 
 	emph    []emphEntry
-	removed []Range // plain index ranges to drop at the end
+	removed []srcRange // plain index ranges to drop at the end
 	open    map[string][]int
 
 	// per-line state
@@ -47,9 +47,9 @@ type emphEntry struct {
 	plainIndex int
 }
 
-// BuildMarkdownMap ports MarkdownMap.build.
-func BuildMarkdownMap(src string) *Map {
-	b := &mdBuilder{src: src, m: &Map{}, open: map[string][]int{}}
+// buildMarkdownMap ports MarkdownMap.build.
+func buildMarkdownMap(src string) *docMap {
+	b := &mdBuilder{src: src, m: newDocMap(len(src)), open: map[string][]int{}}
 	b.build()
 	b.compact()
 	return b.m
@@ -68,7 +68,8 @@ func lstripOffset(s string) int {
 
 func blankLine(s string) bool { return lstripOffset(s) == len(s) } // content.strip.empty?
 
-// fenceRun ports FENCE (\A(`{3,}|~{3,})) on s: the fence character, or 0.
+// fenceChar ports FENCE (\A(`{3,}|~{3,})) on s: the fence character (the
+// first character of capture group 1), or 0 when s does not start with a fence.
 func fenceChar(s string) byte {
 	if len(s) >= 3 && (s[0] == '`' || s[0] == '~') && s[1] == s[0] && s[2] == s[0] {
 		return s[0]
@@ -181,7 +182,7 @@ func (b *mdBuilder) build() {
 				b.blockID++
 			} else {
 				b.emitVerbatim(lineStart, lineStart+lineLen)
-				b.m.UnlinkableRanges = append(b.m.UnlinkableRanges, Range{lineStart, lineStart + lineLen})
+				b.m.UnlinkableRanges = append(b.m.UnlinkableRanges, srcRange{lineStart, lineStart + lineLen})
 			}
 			continue
 		}
@@ -207,7 +208,7 @@ func (b *mdBuilder) build() {
 			}
 			inIndentedCode = true
 			b.emitVerbatim(lineStart, lineStart+lineLen)
-			b.m.UnlinkableRanges = append(b.m.UnlinkableRanges, Range{lineStart, lineStart + lineLen})
+			b.m.UnlinkableRanges = append(b.m.UnlinkableRanges, srcRange{lineStart, lineStart + lineLen})
 			previousBlank = false
 			continue
 		}
@@ -374,7 +375,7 @@ func (b *mdBuilder) codeSpan(start, tickCount, upto int) int {
 		return openerEnd
 	}
 	b.emitVerbatim(openerEnd, cs)
-	b.m.InlineRanges = append(b.m.InlineRanges, Range{start, ce})
+	b.m.InlineRanges = append(b.m.InlineRanges, srcRange{start, ce})
 	return ce
 }
 
@@ -469,7 +470,7 @@ func (b *mdBuilder) link(start, upto int) int {
 	if labelEnd := b.findLabelEnd(start+1, upto); labelEnd >= 0 && labelEnd+1 < len(b.src) && b.src[labelEnd+1] == '(' {
 		if close := b.indexParen(labelEnd + 2); close >= 0 && close < upto {
 			b.scanInline(start+1, labelEnd)
-			b.m.LinkRanges = append(b.m.LinkRanges, Range{start, close + 1})
+			b.m.LinkRanges = append(b.m.LinkRanges, srcRange{start, close + 1})
 			return close + 1
 		}
 	}
@@ -481,7 +482,7 @@ func (b *mdBuilder) link(start, upto int) int {
 func (b *mdBuilder) image(start, upto int) int {
 	if labelEnd := b.findLabelEnd(start+2, upto); labelEnd >= 0 && labelEnd+1 < len(b.src) && b.src[labelEnd+1] == '(' {
 		if close := b.indexParen(labelEnd + 2); close >= 0 && close < upto {
-			b.m.LinkRanges = append(b.m.LinkRanges, Range{start, close + 1})
+			b.m.LinkRanges = append(b.m.LinkRanges, srcRange{start, close + 1})
 			return close + 1
 		}
 	}
@@ -499,7 +500,7 @@ func (b *mdBuilder) htmlTag(text string, start, finish int) int {
 		if stack := b.open[name]; len(stack) > 0 {
 			openStart := stack[len(stack)-1]
 			b.open[name] = stack[:len(stack)-1]
-			r := Range{openStart, finish}
+			r := srcRange{openStart, finish}
 			b.m.InlineRanges = append(b.m.InlineRanges, r)
 			if name == "a" {
 				b.m.LinkRanges = append(b.m.LinkRanges, r)
@@ -520,8 +521,8 @@ func (b *mdBuilder) emphasis(text string, start, finish int) int {
 	if b.closer(start) && len(b.emph) > 0 && b.emph[len(b.emph)-1].text == text {
 		top := b.emph[len(b.emph)-1]
 		b.emph = b.emph[:len(b.emph)-1]
-		b.removed = append(b.removed, Range{top.plainIndex, top.plainIndex + len(text)})
-		b.m.InlineRanges = append(b.m.InlineRanges, Range{top.start, finish})
+		b.removed = append(b.removed, srcRange{top.plainIndex, top.plainIndex + len(text)})
+		b.m.InlineRanges = append(b.m.InlineRanges, srcRange{top.start, finish})
 	} else if b.opener(finish) {
 		b.emph = append(b.emph, emphEntry{text, start, len(b.m.Plain)})
 		b.emitVerbatim(start, finish)

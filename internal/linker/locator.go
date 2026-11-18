@@ -8,7 +8,7 @@ import (
 
 const notFoundMessage = "Selection not found in source — select a plainer run of text."
 
-// Locate ports SelectionLocator.locate: it finds the occurrence-th match of
+// locate ports SelectionLocator.locate: it finds the occurrence-th match of
 // the selected text in the map's plain text, where any run of whitespace in
 // the selection matches any run of whitespace in the plain text. It returns
 // the match as a range over Plain.
@@ -22,19 +22,19 @@ const notFoundMessage = "Selection not found in source — select a plainer run 
 // An out-of-range occurrence falls back to the first match. A negative
 // occurrence indexes from the end like Ruby's Array#fetch (Link clamps
 // negatives to 0 before calling).
-func Locate(m *Map, selected string, occurrence int) (Range, error) {
+func locate(m *docMap, selected string, occurrence int) (srcRange, error) {
 	if !utf8.ValidString(selected) {
-		return Range{}, ErrInvalidUTF8 // Ruby: split raises ArgumentError
+		return srcRange{}, ErrInvalidUTF8 // Ruby: split raises ArgumentError
 	}
 	tokens := splitSpace(selected)
 	if len(tokens) == 0 {
-		return Range{}, notFound()
+		return srcRange{}, notFound()
 	}
 	if !utf8.Valid(m.Plain) {
-		return Range{}, ErrInvalidUTF8 // Ruby: regexp match raises ArgumentError
+		return srcRange{}, ErrInvalidUTF8 // Ruby: regexp match raises ArgumentError
 	}
 
-	var matches []Range
+	var matches []srcRange
 	first := []byte(tokens[0])
 	plain := m.Plain
 	for pos := 0; pos <= len(plain); {
@@ -44,7 +44,7 @@ func Locate(m *Map, selected string, occurrence int) (Range, error) {
 		}
 		start := pos + i
 		if end, ok := matchRest(plain, start+len(first), tokens[1:]); ok {
-			matches = append(matches, Range{start, end})
+			matches = append(matches, srcRange{start, end})
 			if occurrence >= 0 && len(matches) > occurrence {
 				return matches[occurrence], nil // later matches cannot change the answer
 			}
@@ -52,7 +52,7 @@ func Locate(m *Map, selected string, occurrence int) (Range, error) {
 		pos = start + 1 // overlapping matches; non-start bytes never begin a token
 	}
 	if len(matches) == 0 {
-		return Range{}, notFound()
+		return srcRange{}, notFound()
 	}
 	if occurrence < 0 {
 		if idx := len(matches) + occurrence; idx >= 0 {

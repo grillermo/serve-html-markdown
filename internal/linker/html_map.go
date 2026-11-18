@@ -30,7 +30,7 @@ var rawTextClose = map[string]*regexp.Regexp{
 
 type htmlBuilder struct {
 	src     string
-	m       *Map
+	m       *docMap
 	blockID int32
 	// open tags by name: source start of each unclosed opener. Ruby keeps one
 	// stack and closes with rindex(name); only same-name order matters, so one
@@ -93,10 +93,10 @@ const (
 	tokEntity
 )
 
-// BuildHTMLMap ports HtmlMap.build: it projects an HTML source into rendered
+// buildHTMLMap ports HtmlMap.build: it projects an HTML source into rendered
 // text with offsets back to the source.
-func BuildHTMLMap(src string) *Map {
-	b := &htmlBuilder{src: src, m: &Map{}, open: map[string][]int{}}
+func buildHTMLMap(src string) *docMap {
+	b := &htmlBuilder{src: src, m: newDocMap(len(src)), open: map[string][]int{}}
 	position := 0
 	for {
 		start, end, kind := b.nextToken(position)
@@ -274,7 +274,7 @@ func (b *htmlBuilder) closeTag(name string, start, end int) {
 	openStart := stack[len(stack)-1]
 	b.open[name] = stack[:len(stack)-1]
 	if inlineTags[name] {
-		r := Range{openStart, end}
+		r := srcRange{openStart, end}
 		b.m.InlineRanges = append(b.m.InlineRanges, r)
 		if name == "a" {
 			b.m.LinkRanges = append(b.m.LinkRanges, r)

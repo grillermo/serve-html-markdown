@@ -28,8 +28,19 @@ type goldenCase struct {
 
 // TestGoldenCases replays inputs captured from the real Ruby SelectionLinker
 // (script/golden_linker.rb) and demands identical output or error.
-func TestGoldenCases(t *testing.T) {
-	raw, err := os.ReadFile("../../testdata/golden/linker/cases.json")
+func TestGoldenCases(t *testing.T) { replayGolden(t, "../../testdata/golden/linker/cases.json", 154) }
+
+// TestGoldenNonMonotone replays the corpus from
+// script/golden_linker_nonmonotone.rb: Markdown sources whose map is
+// non-monotone (a raw tag overshooting a link label), with exhaustive
+// selections, so the linear plain-index filter is covered without Ruby.
+func TestGoldenNonMonotone(t *testing.T) {
+	replayGolden(t, "../../testdata/golden/linker/nonmonotone.json", 1300)
+}
+
+func replayGolden(t *testing.T, path string, atLeast int) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,8 +48,8 @@ func TestGoldenCases(t *testing.T) {
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatal(err)
 	}
-	if len(cases) < 152 {
-		t.Fatalf("only %d golden cases, want at least 152", len(cases))
+	if len(cases) < atLeast {
+		t.Fatalf("only %d golden cases, want at least %d", len(cases), atLeast)
 	}
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {

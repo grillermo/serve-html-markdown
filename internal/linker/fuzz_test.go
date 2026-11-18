@@ -3,7 +3,10 @@ package linker
 import (
 	"encoding/json"
 	"errors"
+	"hash/fnv"
+	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -57,19 +60,45 @@ func explainsSplice(src, out string, markdown bool) bool {
 	return walk(0, 0, false)
 }
 
-func checkMap(t *testing.T, name, src string, m *Map) {
+// checkWithinAgainstLinear compares plainWithin (binary search when the map is
+// monotone) with Ruby's linear filter, for ranges drawn from the map's own
+// offsets plus arbitrary ones.
+func checkWithinAgainstLinear(t *testing.T, name, src string, m *docMap) {
+	t.Helper()
+	h := fnv.New64a()
+	h.Write([]byte(src))
+	rng := rand.New(rand.NewPCG(h.Sum64(), uint64(len(m.Plain))))
+	pick := func(from []int32) int {
+		if len(from) == 0 || rng.IntN(4) == 0 {
+			return rng.IntN(len(src) + 2)
+		}
+		return int(from[rng.IntN(len(from))])
+	}
+	for k := 0; k < 24; k++ {
+		r := srcRange{pick(m.Starts), pick(m.Ends)}
+		if k%3 == 0 && r.Begin > r.End {
+			r.Begin, r.End = r.End, r.Begin
+		}
+		if got, want := withinIndices(m, r), linearWithin(m, r); !slices.Equal(got, want) {
+			t.Fatalf("%s: plainWithin(%v) = %v, linear filter = %v\nsource=%q", name, r, got, want, src)
+		}
+	}
+}
+
+func checkMap(t *testing.T, name, src string, m *docMap) {
 	t.Helper()
 	n := len(m.Plain)
 	if len(m.Starts) != n || len(m.Ends) != n || len(m.BlockIDs) != n {
 		t.Fatalf("%s: parallel slices disagree", name)
 	}
-	assertMonotonic(t, m)
+	assertMonotonic(t, m) // the flag must be truthful; non-monotone maps are legal
+	checkWithinAgainstLinear(t, name, src, m)
 	for i := 0; i < n; i++ {
 		if m.Starts[i] < 0 || int(m.Ends[i]) > len(src) {
 			t.Fatalf("%s: offsets out of bounds at %d", name, i)
 		}
 	}
-	for _, rs := range [][]Range{m.InlineRanges, m.LinkRanges, m.UnlinkableRanges} {
+	for _, rs := range [][]srcRange{m.InlineRanges, m.LinkRanges, m.UnlinkableRanges} {
 		for _, r := range rs {
 			if r.Begin < 0 || r.End > len(src) || r.Begin > r.End {
 				t.Fatalf("%s: range %v out of bounds", name, r)
@@ -99,6 +128,8 @@ func FuzzLink(f *testing.F) {
 		f.Add(c.Source, c.Extension == ".html", c.SelectedText, c.Occurrence)
 	}
 	f.Add("*a **b** c*\n[x](y) `z` <b>q</b>\n", false, "b c x", 0)
+	f.Add("b[<br]())>e\n", false, ")", 0)         // non-monotone Markdown map
+	f.Add("[vamp;<br]()]> z)*w\n", false, "]", 0) // non-monotone Markdown map
 	f.Add("<p>a<b>c<i>d</b>e</i></p><!-- x --><script>y</script>", true, "c d e", 0)
 
 	f.Fuzz(func(t *testing.T, source string, html bool, selected string, occurrence int) {
@@ -112,9 +143,9 @@ func FuzzLink(f *testing.F) {
 		out, err := Link(source, ext, selected, occurrence, fuzzURL)
 		if utf8.ValidString(source) {
 			if html {
-				checkMap(t, "html", source, BuildHTMLMap(source))
+				checkMap(t, "html", source, buildHTMLMap(source))
 			} else {
-				checkMap(t, "md", source, BuildMarkdownMap(source))
+				checkMap(t, "md", source, buildMarkdownMap(source))
 			}
 		}
 		if err != nil {

@@ -6,30 +6,30 @@ import (
 	"testing"
 )
 
-func plainOf(m *Map) string { return string(m.Plain) }
+func plainOf(m *docMap) string { return string(m.Plain) }
 
 func TestHTMLMapProjectsTextAndDropsTags(t *testing.T) {
-	m := BuildHTMLMap("<p>alpha <span>beta</span></p>")
+	m := buildHTMLMap("<p>alpha <span>beta</span></p>")
 	if got := plainOf(m); got != "alpha beta\n" {
 		t.Fatalf("plain = %q", got)
 	}
 }
 
 func TestHTMLMapMapsPlainBytesBackToSourceOffsets(t *testing.T) {
-	m := BuildHTMLMap("<p>ab</p>")
+	m := buildHTMLMap("<p>ab</p>")
 	if got := plainOf(m); got != "ab\n" {
 		t.Fatalf("plain = %q", got)
 	}
 	if m.Starts[0] != 3 || m.Ends[1] != 5 {
 		t.Fatalf("starts[0]=%d ends[1]=%d", m.Starts[0], m.Ends[1])
 	}
-	if got := m.SourceRange(Range{0, 2}); got != (Range{3, 5}) {
+	if got := m.sourceRange(srcRange{0, 2}); got != (srcRange{3, 5}) {
 		t.Fatalf("source range = %v", got)
 	}
 }
 
 func TestHTMLMapDecodesEntitiesAsAtomicRuns(t *testing.T) {
-	m := BuildHTMLMap("<p>A &amp; B</p>")
+	m := buildHTMLMap("<p>A &amp; B</p>")
 	if got := plainOf(m); got != "A & B\n" {
 		t.Fatalf("plain = %q", got)
 	}
@@ -40,7 +40,7 @@ func TestHTMLMapDecodesEntitiesAsAtomicRuns(t *testing.T) {
 }
 
 func TestHTMLMapMultiByteEntityMapsEveryByteToTheRun(t *testing.T) {
-	m := BuildHTMLMap("<p>caf&#233;</p>")
+	m := buildHTMLMap("<p>caf&#233;</p>")
 	if got := plainOf(m); got != "café\n" {
 		t.Fatalf("plain = %q", got)
 	}
@@ -52,28 +52,28 @@ func TestHTMLMapMultiByteEntityMapsEveryByteToTheRun(t *testing.T) {
 }
 
 func TestHTMLMapKeepsUnknownNamedEntitiesLiteral(t *testing.T) {
-	m := BuildHTMLMap("<p>a&nbsp;b</p>")
+	m := buildHTMLMap("<p>a&nbsp;b</p>")
 	if got := plainOf(m); got != "a&nbsp;b\n" {
 		t.Fatalf("plain = %q", got)
 	}
 }
 
 func TestHTMLMapSkipsScriptAndStyleContents(t *testing.T) {
-	m := BuildHTMLMap("<script>var beta = 1;</script><style>.x{}</style><p>x</p>")
+	m := buildHTMLMap("<script>var beta = 1;</script><style>.x{}</style><p>x</p>")
 	if got := plainOf(m); got != "x\n" {
 		t.Fatalf("plain = %q", got)
 	}
 }
 
 func TestHTMLMapUnclosedScriptSwallowsTheRest(t *testing.T) {
-	m := BuildHTMLMap("<p>a</p><script>never closed <p>b</p>")
+	m := buildHTMLMap("<p>a</p><script>never closed <p>b</p>")
 	if got := plainOf(m); got != "a\n" {
 		t.Fatalf("plain = %q", got)
 	}
 }
 
 func TestHTMLMapSeparatesBlocksWithZeroWidthNewlineAndDistinctIDs(t *testing.T) {
-	m := BuildHTMLMap("<p>one</p><p>two</p>")
+	m := buildHTMLMap("<p>one</p><p>two</p>")
 	if got := plainOf(m); got != "one\ntwo\n" {
 		t.Fatalf("plain = %q", got)
 	}
@@ -89,7 +89,7 @@ func TestHTMLMapSeparatesBlocksWithZeroWidthNewlineAndDistinctIDs(t *testing.T) 
 }
 
 func TestHTMLMapKeepsOneBlockIDInsideParagraphWithInlineTags(t *testing.T) {
-	m := BuildHTMLMap("<p>one <em>two</em> three</p>")
+	m := buildHTMLMap("<p>one <em>two</em> three</p>")
 	ids := slices.Clone(m.BlockIDs)
 	slices.Sort(ids)
 	if len(slices.Compact(ids)) != 1 {
@@ -99,32 +99,32 @@ func TestHTMLMapKeepsOneBlockIDInsideParagraphWithInlineTags(t *testing.T) {
 
 func TestHTMLMapRecordsInlineElementRanges(t *testing.T) {
 	src := "<p>a <em>b</em> c</p>"
-	m := BuildHTMLMap(src)
+	m := buildHTMLMap(src)
 	start := bytes.Index([]byte(src), []byte("<em>"))
 	end := bytes.Index([]byte(src), []byte("</em>")) + len("</em>")
-	if !slices.Contains(m.InlineRanges, Range{start, end}) {
+	if !slices.Contains(m.InlineRanges, srcRange{start, end}) {
 		t.Fatalf("inline ranges = %v", m.InlineRanges)
 	}
 }
 
 func TestHTMLMapRecordsAnchorsAsInlineAndLinkRanges(t *testing.T) {
 	src := `<p><a href="/old.html">beta</a></p>`
-	m := BuildHTMLMap(src)
-	r := Range{bytes.Index([]byte(src), []byte("<a")), bytes.Index([]byte(src), []byte("</a>")) + len("</a>")}
+	m := buildHTMLMap(src)
+	r := srcRange{bytes.Index([]byte(src), []byte("<a")), bytes.Index([]byte(src), []byte("</a>")) + len("</a>")}
 	if !slices.Contains(m.LinkRanges, r) || !slices.Contains(m.InlineRanges, r) {
 		t.Fatalf("link=%v inline=%v want %v", m.LinkRanges, m.InlineRanges, r)
 	}
 }
 
 func TestHTMLMapEmitsNewlineForBr(t *testing.T) {
-	m := BuildHTMLMap("<p>some<br>code</p>")
+	m := buildHTMLMap("<p>some<br>code</p>")
 	if got := plainOf(m); got != "some\ncode\n" {
 		t.Fatalf("plain = %q", got)
 	}
 }
 
 func TestHTMLMapTreatsStrayAngleBracketsAndCommentsCorrectly(t *testing.T) {
-	m := BuildHTMLMap("<p>1 > 0</p><!-- note -->")
+	m := buildHTMLMap("<p>1 > 0</p><!-- note -->")
 	if got := plainOf(m); got != "1 > 0\n" {
 		t.Fatalf("plain = %q", got)
 	}
@@ -140,11 +140,11 @@ func TestHTMLMapRawTextCloseTagFollowsRubyCaseFolding(t *testing.T) {
 		"<style>x</ﬅyle><p>y</p>",
 		"<script>x</script\v><p>y</p>",
 	} {
-		if got := plainOf(BuildHTMLMap(src)); got != "y\n" {
+		if got := plainOf(buildHTMLMap(src)); got != "y\n" {
 			t.Errorf("%q: plain = %q", src, got)
 		}
 	}
-	if got := plainOf(BuildHTMLMap("<script>x</script\u0085><p>y</p>")); got != "" {
+	if got := plainOf(buildHTMLMap("<script>x</script\u0085><p>y</p>")); got != "" {
 		t.Errorf("NEL is not \\s: plain = %q", got)
 	}
 }
@@ -152,23 +152,29 @@ func TestHTMLMapRawTextCloseTagFollowsRubyCaseFolding(t *testing.T) {
 func TestHTMLMapPerNameStacksMatchRindexSemantics(t *testing.T) {
 	// </b> closes the nearest <b>, leaving <i> open; </i> then closes it.
 	src := "<p><b>a<i>b</b>c</i></p>"
-	m := BuildHTMLMap(src)
-	want := []Range{{3, 15}, {7, 20}}
+	m := buildHTMLMap(src)
+	want := []srcRange{{3, 15}, {7, 20}}
 	if !slices.Equal(m.InlineRanges, want) {
 		t.Fatalf("inline ranges = %v, want %v", m.InlineRanges, want)
 	}
 }
 
 func TestHTMLMapStartsAreMonotonic(t *testing.T) {
-	m := BuildHTMLMap(`<h1>T</h1><p>a &amp; b<br>c <em>d</em></p><!-- x --><ul><li>e</li></ul>`)
+	m := buildHTMLMap(`<h1>T</h1><p>a &amp; b<br>c <em>d</em></p><!-- x --><ul><li>e</li></ul>`)
 	assertMonotonic(t, m)
 }
 
-func assertMonotonic(t *testing.T, m *Map) {
+// assertMonotonic checks the nonMonotone flag is truthful: a map that is not
+// flagged must really have non-decreasing Starts and Ends (the flag may stay
+// set conservatively, but never be missing).
+func assertMonotonic(t *testing.T, m *docMap) {
 	t.Helper()
+	if m.nonMonotone {
+		return
+	}
 	for i := range m.Starts {
 		if m.Starts[i] > m.Ends[i] || (i > 0 && (m.Starts[i] < m.Starts[i-1] || m.Ends[i] < m.Ends[i-1])) {
-			t.Fatalf("map not monotonic at %d", i)
+			t.Fatalf("map is not flagged nonMonotone but offsets decrease at %d", i)
 		}
 	}
 }

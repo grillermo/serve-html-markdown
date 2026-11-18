@@ -1214,5 +1214,21 @@
     "selected_text": "&AMP; c",
     "occurrence": 0,
     "output": "<p>a&NBSP;b <a href=\"/x--expand-1.html\">&AMP; c</a></p>"
+  },
+  {
+    "name": "nonmonotone_br_overshoots_label",
+    "extension": ".md",
+    "source": "b[<br]())>e\n",
+    "selected_text": ")",
+    "occurrence": 0,
+    "output": "b[<br]()[)](/x--expand-1.html)>e\n"
+  },
+  {
+    "name": "nonmonotone_br_overshoots_label_bracket",
+    "extension": ".md",
+    "source": "[vamp;<br]()]> z)*w\n",
+    "selected_text": "]",
+    "occurrence": 0,
+    "output": "[vamp;<br]()[\\]](/x--expand-1.html)> z)*w\n"
   }
 ]

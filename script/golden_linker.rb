@@ -178,7 +178,14 @@ cases = [
   c("nbsp_md_selection_nbsp_ascii_space_source", ".md", "one two three\n", "one\u00a0two"),
   c("nbsp_html_selection_nbsp_ascii_space_source", ".html", "<p>one two three</p>", "one\u00a0two"),
   c("nbsp_md_nbsp_char_next_to_space_in_source", ".md", "one\u00a0 two three\n", "one\u00a0 two"),
-  c("nbsp_html_uppercase_entity_stays_literal", ".html", "<p>a&NBSP;b &AMP; c</p>", "&AMP; c")
+  c("nbsp_html_uppercase_entity_stays_literal", ".html", "<p>a&NBSP;b &AMP; c</p>", "&AMP; c"),
+
+  # --- Non-monotone Markdown maps: a raw tag inside a link label overshoots the
+  #     label end, so later plain characters map to smaller source offsets than
+  #     earlier ones (found by targeted differential testing; Map#plain_indices_within
+  #     must filter every index, not assume sorted offsets). ---
+  c("nonmonotone_br_overshoots_label", ".md", "b[<br]())>e\n", ")"),
+  c("nonmonotone_br_overshoots_label_bracket", ".md", "[vamp;<br]()]> z)*w\n", "]")
 ]
 
 names = cases.map { |x| x[:name] }

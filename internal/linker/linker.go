@@ -1,6 +1,7 @@
 package linker
 
 import (
+	"math"
 	"strings"
 	"unicode/utf8"
 )
@@ -15,33 +16,44 @@ import (
 // source or selection that is not valid UTF-8 yields ErrInvalidUTF8 (Ruby
 // raises ArgumentError there).
 func Link(source, extension, selectedText string, occurrence int, url string) (string, error) {
+	if err := checkSourceSize(len(source)); err != nil {
+		return "", err
+	}
 	if !utf8.ValidString(source) {
 		return "", ErrInvalidUTF8
 	}
 	occurrence = max(occurrence, 0)
 	markdown := extension != ".html"
 
-	var m *Map
+	var m *docMap
 	if markdown {
-		m = BuildMarkdownMap(source)
+		m = buildMarkdownMap(source)
 	} else {
-		m = BuildHTMLMap(source)
+		m = buildHTMLMap(source)
 	}
-	plain, err := Locate(m, selectedText, occurrence)
+	plain, err := locate(m, selectedText, occurrence)
 	if err != nil {
 		return "", err
 	}
-	segments, err := Plan(m, plain, source)
+	segments, err := planSegments(m, plain, source)
 	if err != nil {
 		return "", err
 	}
 	return splice(source, segments, markdown, url), nil
 }
 
+// checkSourceSize guards the int32 offsets of docMap.
+func checkSourceSize(n int) error {
+	if n > math.MaxInt32 {
+		return ErrSourceTooLarge
+	}
+	return nil
+}
+
 // splice ports SelectionLinker#splice. The Ruby replaces segments from last to
 // first; the segments are disjoint and ascending, so one left-to-right pass
 // builds the same string.
-func splice(source string, segments []Range, markdown bool, url string) string {
+func splice(source string, segments []srcRange, markdown bool, url string) string {
 	var b strings.Builder
 	prev := 0
 	for _, seg := range segments {
@@ -66,14 +78,8 @@ func splice(source string, segments []Range, markdown bool, url string) string {
 	return b.String()
 }
 
-// escapeLabel ports slice.gsub(/(?<!\\)\]/) { "\\]" }: a ']' not already
+// writeEscapedLabel ports slice.gsub(/(?<!\\)\]/) { "\\]" }: a ']' not already
 // preceded by a backslash gets one.
-func escapeLabel(s string) string {
-	var b strings.Builder
-	writeEscapedLabel(&b, s)
-	return b.String()
-}
-
 func writeEscapedLabel(b *strings.Builder, s string) {
 	for i := 0; i < len(s); i++ {
 		if s[i] == ']' && (i == 0 || s[i-1] != '\\') {

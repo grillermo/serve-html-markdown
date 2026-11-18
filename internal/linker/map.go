@@ -11,10 +11,10 @@ package linker
 
 import "sort"
 
-// Range is a half-open byte range [Begin, End), like Ruby's a...b.
-type Range struct{ Begin, End int }
+// srcRange is a half-open byte range [Begin, End), like Ruby's a...b.
+type srcRange struct{ Begin, End int }
 
-// Map is an offset-preserving projection of a source document (ports
+// docMap is an offset-preserving projection of a source document (ports
 // SelectionLinker::Map).
 //
 //	Plain             rendered-text projection of the source, one entry per byte
@@ -28,40 +28,77 @@ type Range struct{ Begin, End int }
 //	LinkRanges        full source ranges of existing links/images
 //	UnlinkableRanges  source ranges where a link must not be spliced
 //
-// Starts and Ends are non-decreasing (every builder emits plain bytes in
-// source order), which PlainIndicesWithin relies on.
-type Map struct {
+// Starts and Ends are usually non-decreasing, but NOT always: in Markdown a
+// raw inline tag found while scanning a link label can overshoot the label
+// end ("[<br]()..." emits the tag's newline at the tag's end offset, then the
+// scan resumes inside the tag), so later plain bytes can map to smaller
+// offsets than earlier ones. emit tracks whether the sequences are still
+// non-decreasing (nonMonotone) so plainWithin can binary-search when they are
+// and fall back to Ruby's linear filter when they are not.
+type docMap struct {
 	Plain            []byte
 	Starts           []int32
 	Ends             []int32
 	BlockIDs         []int32
-	InlineRanges     []Range
-	LinkRanges       []Range
-	UnlinkableRanges []Range
+	InlineRanges     []srcRange
+	LinkRanges       []srcRange
+	UnlinkableRanges []srcRange
+
+	// nonMonotone is set once some emit appended a Start or End smaller than
+	// its predecessor. It stays set conservatively even if a later compaction
+	// removes the offending byte. The zero value (a hand-built map) means
+	// "monotone"; hand-built maps must use emit.
+	nonMonotone bool
 }
 
-// SourceRange ports Map#source_range_for: the source range covered by a plain
-// range.
-func (m *Map) SourceRange(plain Range) Range {
-	return Range{int(m.Starts[plain.Begin]), int(m.Ends[plain.End-1])}
-}
-
-// PlainIndicesWithin ports Map#plain_indices_within. Ruby returns every plain
-// index i with Starts[i] >= r.Begin && Ends[i] <= r.End; since Starts and Ends
-// are non-decreasing those indices are contiguous, so it returns them as the
-// half-open index range [lo, hi) found by binary search.
-func (m *Map) PlainIndicesWithin(r Range) (lo, hi int) {
-	n := len(m.Starts)
-	lo = sort.Search(n, func(i int) bool { return int(m.Starts[i]) >= r.Begin })
-	hi = sort.Search(n, func(i int) bool { return int(m.Ends[i]) > r.End })
-	if hi < lo {
-		hi = lo
+// newDocMap returns a map whose parallel slices have room for sizeHint plain
+// bytes (the source length is a good hint: the projection rarely exceeds it).
+func newDocMap(sizeHint int) *docMap {
+	return &docMap{
+		Plain:    make([]byte, 0, sizeHint),
+		Starts:   make([]int32, 0, sizeHint),
+		Ends:     make([]int32, 0, sizeHint),
+		BlockIDs: make([]int32, 0, sizeHint),
 	}
-	return lo, hi
+}
+
+// sourceRange ports Map#source_range_for: the source range covered by a plain
+// range.
+func (m *docMap) sourceRange(plain srcRange) srcRange {
+	return srcRange{int(m.Starts[plain.Begin]), int(m.Ends[plain.End-1])}
+}
+
+// plainWithin ports Map#plain_indices_within: it calls fn for every plain
+// index i with Starts[i] >= r.Begin && Ends[i] <= r.End, in increasing order,
+// until fn returns false.
+//
+// Ruby selects over all indices. When Starts and Ends are non-decreasing the
+// qualifying indices are contiguous and found by binary search; otherwise the
+// exact Ruby filter runs over every index.
+func (m *docMap) plainWithin(r srcRange, fn func(i int) bool) {
+	n := len(m.Starts)
+	if m.nonMonotone {
+		for i := 0; i < n; i++ {
+			if int(m.Starts[i]) >= r.Begin && int(m.Ends[i]) <= r.End && !fn(i) {
+				return
+			}
+		}
+		return
+	}
+	lo := sort.Search(n, func(i int) bool { return int(m.Starts[i]) >= r.Begin })
+	hi := sort.Search(n, func(i int) bool { return int(m.Ends[i]) > r.End })
+	for i := lo; i < hi; i++ {
+		if !fn(i) {
+			return
+		}
+	}
 }
 
 // emit appends one plain byte with its source range and block id.
-func (m *Map) emit(b byte, start, end int, block int32) {
+func (m *docMap) emit(b byte, start, end int, block int32) {
+	if n := len(m.Starts); n > 0 && (int32(start) < m.Starts[n-1] || int32(end) < m.Ends[n-1]) {
+		m.nonMonotone = true
+	}
 	m.Plain = append(m.Plain, b)
 	m.Starts = append(m.Starts, int32(start))
 	m.Ends = append(m.Ends, int32(end))

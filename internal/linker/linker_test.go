@@ -2,6 +2,9 @@ package linker
 
 import (
 	"errors"
+	"math"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -158,12 +161,82 @@ func TestLinkRejectsInvalidUTF8(t *testing.T) {
 	}
 }
 
-func TestEscapeLabel(t *testing.T) {
+func TestWriteEscapedLabel(t *testing.T) {
 	for in, want := range map[string]string{
 		"b]": `b\]`, `b\]`: `b\]`, "]]": `\]\]`, "]": `\]`, "": "", `\\]`: `\\]`,
 	} {
-		if got := escapeLabel(in); got != want {
-			t.Errorf("escapeLabel(%q) = %q, want %q", in, got, want)
+		var b strings.Builder
+		writeEscapedLabel(&b, in)
+		if got := b.String(); got != want {
+			t.Errorf("writeEscapedLabel(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Markdown maps are not always monotone: a raw tag that overshoots a link
+// label end emits its newline at the tag's end offset, and scanning resumes
+// before it. Both repros were found by differential testing against Ruby
+// (expected values captured from Ruby 3.4.8).
+func TestLinkNonMonotoneMarkdownMaps(t *testing.T) {
+	wantLink(t, "b[<br]())>e\n", ".md", ")", 0, "b[<br]()[)](/x.html)>e\n")
+	wantLink(t, "[vamp;<br]()]> z)*w\n", ".md", "]", 0, "[vamp;<br]()[\\]](/x.html)> z)*w\n")
+}
+
+func TestNonMonotoneMapIsFlaggedAndFiltersLinearly(t *testing.T) {
+	m := buildMarkdownMap("b[<br]())>e\n")
+	if !m.nonMonotone {
+		t.Fatal("expected the map to be flagged non-monotone")
+	}
+	if got, want := withinIndices(m, srcRange{9, 11}), linearWithin(m, srcRange{9, 11}); !slices.Equal(got, want) {
+		t.Fatalf("plainWithin = %v, linear filter = %v", got, want)
+	}
+	if mono := buildMarkdownMap("plain *text* here\n"); mono.nonMonotone {
+		t.Fatal("an ordinary map must stay on the binary-search path")
+	}
+}
+
+// linearWithin is Ruby's Map#plain_indices_within verbatim:
+// starts.each_index.select { |i| starts[i] >= begin && ends[i] <= end }.
+func linearWithin(m *docMap, r srcRange) []int {
+	out := []int{}
+	for i := range m.Starts {
+		if int(m.Starts[i]) >= r.Begin && int(m.Ends[i]) <= r.End {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func withinIndices(m *docMap, r srcRange) []int {
+	out := []int{}
+	m.plainWithin(r, func(i int) bool { out = append(out, i); return true })
+	return out
+}
+
+func TestCheckSourceSize(t *testing.T) {
+	if err := checkSourceSize(math.MaxInt32); err != nil {
+		t.Fatalf("MaxInt32 bytes must be accepted: %v", err)
+	}
+	if err := checkSourceSize(math.MaxInt32 + 1); !errors.Is(err, ErrSourceTooLarge) {
+		t.Fatalf("err = %v, want ErrSourceTooLarge", err)
+	}
+}
+
+// Every error Link returns carries the Ruby message of its raise site, never
+// a sentinel placeholder.
+func TestReturnedErrorsCarryRubyMessages(t *testing.T) {
+	for _, tc := range []struct{ src, ext, sel, want string }{
+		{"<p>one</p><p>two</p>", ".html", "one two", "Selection spans multiple paragraphs — select within one."},
+		{"before\n\n```\ncode here\n```\n", ".md", "code here", "Selection is inside a code block."},
+		{`<a href="/o">beta</a>`, ".html", "beta", "Selection overlaps an existing link."},
+		{"alpha", ".md", "missing", "Selection not found in source — select a plainer run of text."},
+	} {
+		_, err := link(tc.src, tc.ext, tc.sel, 0)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("%q: err = %v, want message %q", tc.sel, err, tc.want)
+		}
+	}
+	if got := ErrUnsafeMatch.Error(); got != "linker: UnsafeMatch" {
+		t.Errorf("sentinel Error() = %q", got)
 	}
 }

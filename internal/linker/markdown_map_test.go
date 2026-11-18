@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-func idAt(m *Map, needle string) int32 { return m.BlockIDs[bytes.Index(m.Plain, []byte(needle))] }
+func idAt(m *docMap, needle string) int32 { return m.BlockIDs[bytes.Index(m.Plain, []byte(needle))] }
 
-func covers(r Range, pos int) bool { return r.Begin <= pos && pos < r.End }
+func covers(r srcRange, pos int) bool { return r.Begin <= pos && pos < r.End }
 
-func wantPlain(t *testing.T, src, want string) *Map {
+func wantPlain(t *testing.T, src, want string) *docMap {
 	t.Helper()
-	m := BuildMarkdownMap(src)
+	m := buildMarkdownMap(src)
 	if got := plainOf(m); got != want {
 		t.Fatalf("plain of %q = %q, want %q", src, got, want)
 	}
@@ -26,7 +26,7 @@ func TestMarkdownMapProjectsParagraphTextWithSourceOffsets(t *testing.T) {
 	if m.Starts[0] != 0 {
 		t.Fatalf("starts[0] = %d", m.Starts[0])
 	}
-	if got := m.SourceRange(Range{0, 5}); got != (Range{0, 5}) {
+	if got := m.sourceRange(srcRange{0, 5}); got != (srcRange{0, 5}) {
 		t.Fatalf("range = %v", got)
 	}
 }
@@ -39,7 +39,7 @@ func TestMarkdownMapBlankLineSeparatedParagraphsGetDifferentBlockIDs(t *testing.
 }
 
 func TestMarkdownMapSoftLineBreaksKeepOneBlockID(t *testing.T) {
-	m := BuildMarkdownMap("alpha\nbeta\n")
+	m := buildMarkdownMap("alpha\nbeta\n")
 	ids := slices.Clone(m.BlockIDs)
 	slices.Sort(ids)
 	if len(slices.Compact(ids)) != 1 {
@@ -67,24 +67,24 @@ func TestMarkdownMapDropsBlockquotePrefixes(t *testing.T) {
 
 func TestMarkdownMapFencedCodeIsUnlinkableButKeptInPlain(t *testing.T) {
 	src := "before\n\n```\ncode here\n```\n"
-	m := BuildMarkdownMap(src)
+	m := buildMarkdownMap(src)
 	if !strings.Contains(plainOf(m), "code here") {
 		t.Fatalf("plain = %q", plainOf(m))
 	}
 	at := strings.Index(src, "code here")
-	if !slices.ContainsFunc(m.UnlinkableRanges, func(r Range) bool { return covers(r, at) }) {
+	if !slices.ContainsFunc(m.UnlinkableRanges, func(r srcRange) bool { return covers(r, at) }) {
 		t.Fatalf("unlinkable = %v", m.UnlinkableRanges)
 	}
 }
 
 func TestMarkdownMapIndentedCodeIsUnlinkable(t *testing.T) {
 	src := "before\n\n    indented code\n"
-	m := BuildMarkdownMap(src)
+	m := buildMarkdownMap(src)
 	if !strings.Contains(plainOf(m), "indented code") {
 		t.Fatalf("plain = %q", plainOf(m))
 	}
 	at := strings.Index(src, "indented code")
-	if !slices.ContainsFunc(m.UnlinkableRanges, func(r Range) bool { return covers(r, at) }) {
+	if !slices.ContainsFunc(m.UnlinkableRanges, func(r srcRange) bool { return covers(r, at) }) {
 		t.Fatalf("unlinkable = %v", m.UnlinkableRanges)
 	}
 }
@@ -100,7 +100,7 @@ func TestMarkdownMapResolvesBackslashEscapes(t *testing.T) {
 func TestMarkdownMapDropsCodeSpanDelimitersAndRecordsTheElement(t *testing.T) {
 	src := "this is `some` code\n"
 	m := wantPlain(t, src, "this is some code\n")
-	want := Range{strings.Index(src, "`"), strings.LastIndex(src, "`") + 1}
+	want := srcRange{strings.Index(src, "`"), strings.LastIndex(src, "`") + 1}
 	if !slices.Contains(m.InlineRanges, want) {
 		t.Fatalf("inline = %v, want %v", m.InlineRanges, want)
 	}
@@ -109,7 +109,7 @@ func TestMarkdownMapDropsCodeSpanDelimitersAndRecordsTheElement(t *testing.T) {
 func TestMarkdownMapKeepsLinkLabelsDropsURLsAndRecordsTheLink(t *testing.T) {
 	src := "see [beta](/old.html) end\n"
 	m := wantPlain(t, src, "see beta end\n")
-	want := Range{strings.Index(src, "["), strings.Index(src, ")") + 1}
+	want := srcRange{strings.Index(src, "["), strings.Index(src, ")") + 1}
 	if !slices.Contains(m.LinkRanges, want) {
 		t.Fatalf("links = %v, want %v", m.LinkRanges, want)
 	}
@@ -118,7 +118,7 @@ func TestMarkdownMapKeepsLinkLabelsDropsURLsAndRecordsTheLink(t *testing.T) {
 func TestMarkdownMapRecordsImagesAsLinksWithNoPlainContribution(t *testing.T) {
 	src := "pic ![alt](i.png) end\n"
 	m := wantPlain(t, src, "pic  end\n")
-	want := Range{strings.Index(src, "!["), strings.Index(src, ")") + 1}
+	want := srcRange{strings.Index(src, "!["), strings.Index(src, ")") + 1}
 	if !slices.Contains(m.LinkRanges, want) {
 		t.Fatalf("links = %v, want %v", m.LinkRanges, want)
 	}
@@ -127,7 +127,7 @@ func TestMarkdownMapRecordsImagesAsLinksWithNoPlainContribution(t *testing.T) {
 func TestMarkdownMapPairsEmphasisDelimitersAndRecordsTheElement(t *testing.T) {
 	src := "make *this bold* now\n"
 	m := wantPlain(t, src, "make this bold now\n")
-	want := Range{strings.Index(src, "*"), strings.LastIndex(src, "*") + 1}
+	want := srcRange{strings.Index(src, "*"), strings.LastIndex(src, "*") + 1}
 	if !slices.Contains(m.InlineRanges, want) {
 		t.Fatalf("inline = %v, want %v", m.InlineRanges, want)
 	}
@@ -140,7 +140,7 @@ func TestMarkdownMapLeavesUnmatchedEmphasisLiteral(t *testing.T) {
 func TestMarkdownMapHandlesRawInlineHTMLAndAnchors(t *testing.T) {
 	src := "word <span>in span</span> and <a href=\"/o.html\">old</a> end\n"
 	m := wantPlain(t, src, "word in span and old end\n")
-	want := Range{strings.Index(src, "<a"), strings.Index(src, "</a>") + len("</a>")}
+	want := srcRange{strings.Index(src, "<a"), strings.Index(src, "</a>") + len("</a>")}
 	if !slices.Contains(m.LinkRanges, want) {
 		t.Fatalf("links = %v, want %v", m.LinkRanges, want)
 	}
@@ -221,7 +221,7 @@ func findClosingTicks(src string, from, n int) (int, int, bool) {
 
 func TestClosingTicksIndexAgreesWithScan(t *testing.T) {
 	line := "a` b`` c``` d`` e` f```` g`` h\n"
-	b := &mdBuilder{src: line, m: &Map{}}
+	b := &mdBuilder{src: line, m: &docMap{}}
 	b.startLine(0, len(line), len(line)-1)
 	for from := 0; from < len(line); from++ {
 		if from > 0 && line[from-1] == '`' && line[from] == '`' {

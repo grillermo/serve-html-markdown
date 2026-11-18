@@ -1,6 +1,7 @@
 package video_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/aes"
@@ -471,6 +472,10 @@ func TestEgoCookiesCopiesWALSidecars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stdout, err := holder.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := holder.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -483,17 +488,31 @@ CREATE TABLE meta (key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHA
 INSERT INTO meta VALUES ('version', '24');
 CREATE TABLE cookies (host_key TEXT, top_frame_site_key TEXT, name TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER);
 INSERT INTO cookies VALUES ('.youtube.com', '', 'WALCOOKIE', `+blob+`, '/', 0, 1);
+SELECT 'FIXTURE-READY';
 `)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		fi, err := os.Stat(db + "-wal")
-		if err == nil && fi.Size() > 0 {
-			break
+	// Wait for the holder to say every statement ran (the file's size alone
+	// cannot tell: the -wal exists before the INSERT is committed).
+	ready := make(chan bool, 1)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			if strings.TrimSpace(sc.Text()) == "FIXTURE-READY" {
+				ready <- true
+				return
+			}
 		}
-		if time.Now().After(deadline) {
-			t.Skip("sqlite3 did not produce a -wal file here")
+		ready <- false
+	}()
+	select {
+	case ok := <-ready:
+		if !ok {
+			t.Skip("sqlite3 stopped before the fixture was ready")
 		}
-		time.Sleep(20 * time.Millisecond)
+	case <-time.After(10 * time.Second):
+		t.Skip("sqlite3 did not finish building the fixture here")
+	}
+	if fi, err := os.Stat(db + "-wal"); err != nil || fi.Size() == 0 {
+		t.Skip("sqlite3 did not produce a -wal file here")
 	}
 	if fi, _ := os.Stat(db); fi != nil && fi.Size() > 0 {
 		// the main file may hold the (empty) header only; the rows must be in the log

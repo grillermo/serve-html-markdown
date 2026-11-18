@@ -1,29 +1,24 @@
 #!/usr/bin/env bash
 # (Re)start serve-html-markdown in tmux session "serve-html-markdown", in
-# place, and return: the web server and the files/ watcher in two panes.
+# place, and return: one pane runs the Go server and its job workers.
 # Run by ../server/after-reboot.sh at boot and by ./activate after git-sync
 # lands new code.
 set -euo pipefail
+# after-reboot.sh does not run under a login shell; go and tmux live in Homebrew.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
-SESSION=serve-html-markdown
+export SESSION=serve-html-markdown
 # shellcheck source=/dev/null
 . "$HOME/c/server/serve-in-place.sh"
-export RAILS_ENV=production
-# The Solid Queue supervisor forks; on macOS the ObjC runtime aborts the child
-# unless this is set, taking Puma down with it.
-export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 
-echo "==> bundle install"; bundle install --quiet
-echo "==> db:migrate";     bin/rails db:migrate
-# Digested assets are cached for a year; clobber drops digests no source matches.
-bin/rails assets:clobber
-bin/rails assets:precompile
+mkdir -p tmp log
+echo "==> go build"; go build -o tmp/serve-html-markdown ./cmd/serve-html-markdown
+# Migrations take a session (advisory lock, multi-statement DDL), so they go
+# straight to Postgres on 5432, not through PgBouncer.
+echo "==> migrate";  tmp/serve-html-markdown migrate
 
-# Solid Queue runs as threads inside Puma (config/puma.rb), so Puma's 3 threads
-# and its ~8 (3 job threads, pollers, heartbeats) share one pool.
-ENV_PREFIX="env RAILS_ENV=production OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES DATABASE_POOL=12"
-# bin/watch keeps served_files in sync; /last depends on it. disabled due to lack of use
-# serve_aux watch "$ENV_PREFIX bin/watch"
-serve_pane web 8009 "$ENV_PREFIX DATABASE_PORT=6432 DATABASE_PREPARED_STATEMENTS=false sh -c 'bin/rails server -p 8009 2>&1 | tee -a log/development.log'"
+# The web pane goes through PgBouncer (transaction mode), so no prepared
+# statements. SIGTERM stops the listener (30 s) and then lets running jobs finish.
+serve_pane web 8009 "env DATABASE_PORT=6432 DATABASE_PREPARED_STATEMENTS=false DATABASE_POOL=12 sh -c 'tmp/serve-html-markdown serve 2>&1 | tee -a log/production.log'"
 serve_attach

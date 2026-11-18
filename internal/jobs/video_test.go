@@ -4,11 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
-	"regexp"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -48,7 +45,8 @@ func TestHasPendingJob(t *testing.T) {
 
 func TestVideoHandlersAndTimeouts(t *testing.T) {
 	e := newVideoEnv(t)
-	h := VideoHandlers(e.deps)
+	h, err := VideoHandlers(e.deps)
+	must(t, err)
 	var kinds []string
 	for k, fn := range h {
 		kinds = append(kinds, k)
@@ -79,7 +77,8 @@ func TestVideoHandlersAndTimeouts(t *testing.T) {
 
 func TestVideoSweeperFailsStuckRowsOnly(t *testing.T) {
 	e := newVideoEnv(t)
-	sweep := VideoSweepers(e.deps)
+	sweep, err := VideoSweepers(e.deps)
+	must(t, err)
 	if len(sweep) != 2 {
 		t.Fatalf("%d sweepers", len(sweep))
 	}
@@ -149,64 +148,6 @@ func TestRequeueStaleCaptionChecks(t *testing.T) {
 	}
 }
 
-var rubyStringJoin = regexp.MustCompile(`"\s*\\\n\s*"`)
-
-// Ruby message text is the specification: every literal fragment of every
-// message the two jobs send or store must appear in the Ruby source they were
-// ported from. The messages are rendered with markers where a value goes in, and
-// the text between the markers is looked up in the source.
-func TestMessagesMatchTheRubySource(t *testing.T) {
-	var src strings.Builder
-	for _, f := range []string{"twitter_video_ingest_job.rb", "twitter_video_captions_job.rb"} {
-		b, err := os.ReadFile(filepath.Join("..", "..", "app", "jobs", f))
-		if err != nil {
-			t.Skipf("Ruby source not present (%v)", err)
-		}
-		src.Write(b)
-	}
-	// Ruby breaks long strings with `" \` + newline + `"`; join them back.
-	ruby := rubyStringJoin.ReplaceAllString(src.String(), "")
-
-	const mark = "\u2063" // invisible separator: where a value was interpolated
-	cases := map[string]string{
-		"downloaded":      msgDownloaded(424242, mark),
-		"uploaded":        msgUploaded(424242, mark, mark),
-		"ingest failed":   msgIngestFailed(424242, mark, mark),
-		"reauth":          msgReauthRequired(424242, mark),
-		"captions failed": msgCaptionsFailed(424242, mark, mark),
-		"timed out":       msgCaptionsTimedOut(424242, mark),
-		"not ready":       msgCaptionsNotReady(424242, 99),
-		"summarized":      msgSummarized(424242, mark),
-		"published":       msgPublished(424242, mark),
-		"never available": msgCaptionsNeverAvailable,
-		"studio link":     strings.ReplaceAll(studioEditURL, "%s", mark),
-		"fallback title":  fallbackTitle,
-		"link":            publishedLink(mark, mark),
-	}
-	for name, text := range cases {
-		// The studio link is Ruby's STUDIO_EDIT_URL constant, compared as "studio link".
-		if name != "studio link" {
-			text = strings.ReplaceAll(text, strings.ReplaceAll(studioEditURL, "%s", mark), mark)
-		}
-		text = strings.ReplaceAll(text, "424242", mark)
-		text = strings.ReplaceAll(text, "99", mark)
-		checked := 0
-		for _, frag := range strings.Split(text, mark) {
-			if frag == "" {
-				continue
-			}
-			checked++
-			// Real newlines are written \n inside Ruby strings.
-			if !strings.Contains(ruby, strings.ReplaceAll(frag, "\n", `\n`)) {
-				t.Errorf("%s: %q is not in the Ruby source", name, frag)
-			}
-		}
-		if checked == 0 {
-			t.Errorf("%s: nothing was compared", name)
-		}
-	}
-}
-
 func TestRubyErrorClassNames(t *testing.T) {
 	for _, c := range []struct {
 		err  error
@@ -221,7 +162,10 @@ func TestRubyErrorClassNames(t *testing.T) {
 		{llm.ErrOpenAI("x"), "OpenaiSummarizer::Error"},
 		{llm.ErrConfiguration, "OpenaiSummarizer::ConfigurationError"},
 		{fmt.Errorf("wrapped: %w", &video.YtdlpError{Message: "x"}), "YtdlpClient::Error"},
-		{errors.New("x"), "StandardError"},
+		{errors.New("x"), "*errors.errorString"},
+		{fmt.Errorf("wrapped: %w", &os.PathError{Op: "open", Path: "/x", Err: errors.New("denied")}), "*errors.errorString"},
+		{&panicError{value: "boom"}, "panic"},
+		{fmt.Errorf("w: %w", os.ErrNotExist), "*errors.errorString"},
 	} {
 		if got := rubyErrorClass(c.err); got != c.want {
 			t.Errorf("%T: %q, want %q", c.err, got, c.want)

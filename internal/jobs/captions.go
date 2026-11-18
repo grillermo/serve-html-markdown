@@ -65,21 +65,40 @@ var (
 //     link can appear.
 //   - Slack notices, the status writes after the claim and the enqueue run on
 //     contexts detached from the job's, so a shutdown does not lose them.
+//   - A panic of a collaborator is a failure like any other error: the video is
+//     failed with the generic detail, Slack is told, the stack goes to the log.
 //
-// The deadline of Runner.Timeouts (RecommendedCaptionsTimeout) fails the video
-// with the generic detail and returns the error.
+// If only the enqueue of the next check fails, the attempt is counted, the row
+// stays awaiting_captions and the job ends with that error in last_error; the
+// Runner does not retry it. The check is queued again by RequeueStaleCaptionChecks
+// about an hour after it was due (or by a re-run of the job after a shutdown).
+//
+// The run is bounded by VideoDeps.CaptionsTimeout: when it passes, the video is
+// failed with the generic detail and the error returned. It panics if deps lack
+// what the handler needs (see VideoDeps.Validate; VideoHandlers returns the
+// error instead).
 func NewTwitterVideoCaptions(deps VideoDeps) Handler {
+	if err := deps.validate(false, true); err != nil {
+		panic(err)
+	}
 	deps = deps.withDefaults()
 	return func(ctx context.Context, args Args) error {
 		return runCaptions(ctx, deps, args.ID)
 	}
 }
 
-func runCaptions(ctx context.Context, d VideoDeps, id int64) error {
+func runCaptions(ctx context.Context, d VideoDeps, id int64) (err error) {
+	ctx, cancel := context.WithTimeout(ctx, d.CaptionsTimeout)
+	defer cancel()
 	log := d.Logger.With("twitter_video_id", id, "job", "twitter_video_captions")
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = captionsFailed(ctx, d, log, id, recovered(log, r))
+		}
+	}()
 	v, err := store.FindTwitterVideo(ctx, d.DB, id)
 	if err != nil {
 		return fmt.Errorf("find twitter video %d: %w", id, err)

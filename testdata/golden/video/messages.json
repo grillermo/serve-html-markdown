@@ -1,0 +1,160 @@
+{
+  "ingest_happy": {
+    "status": "awaiting_captions",
+    "error_detail": null,
+    "caption_attempts": 0,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [
+      "[twitter-video #{id}] downloaded: Tweet Title",
+      "[twitter-video #{id}] uploaded: Tweet Title\nset it to unlisted: https://studio.youtube.com/video/YT9/edit"
+    ],
+    "slack_failure": [],
+    "next_check_in_minutes": 5,
+    "upload_title": "Tweet Title"
+  },
+  "ingest_no_title": {
+    "status": "awaiting_captions",
+    "error_detail": null,
+    "caption_attempts": 0,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [
+      "[twitter-video #{id}] downloaded: ",
+      "[twitter-video #{id}] uploaded: \nset it to unlisted: https://studio.youtube.com/video/YT9/edit"
+    ],
+    "slack_failure": [],
+    "next_check_in_minutes": 5,
+    "upload_title": "Twitter video"
+  },
+  "ingest_download_error": {
+    "status": "failed",
+    "error_detail": "gone",
+    "caption_attempts": 0,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [],
+    "slack_failure": [
+      "[twitter-video #{id}] ingest failed: YtdlpClient::Error: gone"
+    ],
+    "next_check_in_minutes": null,
+    "upload_title": null
+  },
+  "ingest_reauth": {
+    "status": "failed",
+    "error_detail": "invalid_grant",
+    "caption_attempts": 0,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [
+      "[twitter-video #{id}] downloaded: Tweet Title"
+    ],
+    "slack_failure": [
+      "[twitter-video #{id}] ingest failed: YouTube authorization expired.\nre-authorize: https://serve.chiq.me/youtube/reauth?video_id={id}\nthe video is already downloaded — the upload retries by itself once you're done."
+    ],
+    "next_check_in_minutes": null,
+    "upload_title": "Tweet Title"
+  },
+  "ingest_upload_error": {
+    "status": "failed",
+    "error_detail": "YouTube upload failed: boom",
+    "caption_attempts": 0,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [
+      "[twitter-video #{id}] downloaded: Tweet Title"
+    ],
+    "slack_failure": [
+      "[twitter-video #{id}] ingest failed: YoutubeUploader::Error: YouTube upload failed: boom"
+    ],
+    "next_check_in_minutes": null,
+    "upload_title": "Tweet Title"
+  },
+  "captions_hit": {
+    "status": "done",
+    "error_detail": null,
+    "caption_attempts": 0,
+    "html_filename": "the-idea.html",
+    "rulinky_link_id": "link-1",
+    "slack_success": [
+      "[twitter-video #{id}] summarized: The Idea",
+      "[twitter-video #{id}] published: https://example.com/the-idea.html"
+    ],
+    "slack_failure": [],
+    "next_check_in_minutes": null
+  },
+  "captions_miss": {
+    "status": "awaiting_captions",
+    "error_detail": null,
+    "caption_attempts": 1,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [
+      "[twitter-video #{id}] captions not ready (attempt 1); retrying"
+    ],
+    "slack_failure": [],
+    "next_check_in_minutes": 10
+  },
+  "captions_ytdlp_error": {
+    "status": "awaiting_captions",
+    "error_detail": null,
+    "caption_attempts": 1,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [
+      "[twitter-video #{id}] captions not ready (attempt 1); retrying"
+    ],
+    "slack_failure": [],
+    "next_check_in_minutes": 10
+  },
+  "captions_exhausted_twitter": {
+    "status": "failed",
+    "error_detail": "Auto-captions never became available.",
+    "caption_attempts": 9,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [],
+    "slack_failure": [
+      "[twitter-video #{id}] captions timed out after 2880 minutes"
+    ],
+    "next_check_in_minutes": null
+  },
+  "captions_exhausted_youtube": {
+    "status": "failed",
+    "error_detail": "Auto-captions never became available.",
+    "caption_attempts": 7,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [],
+    "slack_failure": [
+      "[twitter-video #{id}] captions timed out after 120 minutes"
+    ],
+    "next_check_in_minutes": null
+  },
+  "captions_summarizer_error": {
+    "status": "failed",
+    "error_detail": "OpenAI summarization failed.",
+    "caption_attempts": 0,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [],
+    "slack_failure": [
+      "[twitter-video #{id}] captions/publish failed: OpenaiSummarizer::Error: OpenAI summarization failed."
+    ],
+    "next_check_in_minutes": null
+  },
+  "captions_rulinky_error": {
+    "status": "failed",
+    "error_detail": "rulinky link creation failed.",
+    "caption_attempts": 0,
+    "html_filename": null,
+    "rulinky_link_id": null,
+    "slack_success": [
+      "[twitter-video #{id}] summarized: The Idea"
+    ],
+    "slack_failure": [
+      "[twitter-video #{id}] captions/publish failed: RulinkyClient::Error: rulinky link creation failed."
+    ],
+    "next_check_in_minutes": null
+  }
+}

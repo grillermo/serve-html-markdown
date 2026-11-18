@@ -146,37 +146,119 @@ func TestReclaimTwitterVideoTakesOverOnlyStaleInFlightRows(t *testing.T) {
 	}
 }
 
-func TestFailStaleTwitterVideos(t *testing.T) {
+func TestStaleTwitterVideosAndFailStaleTwitterVideo(t *testing.T) {
 	pool := testdb.New(t)
 	advance := clock(t, t0)
-	stuck := map[string]*store.TwitterVideo{}
+	rows := map[string]*store.TwitterVideo{}
 	for _, s := range []string{"downloading", "uploading", "summarizing", "publishing", "awaiting_captions", "done", "failed"} {
-		stuck[s] = newVideo(t, pool, store.NewTwitterVideo{SourceURL: "u", Status: s})
+		rows[s] = newVideo(t, pool, store.NewTwitterVideo{SourceURL: "u", Status: s})
 	}
 	advance(2 * time.Hour)
 	fresh := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "u", Status: "downloading"})
 	advance(2 * time.Hour) // the first batch is 4h old, the fresh one 2h
 
-	n, err := store.FailStaleTwitterVideos(ctx, pool, 3*time.Hour)
+	stale, err := store.StaleTwitterVideos(ctx, pool, 3*time.Hour, 100)
 	must(t, err)
-	if n != 4 {
-		t.Fatalf("failed %d rows, want 4", n)
+	if got := videoIDs(stale); len(got) != 4 {
+		t.Fatalf("stale = %v, want the 4 in-flight rows", got)
 	}
-	for s, v := range stuck {
+	for _, v := range stale {
+		ok, err := store.FailStaleTwitterVideo(ctx, pool, v.ID, 3*time.Hour)
+		must(t, err)
+		if !ok {
+			t.Errorf("#%d not failed", v.ID)
+		}
 		got := mustFind(t, pool, v.ID)
-		switch s {
-		case "downloading", "uploading", "summarizing", "publishing":
-			if got.Status != "failed" || got.ErrorDetail == nil || *got.ErrorDetail != store.TwitterVideoFailedDetail {
-				t.Errorf("%s: %+v", s, got)
-			}
-		default: // awaiting_captions legitimately waits for days; terminal rows stay as they are
-			if got.Status != s || got.ErrorDetail != nil {
-				t.Errorf("%s was touched: %+v", s, got)
-			}
+		if got.Status != "failed" || got.ErrorDetail == nil || *got.ErrorDetail != store.TwitterVideoFailedDetail {
+			t.Errorf("%+v", got)
+		}
+	}
+	for _, s := range []string{"awaiting_captions", "done"} { // legitimately waiting, or terminal
+		if got := mustFind(t, pool, rows[s].ID); got.Status != s || got.ErrorDetail != nil {
+			t.Errorf("%s was touched: %+v", s, got)
 		}
 	}
 	if got := mustFind(t, pool, fresh.ID); got.Status != "downloading" {
 		t.Errorf("fresh row failed: %+v", got)
+	}
+	// A row touched since the listing, or one that moved on, is not failed.
+	if ok, err := store.FailStaleTwitterVideo(ctx, pool, fresh.ID, 3*time.Hour); err != nil || ok {
+		t.Errorf("fresh: %v %v", ok, err)
+	}
+	if ok, err := store.FailStaleTwitterVideo(ctx, pool, rows["done"].ID, 0); err != nil || ok {
+		t.Errorf("done: %v %v", ok, err)
+	}
+}
+
+func TestIngestClaimLease(t *testing.T) {
+	pool := testdb.New(t)
+	advance := clock(t, t0)
+	lease := 10 * time.Minute
+	claim := func(id int64) bool {
+		t.Helper()
+		ok, err := store.ClaimTwitterVideoForIngest(ctx, pool, id, lease)
+		must(t, err)
+		return ok
+	}
+
+	// A fresh row (never written since creation) is claimable, once.
+	fresh := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "u", Status: "downloading"})
+	advance(time.Second)
+	if !claim(fresh.ID) || claim(fresh.ID) {
+		t.Fatal("a fresh row must be claimable exactly once")
+	}
+	// The holder keeps it by touching; it is lost only after the lease runs out.
+	advance(9 * time.Minute)
+	if ok, err := store.TouchTwitterVideo(ctx, pool, fresh.ID); err != nil || !ok {
+		t.Fatalf("touch: %v %v", ok, err)
+	}
+	advance(9 * time.Minute)
+	if claim(fresh.ID) {
+		t.Fatal("claimed a row whose holder is alive")
+	}
+	advance(2 * time.Minute)
+	if !claim(fresh.ID) {
+		t.Fatal("an expired lease must be claimable (the holder died)")
+	}
+
+	// A released claim is claimable at once, in either status.
+	up := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "u", Status: "uploading"})
+	advance(time.Second)
+	must(t, store.UpdateTwitterVideo(ctx, pool, up.ID, store.TwitterVideoChanges{VideoPath: new("/v/x.mp4")}))
+	if claim(up.ID) {
+		t.Fatal("a row written moments ago is held")
+	}
+	if ok, err := store.ReleaseTwitterVideoClaim(ctx, pool, up.ID); err != nil || !ok {
+		t.Fatalf("release: %v %v", ok, err)
+	}
+	if !claim(up.ID) || mustFind(t, pool, up.ID).Status != "uploading" {
+		t.Fatal("released claim not taken, or the status changed")
+	}
+
+	// A failed row is a retry: claimed once, and it becomes downloading.
+	failed := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "u", Status: "failed"})
+	if !claim(failed.ID) || mustFind(t, pool, failed.ID).Status != "downloading" || claim(failed.ID) {
+		t.Fatal("failed row: want one claim and status downloading")
+	}
+
+	// Rows with a YouTube id or past the upload are never claimed.
+	for _, status := range []string{"awaiting_captions", "summarizing", "publishing", "done"} {
+		v := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "u", Status: status})
+		advance(time.Hour)
+		if claim(v.ID) {
+			t.Errorf("%s was claimed", status)
+		}
+	}
+	withID := newVideo(t, pool, store.NewTwitterVideo{SourceURL: "u", Status: "failed"})
+	must(t, store.UpdateTwitterVideo(ctx, pool, withID.ID, store.TwitterVideoChanges{YoutubeID: new("YT1")}))
+	if claim(withID.ID) {
+		t.Error("a row with a youtube id was claimed")
+	}
+	if claim(999) {
+		t.Error("a missing row was claimed")
+	}
+	if ok, err := store.TouchTwitterVideo(ctx, pool, withID.ID); err != nil || ok {
+		t.Errorf("touch of a row with an id: %v %v", ok, err)
 	}
 }
 

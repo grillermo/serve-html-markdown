@@ -307,15 +307,15 @@ func TestCaptionsPublishFailuresFailTheVideoWithRubysTexts(t *testing.T) {
 			e.writer.fn = func(context.Context, string, string) (string, error) {
 				return "", errors.New("open /srv/files/x.html: permission denied")
 			}
-		}, "Processing failed.", "StandardError: open /srv/files/x.html: permission denied"},
+		}, "Processing failed.", "*errors.errorString: open /srv/files/x.html: permission denied"},
 		{"fetch start failure", func(e *videoEnv) {
 			e.ytdlp.subsFn = func(context.Context, string, string, string) (string, error) {
 				return "", errors.New("yt-dlp subs fetch: fork/exec /opt/yt-dlp: no such file or directory")
 			}
-		}, "Processing failed.", "StandardError: yt-dlp subs fetch: fork/exec /opt/yt-dlp: no such file or directory"},
+		}, "Processing failed.", "*errors.errorString: yt-dlp subs fetch: fork/exec /opt/yt-dlp: no such file or directory"},
 		{"refused url", func(e *videoEnv) {
 			e.ytdlp.subsFn = func(context.Context, string, string, string) (string, error) { return "", video.ErrInvalidURL }
-		}, "yt-dlp: url not allowed", "StandardError: yt-dlp: url not allowed"},
+		}, "yt-dlp: url not allowed", "*errors.errorString: yt-dlp: url not allowed"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -327,7 +327,7 @@ func TestCaptionsPublishFailuresFailTheVideoWithRubysTexts(t *testing.T) {
 			if got.Status != "failed" || got.ErrorDetail == nil || *got.ErrorDetail != c.detail {
 				t.Fatalf("got %+v", got)
 			}
-			// ErrInvalidURL is a *plain* sentinel: its class name is Ruby's StandardError fallback.
+			// Errors with no Ruby counterpart are named by the Go type of their root cause.
 			want := fmt.Sprintf("[twitter-video #%d] captions/publish failed: %s", v.ID, c.slackClass)
 			if e.slack.lastFailure() != want {
 				t.Fatalf("slack %q want %q", e.slack.lastFailure(), want)
@@ -506,14 +506,13 @@ func TestCaptionsEnqueueFailureKeepsTheRowAwaiting(t *testing.T) {
 
 func TestCaptionsDeadlineFailsTheVideo(t *testing.T) {
 	e := newVideoEnv(t)
-	dctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-	defer cancel()
+	e.deps.CaptionsTimeout = 50 * time.Millisecond // the handler enforces its own deadline
 	e.summ.fn = func(ctx context.Context, _ string) (llm.Summary, error) {
 		<-ctx.Done()
 		return llm.Summary{}, fmt.Errorf("summarize: %w", ctx.Err())
 	}
 	v := e.awaiting(tweetURL)
-	if err := NewTwitterVideoCaptions(e.deps)(dctx, Args{ID: v.ID}); !errors.Is(err, context.DeadlineExceeded) {
+	if err := e.captions(v.ID); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v", err)
 	}
 	if got := e.reload(v.ID); got.Status != "failed" || *got.ErrorDetail != "Processing failed." {

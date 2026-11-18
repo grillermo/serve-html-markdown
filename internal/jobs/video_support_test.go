@@ -365,3 +365,14 @@ func contains(s string, parts ...string) bool {
 	}
 	return true
 }
+
+// updateFresh changes a video that is still unclaimed (a queued ingest's row) and
+// keeps it unclaimed: any write marks a row "held" until the lease runs out
+// (see store.ClaimTwitterVideoForIngest), which tests of other behaviour do not
+// want.
+func (e *videoEnv) updateFresh(id int64, c store.TwitterVideoChanges) {
+	e.t.Helper()
+	e.update(id, c)
+	_, err := store.ReleaseTwitterVideoClaim(ctx, e.pool, id)
+	must(e.t, err)
+}

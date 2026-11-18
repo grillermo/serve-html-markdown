@@ -459,20 +459,88 @@ func ReclaimTwitterVideo(ctx context.Context, db DB, id int64, staleAfter time.D
 // TwitterVideoFailedDetail is the error_detail of a video the sweeper gave up on.
 const TwitterVideoFailedDetail = "Processing failed."
 
-// FailStaleTwitterVideos fails the videos stuck in downloading, uploading,
-// summarizing or publishing for staleAfter without being touched (every status
-// change refreshes updated_at): their job died, or never ran. awaiting_captions
-// is not swept: it legitimately waits up to two days between checks. One
-// statement, guarded by status. It returns how many rows it failed.
-func FailStaleTwitterVideos(ctx context.Context, db DB, staleAfter time.Duration) (int64, error) {
+// staleVideoStatuses are the statuses a run is expected to move a video out of
+// in minutes; awaiting_captions is not among them (it waits up to two days).
+const staleVideoStatuses = `('downloading', 'uploading', 'summarizing', 'publishing')`
+
+// StaleTwitterVideos lists up to limit videos stuck in downloading, uploading,
+// summarizing or publishing and untouched (every status change refreshes
+// updated_at) for staleAfter, oldest first: the ones whose job died or never ran.
+func StaleTwitterVideos(ctx context.Context, db DB, staleAfter time.Duration, limit int) ([]TwitterVideo, error) {
+	return collectTwitterVideos(db.Query(ctx, `SELECT `+twitterVideoColumns+` FROM twitter_videos
+		WHERE status IN `+staleVideoStatuses+` AND updated_at < $1 ORDER BY id LIMIT $2`,
+		utcNow().Add(-staleAfter), limit))
+}
+
+// FailStaleTwitterVideo fails one video that is still stuck (see
+// StaleTwitterVideos) with TwitterVideoFailedDetail. One statement, guarded by
+// status and age, so a video that moved on or was touched since the listing is
+// left alone. It reports whether the row was failed.
+func FailStaleTwitterVideo(ctx context.Context, db DB, id int64, staleAfter time.Duration) (bool, error) {
 	now := utcNow()
-	tag, err := db.Exec(ctx, `UPDATE twitter_videos SET status = 'failed', error_detail = $1, updated_at = $2
-		WHERE status IN ('downloading', 'uploading', 'summarizing', 'publishing') AND updated_at < $3`,
-		TwitterVideoFailedDetail, now, now.Add(-staleAfter))
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos SET status = 'failed', error_detail = $2, updated_at = $3
+		WHERE id = $1 AND status IN `+staleVideoStatuses+` AND updated_at < $4`,
+		id, TwitterVideoFailedDetail, now, now.Add(-staleAfter))
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-	return tag.RowsAffected(), nil
+	return tag.RowsAffected() == 1, nil
+}
+
+// ClaimTwitterVideoForIngest is the lease an ingest run takes before it works on
+// a video, so two runs (a resubmit while the first still downloads, a
+// re-authorization retry) never work on one row. It succeeds, in one statement,
+// for a video without a YouTube id that is
+//
+//   - failed (a retry: the row becomes downloading), or
+//   - downloading or uploading and either never written since it was created
+//     (updated_at = created_at: a fresh row nobody has claimed, or one whose
+//     claim was released, see ReleaseTwitterVideoClaim) or untouched for lease
+//     (the run that held it died).
+//
+// The claim stamps updated_at (never equal to created_at, so a claimed row is
+// not mistaken for a fresh one); the holder keeps the lease by touching the row
+// (TouchTwitterVideo) more often than lease. It reports whether the claim was
+// taken. This needs no column of its own: the lease is the row's own updated_at.
+// The cost is a contract, that nothing else writes a queued ingest's row before
+// the run starts, or the run waits out the lease.
+func ClaimTwitterVideoForIngest(ctx context.Context, db DB, id int64, lease time.Duration) (bool, error) {
+	now := utcNow()
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos
+		SET status = CASE WHEN status = 'failed' THEN 'downloading' ELSE status END,
+		    updated_at = GREATEST($2::timestamp, created_at + interval '1 microsecond')
+		WHERE id = $1 AND COALESCE(youtube_id, '') = ''
+		  AND (status = 'failed'
+		       OR (status IN ('downloading', 'uploading') AND (updated_at = created_at OR updated_at < $3)))`,
+		id, now, now.Add(-lease))
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// TouchTwitterVideo refreshes updated_at of a video an ingest run holds (the
+// lease heartbeat). false means the video is no longer downloading or uploading
+// without an id (finished, failed, uploaded).
+func TouchTwitterVideo(ctx context.Context, db DB, id int64) (bool, error) {
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos SET updated_at = GREATEST($2::timestamp, created_at + interval '1 microsecond')
+		WHERE id = $1 AND status IN ('downloading', 'uploading') AND COALESCE(youtube_id, '') = ''`, id, utcNow())
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ReleaseTwitterVideoClaim gives the lease back after an interrupted run
+// (shutdown): updated_at returns to created_at, the "nobody holds it" mark, so
+// the re-run of the job can claim the row at once.
+func ReleaseTwitterVideoClaim(ctx context.Context, db DB, id int64) (bool, error) {
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos SET updated_at = created_at
+		WHERE id = $1 AND status IN ('downloading', 'uploading') AND COALESCE(youtube_id, '') = ''`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // AwaitingCaptionVideos lists up to limit videos in awaiting_captions, oldest

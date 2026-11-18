@@ -153,7 +153,7 @@ func TestIngestReuseOrderIsOwnRowThenNewestSibling(t *testing.T) {
 
 	// An own file beats a newer sibling, and an own title beats the sibling's.
 	w := e.newTweet()
-	e.update(w.ID, store.TwitterVideoChanges{VideoPath: &own, YoutubeTitle: new("Mine")})
+	e.updateFresh(w.ID, store.TwitterVideoChanges{VideoPath: &own, YoutubeTitle: new("Mine")})
 	must(t, e.ingest(w.ID))
 	if got := e.reload(w.ID); *got.VideoPath != own || *got.YoutubeTitle != "Mine" {
 		t.Fatalf("own row expected, got %+v", got)
@@ -164,7 +164,7 @@ func TestIngestReuseOrderIsOwnRowThenNewestSibling(t *testing.T) {
 func TestIngestRedownloadsWhenTheRecordedFileIsGone(t *testing.T) {
 	e := newVideoEnv(t)
 	v := e.newTweet()
-	e.update(v.ID, store.TwitterVideoChanges{VideoPath: new(filepath.Join(e.videosDir, "gone.mp4"))})
+	e.updateFresh(v.ID, store.TwitterVideoChanges{VideoPath: new(filepath.Join(e.videosDir, "gone.mp4"))})
 	must(t, e.ingest(v.ID))
 	if got := e.reload(v.ID); *got.VideoPath != filepath.Join(e.videosDir, "x.mp4") || e.ytdlp.downloadCount() != 1 {
 		t.Fatalf("got %+v downloads=%d", got, e.ytdlp.downloadCount())
@@ -390,42 +390,23 @@ func TestIngestRerunAfterUploadDoesNotUploadAgain(t *testing.T) {
 	}
 }
 
-type panickingSlack struct {
-	fakeSlack
-	on string
-}
-
-func (p *panickingSlack) Success(ctx context.Context, t string) {
-	if strings.Contains(t, p.on) {
-		panic("simulated crash")
-	}
-	p.fakeSlack.Success(ctx, t)
-}
-
-// A crash (here a panic) right after the id was recorded, before anything else.
+// A crash right after the id was recorded, before the Slack notice and the
+// enqueue (here: the state such a crash leaves). The re-run finds the upload,
+// does not upload again and queues the first caption check.
 func TestIngestRerunAfterCrashRightAfterUploadDoesNotUploadAgain(t *testing.T) {
 	e := newVideoEnv(t)
-	e.deps.Notifier = &panickingSlack{on: "uploaded:"}
 	v := e.newTweet()
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("expected the simulated crash")
-			}
-		}()
-		_ = e.ingest(v.ID)
-	}()
-	if got := e.reload(v.ID); got.Status != "awaiting_captions" || got.YoutubeID == nil || *got.YoutubeID != "YT9" {
-		t.Fatalf("the id must be persisted before anything else runs: %+v", got)
+	ok, err := store.RecordTwitterVideoUpload(ctx, e.pool, v.ID, "YT9")
+	must(t, err)
+	if !ok {
+		t.Fatal("setup")
 	}
-
-	e.deps.Notifier = e.slack
 	must(t, e.ingest(v.ID))
-	if n := e.uploader.callCount(); n != 1 {
-		t.Fatalf("Upload called %d times after the re-run", n)
+	if n := e.uploader.callCount(); n != 0 || e.ytdlp.downloadCount() != 0 {
+		t.Fatalf("uploads %d downloads %d after the re-run", n, e.ytdlp.downloadCount())
 	}
-	if len(e.queued(KindTwitterVideoCaptions, v.ID)) != 1 {
-		t.Fatal("the first caption check should exist after the re-run")
+	if q := e.queued(KindTwitterVideoCaptions, v.ID); len(q) != 1 || !near(q[0].Delay, 5*time.Minute) {
+		t.Fatalf("the first caption check should exist after the re-run: %+v", q)
 	}
 }
 
@@ -570,14 +551,13 @@ func TestIngestRecordsTheUploadEvenIfTheContextEndsRightAfter(t *testing.T) {
 // plain failure (generic detail), and the error is returned for the Runner.
 func TestIngestDeadlineFailsTheVideo(t *testing.T) {
 	e := newVideoEnv(t)
-	dctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-	defer cancel()
+	e.deps.IngestTimeout = 50 * time.Millisecond // the handler enforces its own deadline
 	e.uploader.fn = func(ctx context.Context, _, _ string) (string, error) {
 		<-ctx.Done()
 		return "", fmt.Errorf("upload: %w", ctx.Err())
 	}
 	v := e.newTweet()
-	err := NewTwitterVideoIngest(e.deps)(dctx, Args{ID: v.ID})
+	err := e.ingest(v.ID)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v", err)
 	}

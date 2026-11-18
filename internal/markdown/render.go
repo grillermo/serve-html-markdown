@@ -44,6 +44,7 @@ var md = goldmark.New(
 			util.Prioritized(smartParser{}, 9000),
 		),
 		parser.WithASTTransformers(
+			util.Prioritized(trailingSpaceTransformer{}, 50),
 			util.Prioritized(quoteTransformer{}, 100),
 			util.Prioritized(emailTransformer{}, 200),
 			util.Prioritized(highlightBudgetTransformer{}, 300),

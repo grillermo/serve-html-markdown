@@ -30,15 +30,24 @@ trap 'rm -rf "$work"' EXIT
 rails_jar=$work/rails.jar
 go_jar=$work/go.jar
 
-# Lines that legitimately differ between the two servers: the CSRF token and
-# the digest of the assets.
+# What legitimately differs between the two servers, removed from both sides:
+# - the CSRF meta tags (Go has http.CrossOriginProtection instead of a token),
+#   and the authenticity_token value of forms;
+# - the digest of the assets;
+# - the self-closing slash of <link> tags (Rails writes " />");
+# - blank lines (the layouts differ in whitespace only).
 normalize() {
   sed -E \
-    -e 's|(<meta name="csrf-token" content=")[^"]*|\1X|' \
-    -e 's|(<meta name="csrf-param" content=")[^"]*|\1X|' \
+    -e 's#<meta name="csrf-(token|param)" content="[^"]*" ?/?>##g' \
     -e 's|(name="authenticity_token" value=")[^"]*|\1X|' \
-    -e 's|(/assets/[A-Za-z0-9_./-]*)-[0-9a-f]{8,64}\.([a-z0-9]+)|\1-DIGEST.\2|g'
+    -e 's|(/assets/[A-Za-z0-9_./-]*)-[0-9a-f]{8,64}\.([a-z0-9]+)|\1-DIGEST.\2|g' \
+    -e 's|(<link [^>]*[^ />]) ?/>|\1>|g' |
+    grep -v '^[[:space:]]*$' || true
 }
+
+# Syntect (Rails) and chroma (Go) tokenise code differently, so highlighted
+# code blocks differ in their <span> markup. strip_spans leaves the text.
+strip_spans() { sed -E 's|</?span[^>]*>||g'; }
 
 urlencode() { python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
 
@@ -88,19 +97,27 @@ fetch() {
 }
 
 failed=0
+highlight_only=()
 compare() { # <label> <path>
   fetch "$rails_jar" "$RAILS_URL$2" "$work/rails.out"
   fetch "$go_jar" "$GO_URL$2" "$work/go.out"
   if cmp -s "$work/rails.out" "$work/go.out"; then
     echo "OK $1"
+    return
+  fi
+  strip_spans <"$work/rails.out" >"$work/rails.text"
+  strip_spans <"$work/go.out" >"$work/go.text"
+  if cmp -s "$work/rails.text" "$work/go.text"; then
+    echo "OK~ $1 (only the highlighting markup differs)"
+    highlight_only+=("$1")
+    return
+  fi
+  failed=1
+  echo "DIFF $1"
+  if command -v difft >/dev/null; then
+    difft --color never "$work/rails.text" "$work/go.text" || true
   else
-    failed=1
-    echo "DIFF $1"
-    if command -v difft >/dev/null; then
-      difft --color never "$work/rails.out" "$work/go.out" || true
-    else
-      diff -u "$work/rails.out" "$work/go.out" || true
-    fi
+    diff -u "$work/rails.text" "$work/go.text" || true
   fi
 }
 
@@ -135,7 +152,7 @@ for id in ${ids[@]+"${ids[@]}"}; do
 done
 
 if [ "$failed" -eq 0 ]; then
-  echo "All ${#names[@]} files and the pages matched."
+  echo "All ${#names[@]} files and the pages matched; ${#highlight_only[@]} differ only in highlighting markup."
 else
   echo "Differences found." >&2
 fi

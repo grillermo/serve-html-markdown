@@ -13,9 +13,9 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/icon.png">
 
-    {{/* Rails' stylesheet_link_tag :app: every file in app/assets/stylesheets. */}}
+    {{/* Rails' stylesheet_link_tag :app: every file in app/assets/stylesheets, joined by bare newlines (so the second link has no indent; script/parity.sh compares byte for byte). */}}
     <link rel="stylesheet" href="{{asset "application.css"}}">
-    <link rel="stylesheet" href="{{asset "markdown.css"}}">
+<link rel="stylesheet" href="{{asset "markdown.css"}}">
   </head>
 
   <body>

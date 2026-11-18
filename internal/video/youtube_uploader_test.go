@@ -549,8 +549,12 @@ func TestUploaderRefusesNonRegularFiles(t *testing.T) {
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Skipf("no mkfifo: %v", err)
 	}
+	emptyFile := filepath.Join(dir, "empty.mp4")
+	if err := os.WriteFile(emptyFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for name, path := range map[string]string{
-		"directory": dir, "fifo": fifo, "missing": filepath.Join(dir, "nope.mp4"), "blank": "", "device": "/dev/null",
+		"directory": dir, "fifo": fifo, "missing": filepath.Join(dir, "nope.mp4"), "blank": "", "device": "/dev/null", "empty": emptyFile,
 	} {
 		done := make(chan error, 1)
 		go func() {
@@ -616,5 +620,147 @@ func TestUploaderDoesNotFollowRedirects(t *testing.T) {
 	}
 	if !errors.Is(err, video.ErrYoutube) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// failingUpload makes the upload endpoint answer status with body and returns
+// the message of the resulting error.
+func failingUpload(t *testing.T, u func(*fakeGoogle) *video.YoutubeUploader, status int, body string) string {
+	t.Helper()
+	g := newFakeGoogle(t)
+	g.uploadStatus, g.uploadBody = status, body
+	path, _ := writeVideo(t, 10)
+	_, err := u(g).Upload(context.Background(), path, "t", "")
+	return uploadError(t, err).Message
+}
+
+func defaultUploader(t *testing.T) func(*fakeGoogle) *video.YoutubeUploader {
+	return func(g *fakeGoogle) *video.YoutubeUploader { return g.uploaderFor(t) }
+}
+
+// Values are redacted by the name they sit under, whatever they look like.
+func TestUploaderScrubsCredentialsByName(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body  string
+		leaks []string
+		keeps []string
+	}{
+		"json access_token": {
+			body: `{"error":{"access_token":"opaque-token-123"}}`, leaks: []string{"opaque-token-123"},
+			keeps: []string{`"access_token":"[REDACTED]"}}`},
+		},
+		"query in message": {
+			body:  `{"error":{"code":400,"message":"bad request to https://upload.example/yt?upload_id=SECRETSESSION&access_token=tok999&part=snippet"}}`,
+			leaks: []string{"SECRETSESSION", "tok999"}, keeps: []string{"upload_id=[REDACTED]&access_token=[REDACTED]&part=snippet"},
+		},
+		"comma separated": {
+			body:  `{"error":{"code":400,"message":"refresh_token=zzz-opaque, client_secret=GOCSPX-abc"}}`,
+			leaks: []string{"zzz-opaque", "GOCSPX-abc"}, keeps: []string{"refresh_token=[REDACTED], client_secret=[REDACTED]"},
+		},
+		"single quotes": {
+			body: `{'id_token': 'eyJhbGciOi.payload.sig', 'api_key': 'AIzaSyOpaque'}`, leaks: []string{"eyJhbGciOi", "AIzaSyOpaque"},
+		},
+		"escaped inside a string": {
+			body:  `{"error":{"message":"{\"access_token\":\"opaque\/with\/slashes\",\"signature\":\"sigvalue\"}"}}`,
+			leaks: []string{"opaque", "slashes", "sigvalue"},
+		},
+		"key and token": {
+			body: `{"error":{"message":"url ?key=AIzaOpaque&token=t0k&sig=abc123"}}`, leaks: []string{"AIzaOpaque", "t0k", "abc123"},
+		},
+		"unicode space after bearer": {
+			body:  "{\"error\":{\"message\":\"Authorization: Bearer\u00a0opaque-bearer-1 and bearer\u2003opaque-bearer-2\"}}",
+			leaks: []string{"opaque-bearer-1", "opaque-bearer-2"},
+		},
+		"on the message too": {
+			// googleapi.Error.Message is the JSON "message" field.
+			body: `{"error":{"code":400,"message":"nope access_token=msgtoken!"}}`, leaks: []string{"msgtoken"},
+		},
+	} {
+		msg := failingUpload(t, defaultUploader(t), 400, tc.body)
+		for _, leak := range tc.leaks {
+			if strings.Contains(msg, leak) {
+				t.Errorf("%s: message leaks %q: %s", name, leak, msg)
+			}
+		}
+		if !strings.Contains(msg, "[REDACTED]") {
+			t.Errorf("%s: nothing redacted: %s", name, msg)
+		}
+		for _, keep := range tc.keeps {
+			if !strings.Contains(msg, keep) {
+				t.Errorf("%s: message lacks %q: %s", name, keep, msg)
+			}
+		}
+	}
+}
+
+// A secret Google echoed with JSON's \/ escapes (or any backslash escapes) is
+// still found.
+func TestUploaderScrubsJSONEscapedKnownSecrets(t *testing.T) {
+	g := newFakeGoogle(t)
+	u, err := video.NewYoutubeUploader("cid", "abc/def/ghi-secret", "1//plain-refresh/part")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.TokenURL, u.APIEndpoint, u.HTTPClient = g.URL+"/token", g.URL, g.Client()
+	g.uploadStatus = 400
+	g.uploadBody = `{"error":{"message":"seen abc\/def\/ghi-secret and 1\/\/plain-refresh\/part and at-1 end","note":"abc\\/def"}}`
+	path, _ := writeVideo(t, 10)
+	_, err = u.Upload(context.Background(), path, "t", "")
+	msg := uploadError(t, err).Message
+	for _, leak := range []string{"ghi-secret", "plain-refresh", "at-1"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("message leaks %q: %s", leak, msg)
+		}
+	}
+	if !strings.Contains(msg, "seen [REDACTED] and [REDACTED] and [REDACTED] end") {
+		t.Errorf("message = %s", msg)
+	}
+}
+
+// Real error bodies of the API keep reading well: nothing in them is a credential.
+func TestUploaderGoogleErrorBodiesStayReadable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+		want   string
+	}{
+		"quota": {403, `{
+  "error": {
+    "code": 403,
+    "message": "The request cannot be completed because you have exceeded your \u003ca href=\"/youtube/v3/getting-started#quota\"\u003equota\u003c/a\u003e.",
+    "errors": [
+      {
+        "message": "The request cannot be completed because you have exceeded your \u003ca href=\"/youtube/v3/getting-started#quota\"\u003equota\u003c/a\u003e.",
+        "domain": "youtube.quota",
+        "reason": "quotaExceeded"
+      }
+    ]
+  }
+}`, `YouTube upload failed: 403 The request cannot be completed because you have exceeded your <a href="/youtube/v3/getting-started#quota">quota</a>. body={ "error": { "code": 403, "message": "The request cannot be completed because you have exceeded your \u003ca href=\"/youtube/v3/getting-started#quota\"\u003equota\u003c/a\u003e.", "errors": [ { "message": "The request cannot be completed because you have exceeded your \u003ca href=\"/youtube/v3/getting-started#quota\"\u003equota\u003c/a\u003e.", "domain": "youtube.quota", "reason": "quotaExceeded" } ] } }`},
+		"forbidden": {403, `{"error":{"code":403,"message":"The authenticated user doesn't have permissions to upload videos. Check that the user's channel is verified.","errors":[{"message":"Forbidden","domain":"global","reason":"forbidden"}]}}`,
+			`YouTube upload failed: 403 The authenticated user doesn't have permissions to upload videos. Check that the user's channel is verified. body={"error":{"code":403,"message":"The authenticated user doesn't have permissions to upload videos. Check that the user's channel is verified.","errors":[{"message":"Forbidden","domain":"global","reason":"forbidden"}]}}`},
+		"invalid metadata": {400, `{"error":{"code":400,"message":"The request metadata specifies an invalid or empty video title.","errors":[{"message":"The request metadata specifies an invalid or empty video title.","domain":"youtube.video","reason":"invalidTitle","location":"body.snippet.title","locationType":"other"}]}}`,
+			`YouTube upload failed: 400 The request metadata specifies an invalid or empty video title. body={"error":{"code":400,"message":"The request metadata specifies an invalid or empty video title.","errors":[{"message":"The request metadata specifies an invalid or empty video title.","domain":"youtube.video","reason":"invalidTitle","location":"body.snippet.title","locationType":"other"}]}}`},
+		"api key invalid": {400, `{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}`,
+			`YouTube upload failed: 400 API key not valid. Please pass a valid API key. body={"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}`},
+	} {
+		if got := failingUpload(t, defaultUploader(t), tc.status, tc.body); got != tc.want {
+			t.Errorf("%s:\n got: %s\nwant: %s", name, got, tc.want)
+		}
+	}
+}
+
+func TestUploaderRefusesAnEmptyFileWithAClearError(t *testing.T) {
+	g := newFakeGoogle(t)
+	path := filepath.Join(t.TempDir(), "empty.mp4")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := g.uploaderFor(t).Upload(context.Background(), path, "t", "")
+	if err == nil || err.Error() != "YouTube upload failed: the video file is empty." || errors.Is(err, video.ErrAuthorizationExpired) {
+		t.Errorf("err = %v", err)
+	}
+	if ups, _ := g.snapshot(); len(ups) != 0 {
+		t.Error("an empty file was sent")
 	}
 }

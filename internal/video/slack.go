@@ -43,28 +43,34 @@ func (n *SlackNotifier) post(ctx context.Context, rawURL, text string) {
 	if strings.TrimSpace(rawURL) == "" {
 		return
 	}
-	if kind := n.send(ctx, rawURL, text); kind != "" {
+	kind, status := n.send(ctx, rawURL, text)
+	switch {
+	case kind == "http_status":
+		// Ruby ignored the answer's status; the status code alone (never the
+		// body, which can quote the URL) says why nothing arrived.
+		slog.Warn("[SlackNotifier] post failed", "kind", kind, "status", status)
+	case kind != "":
 		slog.Error("[SlackNotifier] post failed", "kind", kind)
 	}
 }
 
 // send makes the request and returns a short, secret-free name for what went
-// wrong, or "" on success.
-func (n *SlackNotifier) send(ctx context.Context, rawURL, text string) string {
+// wrong (with the status code for "http_status"), or "" on success.
+func (n *SlackNotifier) send(ctx context.Context, rawURL, text string) (kind string, status int) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return "invalid_url"
+		return "invalid_url", 0
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "unsupported_url"
+		return "unsupported_url", 0
 	}
 	payload, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
-		return "encode"
+		return "encode", 0
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(payload))
 	if err != nil {
-		return "request"
+		return "request", 0
 	}
 	req.Header.Set("Content-Type", "application/json")
 	hc := n.HTTPClient
@@ -75,13 +81,16 @@ func (n *SlackNotifier) send(ctx context.Context, rawURL, text string) string {
 	if err != nil {
 		switch {
 		case errors.Is(err, context.Canceled):
-			return "canceled"
+			return "canceled", 0
 		case errors.Is(err, context.DeadlineExceeded):
-			return "timeout"
+			return "timeout", 0
 		}
-		return "transport"
+		return "transport", 0
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
-	return ""
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return "http_status", resp.StatusCode
+	}
+	return "", 0
 }

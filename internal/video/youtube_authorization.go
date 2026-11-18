@@ -39,7 +39,11 @@ const (
 )
 
 // AuthorizationError is a failure of the browser half of YouTube OAuth
-// (Ruby: YoutubeAuthorization::Error). Message is safe to show the user: it
+// (Ruby: YoutubeAuthorization::Error). Classify it with errors.Is:
+// ErrAuthorizationConfiguration for a missing or invalid setting (answer 500),
+// ErrAuthorization for any other AuthorizationError (Google refused, could not
+// be reached or sent no refresh token: answer 502), and context.Canceled or
+// context.DeadlineExceeded when the caller's ctx ended the exchange. Message is safe to show the user: it
 // never holds the client secret, the code or anything Google said except its
 // short error code. Cause (when set) is the underlying transport error,
 // reachable with errors.Is/As but not printed by Error.
@@ -122,13 +126,19 @@ type YoutubeAuthorization struct {
 
 // NewYoutubeAuthorization returns an authorization for the Google web client.
 // A blank client id or secret is an AuthorizationError (Config) that names the
-// missing variable, like Ruby's ConfigurationError.
+// missing variable, like Ruby's ConfigurationError; so is a redirectURI that is
+// not an absolute http(s) URL (Ruby sent whatever it got and let Google refuse
+// it). Build redirectURI with YoutubeRedirectURI.
 func NewYoutubeAuthorization(clientID, clientSecret, redirectURI string) (*YoutubeAuthorization, error) {
 	if strings.TrimSpace(clientID) == "" {
 		return nil, &AuthorizationError{Message: "YOUTUBE_CLIENT_ID is not set.", Config: true}
 	}
 	if strings.TrimSpace(clientSecret) == "" {
 		return nil, &AuthorizationError{Message: "YOUTUBE_CLIENT_SECRET is not set.", Config: true}
+	}
+	if u, err := url.Parse(strings.TrimSpace(redirectURI)); err != nil || u.Host == "" ||
+		(u.Scheme != "http" && u.Scheme != "https") || strings.TrimSpace(redirectURI) != redirectURI {
+		return nil, &AuthorizationError{Message: "The YouTube redirect URI is not an absolute http(s) URL.", Config: true}
 	}
 	return &YoutubeAuthorization{
 		TokenURL: GoogleTokenURL, HTTPClient: newOAuthHTTPClient(),
@@ -164,10 +174,17 @@ func (a *YoutubeAuthorization) config() *oauth2.Config {
 	}
 }
 
-// ConsentURL is the URL to send the browser to. state is the caller's CSRF
-// token (a blank one is an error: the callback could not check it). Google only
-// returns a refresh token when prompt=consent is requested, which is why that
-// parameter is not optional.
+// ConsentURL is the URL to send the browser to. Google only returns a refresh
+// token when prompt=consent is requested, which is why that parameter is not
+// optional.
+//
+// state is the caller's CSRF token, and this method only refuses a blank one.
+// The caller must make it: at least 128 bits from crypto/rand (Ruby used
+// SecureRandom.hex(16)); bind it to the user's session (a server-side session
+// or a signed cookie, never a value the callback request itself supplies);
+// compare it with the callback's state in constant time
+// (crypto/subtle.ConstantTimeCompare, after checking the lengths match); accept
+// it once; and clear it after the callback, whatever the outcome.
 func (a *YoutubeAuthorization) ConsentURL(state string) (string, error) {
 	if strings.TrimSpace(state) == "" {
 		return "", &AuthorizationError{Message: msgStateMissing}

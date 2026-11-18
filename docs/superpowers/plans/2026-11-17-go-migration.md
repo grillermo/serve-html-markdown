@@ -52,7 +52,7 @@ internal/markdown/{render,ids,heading}.go
 internal/linker/{map,html_map,markdown_map,locator,planner,linker,cgi}.go
 internal/llm/{openai_responses,formatter,summarizer,expand}.go
 internal/expansion/processor.go
-internal/video/{twitter_url,youtube_url,vtt,ytdlp,ego_cookies,slack,rulinky,youtube_uploader,youtube_authorization}.go
+internal/transcript/vtt.go (leaf, used by internal/llm), internal/video/{twitter_url,youtube_url,ytdlp,ego_cookies,slack,rulinky,youtube_uploader,youtube_authorization}.go
 internal/jobs/{queue,worker,generate_expansion,ingest,captions}.go
 internal/web/{server,routes,files,expansions,scroll,uploads,videos,youtube,assets,templates}.go
 web/templates/*.html                    ported ERB views
@@ -1254,7 +1254,7 @@ Each service gets the Ruby test file ported first. All HTTP clients take an inje
 
 ### Task 9.1: TwitterUrl, YoutubeUrl, VttText
 
-**Files:** `internal/video/{twitter_url,youtube_url,vtt}.go` + tests (port `twitter_url_test.rb`, `youtube_url_test.rb`, `vtt_text_test.rb` verbatim as table tests)
+**Files:** `internal/video/{twitter_url,youtube_url}.go`, `internal/transcript/vtt.go` (moved out of video so llm stays light) + tests (port `twitter_url_test.rb`, `youtube_url_test.rb`, `vtt_text_test.rb` verbatim as table tests)
 
 - [ ] Steps: failing tests → FAIL → port → PASS → commit. `with_scheme`: prefix `https://` unless `^[a-z][a-z0-9+.-]*://` (case-insensitive). VTT un-escaping uses `cgiUnescape` semantics (move it to `internal/textutil` and import from both packages). `squeeze(" ")` collapses runs of spaces only. Consecutive duplicate lines collapse (`chunk_while`).
 

@@ -1,9 +1,9 @@
-package video_test
+package transcript_test
 
 import (
 	"testing"
 
-	"serve-html-markdown/internal/video"
+	"serve-html-markdown/internal/transcript"
 )
 
 // Ruby: VttTextTest "drops headers, timings and word tags, and collapses
@@ -23,7 +23,7 @@ func TestVttTextDropsHeadersTimingsAndTags(t *testing.T) {
 		"00:00:02.160 --> 00:00:03.630 align:start position:0%\n" +
 		"How the do\n" +
 		"Q&amp;A<00:00:02.400><c> time</c>\n"
-	if got, want := video.VttText(vtt), "How the do\nQ&A time"; got != want {
+	if got, want := transcript.VttText(vtt), "How the do\nQ&A time"; got != want {
 		t.Errorf("VttText = %q, want %q", got, want)
 	}
 }
@@ -65,7 +65,7 @@ func TestVttText(t *testing.T) {
 		{"unicode spaces are not stripped", " a ", " a "},
 	}
 	for _, c := range cases {
-		if got := video.VttText(c.in); got != c.want {
+		if got := transcript.VttText(c.in); got != c.want {
 			t.Errorf("%s: VttText(%q) = %q, want %q", c.name, c.in, got, c.want)
 		}
 	}

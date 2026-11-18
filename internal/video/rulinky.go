@@ -18,7 +18,11 @@ const (
 	msgRulinkyUnreachable   = "rulinky request could not be completed."
 )
 
-// RulinkyError is a failed Rulinky call. Message is generic and safe to show or
+// RulinkyError is a failed Rulinky call. Classify it with errors.Is:
+// ErrRulinkyConfiguration for missing or invalid settings, ErrRulinky for any
+// RulinkyError (a refused, unusable or unreachable Rulinky), and
+// context.Canceled or context.DeadlineExceeded when the caller's ctx ended the
+// call (the cause is kept); errors.As(err, &*RulinkyError) reaches the message. Message is generic and safe to show or
 // log: it never holds the upstream body, the host or the token. Cause (when
 // set) is the underlying transport error, reachable with errors.Is/As but not
 // printed by Error.

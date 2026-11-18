@@ -1,4 +1,6 @@
-package video
+// Package transcript turns caption files into plain text. It is a leaf: it
+// depends only on internal/textutil.
+package transcript
 
 import (
 	"regexp"
@@ -86,4 +88,10 @@ func isVttHeader(line string) bool {
 func isWordRune(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsMark(r) || unicode.Is(unicode.Nd, r) || unicode.Is(unicode.Pc, r) ||
 		unicode.Is(unicode.Nl, r) || unicode.Is(unicode.Other_Alphabetic, r)
+}
+
+// rubyStrip is Ruby's String#strip: it removes leading and trailing ASCII
+// whitespace and NUL (not Unicode spaces such as U+00A0, which TrimSpace would).
+func rubyStrip(s string) string {
+	return strings.Trim(s, "\x00\t\n\v\f\r ")
 }

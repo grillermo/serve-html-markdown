@@ -21,8 +21,9 @@ import (
 
 const (
 	// DefaultUploadChunkSize is the size of one resumable-upload chunk, which is
-	// all the memory an upload holds of the file (Ruby sent 100 MB chunks). It
-	// must be a multiple of 256 KiB.
+	// all the memory an upload holds of the file (Ruby sent 100 MB chunks). The
+	// Google client rounds any chunk size up to a multiple of 256 KiB, so this
+	// is one.
 	DefaultUploadChunkSize = 16 << 20
 	// MaxErrorBodyBytes caps the Google response body carried in an upload
 	// error, which ends up in Slack messages and logs.
@@ -47,6 +48,10 @@ const (
 )
 
 // YoutubeError is a failed YouTube upload (Ruby: YoutubeUploader::Error).
+// Classify it with errors.Is: ErrAuthorizationExpired for a dead or missing
+// grant (offer YoutubeReauthURL), ErrYoutube for any YoutubeError, and
+// context.Canceled or context.DeadlineExceeded when the caller's ctx ended the
+// call (the cause is kept); errors.As(err, &*YoutubeError) reaches the message.
 // Message is safe to show and log: it never holds the client secret, a token,
 // the URL of an upload session, or more than MaxErrorBodyBytes of Google's
 // response. Cause (when set) is the underlying error, reachable with
@@ -120,10 +125,29 @@ func NewYoutubeUploader(clientID, clientSecret, refreshToken string) (*YoutubeUp
 // title and returns its id. The refresh token is exchanged first, so a dead
 // grant is reported (ErrAuthorizationExpired) before any of the file is read;
 // a grant that dies during a long upload is reported the same way. The file is
-// streamed one chunk at a time, must be a regular file, and is closed on every
-// path; ctx ends the upload. Every other failure is a YoutubeError (see
-// there) whose message for an API error is
+// streamed one chunk at a time, must be a non-empty regular file, and is closed
+// on every path; ctx ends the upload. Every other failure is a YoutubeError
+// (see there) whose message for an API error is
 // "YouTube upload failed: <status> <message> body=<body>".
+//
+// Caveats for the caller (the upload job):
+//
+//   - Every call starts a NEW resumable session. If Google accepted the video
+//     but the final response was lost (the call fails after the last chunk went
+//     out), the video exists on the channel even though Upload returned an
+//     error, and a blind retry uploads it a second time. Persist the returned
+//     id the moment Upload returns, and never call Upload again for the same
+//     video without checking first (for instance that no id is stored).
+//   - Upload has no deadline of its own: a large file takes as long as it
+//     takes. Wrap the call in a context with the job's overall deadline.
+//   - A connection the server closes in the middle of a chunk fails the upload;
+//     it is not retried or resumed here (only HTTP-level retries of the Google
+//     client apply).
+//   - Classify the error with errors.Is(err, ErrAuthorizationExpired) (send the
+//     user to YoutubeReauthURL), errors.Is(err, ErrYoutube) for any other
+//     failure of this uploader and errors.Is(err, context.Canceled) or
+//     context.DeadlineExceeded when ctx ended it; errors.As(err, &*YoutubeError)
+//     gives the message, which is safe to log and to post to Slack.
 func (u *YoutubeUploader) Upload(ctx context.Context, filePath, title, description string) (string, error) {
 	tokenURL := u.TokenURL
 	if tokenURL == "" {
@@ -196,6 +220,10 @@ func openRegular(path string) (*os.File, error) {
 		f.Close()
 		return nil, &YoutubeError{Message: "YouTube upload failed: the video is not a regular file.", cause: err}
 	}
+	if info.Size() == 0 {
+		f.Close()
+		return nil, &YoutubeError{Message: "YouTube upload failed: the video file is empty."}
+	}
 	return f, nil
 }
 
@@ -266,26 +294,62 @@ func unwrapTransport(ctx context.Context, err error) error {
 	return err
 }
 
+// credentialKeys are the names whose values are redacted wherever they show up
+// in Google's error text, whatever the value looks like.
+const credentialKeys = `access_token|refresh_token|id_token|client_secret|client_id|upload_id|api_key|apikey|key|signature|sig|token`
+
+// quotedValue is a JSON-style value, up to the closing quote (an escaped
+// character inside it, such as \/, belongs to it).
+const quotedValue = `(?:\\[^"']|[^"'\\])*`
+
 var (
 	// Shapes of Google credentials, scrubbed even when not known to this process.
-	accessTokenShape  = regexp.MustCompile(`ya29\.[A-Za-z0-9._~+/=-]+`)
-	refreshTokenShape = regexp.MustCompile(`1//[A-Za-z0-9._~+/=-]+`)
-	bearerShape       = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`)
+	accessTokenShape  = regexp.MustCompile(`ya29\.(?:[A-Za-z0-9._~+=-]|\\?/)+`)
+	refreshTokenShape = regexp.MustCompile(`1(?:\\?/){2}(?:[A-Za-z0-9._~+=-]|\\?/)+`)
+	bearerShape       = regexp.MustCompile(`(?i)\bbearer[\s\p{Z}]+(?:[A-Za-z0-9._~+=-]|\\?/)+`)
+	// key=value (query or "k=v, k=v" style): the value runs to a separator,
+	// whitespace or quote.
+	keyEqualsValue = regexp.MustCompile(`(?i)\b(` + credentialKeys + `)\b(\\*["']?\s*=\s*(?:\\*["'])?)(?:\\[^"']|[^"'\\\s&,;])*`)
+	// "key":"value", 'key': 'value' and the same escaped inside another JSON
+	// string (\"key\":\"value\"): the value runs to the closing quote.
+	keyColonValue = regexp.MustCompile(`(?i)\b(` + credentialKeys + `)\b(\\*["']?\s*:\s*\\*["'])` + quotedValue)
 )
 
+// withoutBackslashes undoes JSON escaping crudely (\/ -> /, \" -> "), so a
+// secret that was escaped when Google embedded it in a string still compares equal.
+func withoutBackslashes(s string) string { return strings.ReplaceAll(s, `\`, "") }
+
 // scrub makes s one line and replaces every secret in it: the ones this
-// uploader holds (and the access token it was given in secrets) wherever they appear, and
-// anything shaped like a Google token or an Authorization value.
+// uploader holds (and the access token it was given in secrets) wherever they
+// appear, JSON-escaped or not; the value of anything named like a credential
+// (access_token, upload_id, key, ...) in URL or JSON style; and anything
+// shaped like a Google token or an Authorization value.
 func (u *YoutubeUploader) scrub(s string, secrets []string) string {
 	if len(s) > maxScrubInput {
 		s = s[:maxScrubInput]
 	}
 	s = strings.ToValidUTF8(s, "")
+	known := make([]string, 0, 2+len(secrets))
 	for _, secret := range append([]string{u.refreshToken, u.clientSecret}, secrets...) {
 		if len(secret) >= minSecretLen {
-			s = strings.ReplaceAll(s, secret, redacted)
+			known = append(known, secret)
 		}
 	}
+	replaceKnown := func(s string) string {
+		for _, secret := range known {
+			s = strings.ReplaceAll(s, secret, redacted)
+		}
+		return s
+	}
+	s = replaceKnown(s)
+	// A secret hidden by JSON escapes only shows once they are removed.
+	if plain := withoutBackslashes(s); plain != s {
+		if replaced := replaceKnown(plain); replaced != plain {
+			s = replaced
+		}
+	}
+	s = keyEqualsValue.ReplaceAllString(s, "${1}${2}"+redacted)
+	s = keyColonValue.ReplaceAllString(s, "${1}${2}"+redacted)
 	s = accessTokenShape.ReplaceAllString(s, redacted)
 	s = refreshTokenShape.ReplaceAllString(s, redacted)
 	s = bearerShape.ReplaceAllString(s, redacted)

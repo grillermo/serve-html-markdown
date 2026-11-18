@@ -144,6 +144,11 @@ func TestSlackIgnoresNon2xxAnswers(t *testing.T) {
 	if strings.Contains(logs.String(), "/S") || strings.Contains(logs.String(), srv.URL) {
 		t.Errorf("log names the URL: %s", logs.String())
 	}
+	for _, want := range []string{"[SlackNotifier] post failed", "kind=http_status", "status=500"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %q: %s", want, logs.String())
+		}
+	}
 }
 
 // A redirect is never followed: the webhook URL is the only place the text goes.

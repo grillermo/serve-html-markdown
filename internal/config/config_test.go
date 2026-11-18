@@ -50,6 +50,7 @@ func TestDefaults(t *testing.T) {
 	}{
 		{"Port", c.Port, "8009"},
 		{"Host", c.Host, "localhost"},
+		{"YoutubeHost", c.YoutubeHost, "localhost:8009"},
 		{"DatabaseHost", c.DatabaseHost, "localhost"},
 		{"DatabasePort", c.DatabasePort, "5432"},
 		{"DatabasePool", c.DatabasePool, 5},
@@ -64,6 +65,19 @@ func TestDefaults(t *testing.T) {
 		if ch.got != ch.want {
 			t.Errorf("%s = %v, want %v", ch.name, ch.got, ch.want)
 		}
+	}
+}
+
+// Host keeps its "localhost" default; YoutubeHost is Ruby's
+// ENV.fetch("HOST", "localhost:8009") of YoutubeAuthorization, and follows HOST when set.
+func TestYoutubeHostFollowsHostWithRubysDefault(t *testing.T) {
+	clearConfigEnv(t)
+	if c := FromEnv(); c.Host != "localhost" || c.YoutubeHost != "localhost:8009" {
+		t.Errorf("unset: Host = %q, YoutubeHost = %q", c.Host, c.YoutubeHost)
+	}
+	t.Setenv("HOST", "serve.chiq.me")
+	if c := FromEnv(); c.Host != "serve.chiq.me" || c.YoutubeHost != "serve.chiq.me" {
+		t.Errorf("set: Host = %q, YoutubeHost = %q", c.Host, c.YoutubeHost)
 	}
 }
 

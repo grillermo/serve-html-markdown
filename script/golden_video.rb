@@ -1,5 +1,5 @@
 # Captures golden input/output pairs from the real Ruby TwitterUrl, YoutubeUrl and
-# VttText, so the Go port (internal/video) can be verified against them.
+# VttText, so the Go port (internal/video, internal/transcript) can be verified against them.
 #
 #   bin/rails runner script/golden_video.rb [--seed N] [--urls N] [--vtts N] [--out PATH]
 #
@@ -7,7 +7,7 @@
 # different corpus for a one-off differential run:
 #
 #   bin/rails runner script/golden_video.rb --seed 99 --urls 20000 --vtts 5000 --out /tmp/big.json
-#   VIDEO_GOLDEN_FILE=/tmp/big.json go test ./internal/video -run Golden
+#   VIDEO_GOLDEN_FILE=/tmp/big.json go test ./internal/video ./internal/transcript -run Golden
 #
 # Entries: {"kind":"url","input":…,"twitter":<normalized|null>,"youtube":<id|null>} (or
 # "ruby_raises" where a URI::InvalidComponentError escapes Ruby's services) and

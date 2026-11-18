@@ -12,17 +12,22 @@ import (
 
 // Config holds every setting the app reads from the environment.
 type Config struct {
-	AppEnv, Root, Port, Host                                    string
-	APIToken, SecretKeyBase                                     string
-	OpenAIKey, ExpansionLLMKey, ClaudeModel                     string
-	DatabaseHost, DatabasePort, DatabaseUser, DatabasePassword  string
-	DatabaseName                                                string
-	DatabasePool                                                int
-	PreparedStatements                                          bool
-	AdminEmail, AdminPassword                                   string
-	YtdlpBin, VideosDir, FilesDir                               string
-	YoutubeClientID, YoutubeClientSecret, YoutubeRefreshToken   string
-	YoutubeRedirectURI, YoutubeReauthURL                        string
+	AppEnv, Root, Port, Host                                   string
+	APIToken, SecretKeyBase                                    string
+	OpenAIKey, ExpansionLLMKey, ClaudeModel                    string
+	DatabaseHost, DatabasePort, DatabaseUser, DatabasePassword string
+	DatabaseName                                               string
+	DatabasePool                                               int
+	PreparedStatements                                         bool
+	AdminEmail, AdminPassword                                  string
+	YtdlpBin, VideosDir, FilesDir                              string
+	YoutubeClientID, YoutubeClientSecret, YoutubeRefreshToken  string
+	YoutubeRedirectURI, YoutubeReauthURL                       string
+	// YoutubeHost is HOST with Ruby's YouTube default, "localhost:8009" (Host
+	// defaults to "localhost"). The OAuth redirect and reauth URLs are built
+	// from it: Task 9.8 passes it as video.YoutubeSettings.Host and to
+	// video.YoutubeRedirectURI and video.YoutubeReauthURL.
+	YoutubeHost                                                 string
 	RulinkyHost, RulinkyToken, SlackSuccessURL, SlackFailureURL string
 	// JobConcurrency is the number of background worker goroutines.
 	JobConcurrency int
@@ -78,6 +83,7 @@ func FromEnv() Config {
 		YtdlpBin: get("YTDLP_BIN", "/opt/homebrew/bin/yt-dlp"), VideosDir: os.Getenv("VIDEOS_DIR"),
 		YoutubeClientID: os.Getenv("YOUTUBE_CLIENT_ID"), YoutubeClientSecret: os.Getenv("YOUTUBE_CLIENT_SECRET"),
 		YoutubeRefreshToken: os.Getenv("YOUTUBE_REFRESH_TOKEN"),
+		YoutubeHost:         get("HOST", "localhost:8009"),
 		YoutubeRedirectURI:  os.Getenv("YOUTUBE_REDIRECT_URI"), YoutubeReauthURL: os.Getenv("YOUTUBE_REAUTH_URL"),
 		RulinkyHost: os.Getenv("RULINKY_HOST"), RulinkyToken: os.Getenv("RULINKY_API_TOKEN"),
 		SlackSuccessURL: os.Getenv("SLACK_SUCCESS_WEBHOOK"), SlackFailureURL: os.Getenv("SLACK_FAILURE_WEBHOOK"),

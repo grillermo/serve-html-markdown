@@ -298,3 +298,22 @@ func TestRedirectURIAndStateAreNeverRequestDerived(t *testing.T) {
 		t.Errorf("consent URL: %s", raw)
 	}
 }
+
+func TestNewAuthorizationRejectsABlankOrInvalidRedirectURI(t *testing.T) {
+	for _, uri := range []string{"", "  ", "serve.chiq.me/youtube/callback", "/youtube/callback", "ftp://serve.chiq.me/cb",
+		"https://", "javascript:alert(1)", " https://serve.chiq.me/cb", "https://serve.chiq.me/cb\n", "://x"} {
+		a, err := video.NewYoutubeAuthorization("cid", "sec", uri)
+		if a != nil || !errors.Is(err, video.ErrAuthorizationConfiguration) {
+			t.Errorf("%q: %v, %v", uri, a, err)
+		}
+	}
+	for _, uri := range []string{"https://serve.chiq.me/youtube/callback", "http://localhost:8009/youtube/callback"} {
+		if _, err := video.NewYoutubeAuthorization("cid", "sec", uri); err != nil {
+			t.Errorf("%q: %v", uri, err)
+		}
+	}
+	// What YoutubeRedirectURI makes is always acceptable.
+	if _, err := video.NewYoutubeAuthorization("cid", "sec", video.YoutubeRedirectURI("", "")); err != nil {
+		t.Error(err)
+	}
+}

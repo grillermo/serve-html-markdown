@@ -6,7 +6,7 @@ import (
 	"errors"
 	"regexp"
 
-	"serve-html-markdown/internal/video"
+	"serve-html-markdown/internal/transcript"
 )
 
 // SummaryPrompt is prepended to the transcript. It is byte for byte PROMPT of
@@ -62,7 +62,7 @@ var (
 	trailingFence = regexp.MustCompile("[ \\t\\n\\v\\f\\r]*```\\z")
 )
 
-// Summarize writes transcript (a WebVTT file or plain text; WebVTT is reduced to
+// Summarize writes captions (a WebVTT file or plain text; WebVTT is reduced to
 // its spoken words first) up as an article. A missing API key is
 // ErrConfiguration. Every upstream failure is an *Error with the generic
 // message "OpenAI summarization failed." (the cause, such as context.Canceled,
@@ -70,10 +70,10 @@ var (
 // "OpenAI returned unparseable summary.", and one without a non-blank title
 // and summary_html is "OpenAI returned incomplete summary.". No message ever
 // holds the upstream's words or the model's text.
-func (s *Summarizer) Summarize(ctx context.Context, transcript string) (Summary, error) {
+func (s *Summarizer) Summarize(ctx context.Context, captions string) (Summary, error) {
 	text, err := s.Client.Generate(ctx, Request{
 		Model: DefaultModel,
-		Input: SummaryPrompt + video.VttText(transcript),
+		Input: SummaryPrompt + transcript.VttText(captions),
 		// json.RawMessage is written verbatim, key order and all.
 		TextFormat: json.RawMessage(SummaryTextFormat),
 	})

@@ -104,9 +104,12 @@ type HTMLWriter struct {
 // Write writes the page for title and summaryHTML to Dir as <slug>.html, or
 // <slug>-1.html, <slug>-2.html, ... when the name is taken (a name is only ever
 // claimed with an exclusive create, so nothing is overwritten even when two
-// writers race), records it in served_files and returns its name. When only
-// the record fails the file stays (the next sync picks it up) and the error is
-// returned.
+// writers race), records it in served_files and returns its name.
+//
+// When only the recording fails, the page already exists and stays (the next
+// sync picks it up): the name is returned TOGETHER WITH the error, so a caller
+// that wants to carry on (serve or link the page) can use the name, and one that
+// does not must not write again, which would make a second page.
 func (w *HTMLWriter) Write(ctx context.Context, title, summaryHTML string) (string, error) {
 	if err := os.MkdirAll(w.Dir, 0o777); err != nil {
 		return "", err

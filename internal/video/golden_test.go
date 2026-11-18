@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
-	"unicode/utf8"
 
 	"serve-html-markdown/internal/video"
 )
 
 // goldenCase is one entry of testdata/golden/video/cases.json, produced by
-// script/golden_video.rb from the real Ruby TwitterUrl, YoutubeUrl and VttText.
+// script/golden_video.rb from the real Ruby TwitterUrl and YoutubeUrl (its vtt cases belong to internal/transcript).
 type goldenCase struct {
 	Kind    string  `json:"kind"`
 	Input   string  `json:"input"`
@@ -90,21 +89,10 @@ func TestGoldenRuby(t *testing.T) {
 				yts++
 			}
 		case "vtt":
-			vtts++
-			got := video.VttText(c.Input)
-			if c.Error != nil {
-				// Ruby raises (invalid UTF-8 after decoding a surrogate reference);
-				// Go replaces the bad bytes instead and must still return valid text.
-				rubyRaised++
-				if !utf8.ValidString(got) {
-					fail("VttText(%q) is not valid UTF-8 (%q)", c.Input, got)
-				}
-			} else if got != str(c.Output) {
-				fail("VttText(%q) = %q; Ruby: %q", c.Input, got, str(c.Output))
-			}
+			vtts++ // checked by internal/transcript
 		default:
 			t.Fatalf("unknown kind %q", c.Kind)
 		}
 	}
-	t.Logf("%d url cases (%d tweets, %d youtube), %d vtt cases (%d where Ruby raises, in total); %d mismatches", urls, tweets, yts, vtts, rubyRaised, failures)
+	t.Logf("%d url cases (%d tweets, %d youtube), %d vtt cases (checked in internal/transcript), %d url cases where Ruby raises; %d mismatches", urls, tweets, yts, vtts, rubyRaised, failures)
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -43,9 +44,22 @@ const (
 
 // Error is a failure whose Message is meant for the reader (the job stores it as
 // the expansion's error detail). Other errors the processor returns are not.
-type Error struct{ Message string }
+//
+// An Error made by writeFailed also has a Cause (reachable with errors.Is/As,
+// never printed): the raw file system error, whose text holds paths.
+type Error struct {
+	Message string
+	cause   error
+}
 
 func (e *Error) Error() string { return e.Message }
+func (e *Error) Unwrap() error { return e.cause }
+
+// writeFailed is the user-facing error for a file system failure while saving
+// the result; the raw error (with its paths) stays out of the message.
+func writeFailed(cause error) error {
+	return &Error{Message: "Could not save the expansion.", cause: cause}
+}
 
 // The user-facing errors. They are shared values: never modify them.
 var (
@@ -54,6 +68,9 @@ var (
 	ErrTruncatedRewrite error = &Error{Message: "Rewrite looked truncated."}
 	// ErrSelectionTooLarge is returned for a selection over MaxSelectedTextBytes.
 	ErrSelectionTooLarge error = &Error{Message: "Selected text is too long."}
+	// ErrDocumentTooLarge is returned when the prompt would not fit in the CLIs'
+	// argument list (llm.MaxPromptArgBytes); the model is not called.
+	ErrDocumentTooLarge error = &Error{Message: "Document is too large to expand."}
 	// ErrSourceTooLarge is returned for a document over MaxSourceBytes.
 	ErrSourceTooLarge error = &Error{Message: "File is too large to expand."}
 )
@@ -77,7 +94,15 @@ type Processor struct {
 	// DB records the served files and the expansion's stages.
 	DB       store.DB
 	Expander Expander
+
+	// beforeCreate, when set, runs just before a new page is created, with the
+	// name picked for it. Tests use it to force a name collision.
+	beforeCreate func(pageName string)
 }
+
+// maxNameAttempts bounds how often a new page retries after another writer
+// (a different source with the same stem, foo.md and foo.html) took its name.
+const maxNameAttempts = 5
 
 // Process generates the expansion and returns the url of the result: the new
 // page for create_new mode (the source now links to it), or the new version,
@@ -119,6 +144,15 @@ func (p *Processor) stamp(ctx context.Context, e *store.Expansion, stage string)
 	store.StampExpansion(ctx, p.DB, e.ID, stage, store.NowMS())
 }
 
+// generationError turns the one expander failure the reader can act on into a
+// user-facing error and leaves the others (generic *llm.ExpandError) as they are.
+func generationError(err error) error {
+	if errors.Is(err, llm.ErrPromptTooLarge) {
+		return ErrDocumentTooLarge
+	}
+	return err
+}
+
 // readSource reads and closes file, refusing more than MaxSourceBytes.
 func readSource(file *os.File) (string, error) {
 	defer file.Close()
@@ -140,7 +174,7 @@ func (p *Processor) linkNewPage(ctx context.Context, e *store.Expansion, name st
 	params llm.Params, rec llm.Recorder) (string, error) {
 	html, err := p.Expander.Expand(ctx, params, rec)
 	if err != nil {
-		return "", err
+		return "", generationError(err)
 	}
 	var url string
 	err = withLock(p.FilesDir, name, func() error {
@@ -157,29 +191,46 @@ func (p *Processor) linkNewPage(ctx context.Context, e *store.Expansion, name st
 			return ErrSourceNotUTF8
 		}
 		stem := strings.TrimSuffix(name, store.Ext(name))
-		pageName, err := files.FreeIndexedName(p.FilesDir, stem+"--expand-", ".html")
-		if err != nil {
-			return err
-		}
-		url = "/" + urlEncode(pageName)
-		linked, err := linker.Link(latest, strings.ToLower(store.Ext(name)), e.SelectedText, e.Occurrence, url)
-		if err != nil {
-			return err
-		}
-		p.stamp(ctx, e, StageLinkRewritten)
-
-		if err := files.CreateNew(p.FilesDir, pageName, []byte(html)); err != nil {
-			return err
-		}
-		if err := files.ReplaceFile(p.FilesDir, rel, []byte(linked)); err != nil {
-			_ = os.Remove(filepath.Join(p.FilesDir, pageName)) // do not leave an orphan page
-			return err
+		// foo.md and foo.html both want foo--expand-1.html and lock on different
+		// keys: the exclusive create is what arbitrates, and the loser picks
+		// the next number and links to that.
+		var pageName string
+		for attempt := 1; ; attempt++ {
+			if attempt > maxNameAttempts {
+				return writeFailed(fs.ErrExist)
+			}
+			pageName, err = files.FreeIndexedName(p.FilesDir, stem+"--expand-", ".html")
+			if err != nil {
+				return err
+			}
+			url = "/" + urlEncode(pageName)
+			linked, err := linker.Link(latest, strings.ToLower(store.Ext(name)), e.SelectedText, e.Occurrence, url)
+			if err != nil {
+				return err
+			}
+			p.stamp(ctx, e, StageLinkRewritten)
+			if p.beforeCreate != nil {
+				p.beforeCreate(pageName)
+			}
+			err = files.CreateNew(p.FilesDir, pageName, []byte(html))
+			if errors.Is(err, fs.ErrExist) {
+				continue
+			}
+			if err != nil {
+				return writeFailed(err)
+			}
+			if err := files.ReplaceFile(p.FilesDir, rel, []byte(linked)); err != nil {
+				// Do not leave an orphan page behind.
+				if rerr := os.Remove(filepath.Join(p.FilesDir, pageName)); rerr != nil {
+					slog.Error("[Expansion] could not remove the orphan page", "file", pageName, "err", rerr)
+				}
+				return writeFailed(err)
+			}
+			break
 		}
 		p.stamp(ctx, e, StageFilesWritten)
-		if err := store.RecordServedFile(ctx, p.DB, pageName); err != nil {
-			return err
-		}
-		return store.RecordServedFileModification(ctx, p.DB, name)
+		p.recordServedFiles(ctx, pageName, name)
+		return nil
 	})
 	if err != nil {
 		return "", err
@@ -195,7 +246,7 @@ func (p *Processor) rewriteInPlace(ctx context.Context, e *store.Expansion, name
 	params llm.Params, rec llm.Recorder) (string, error) {
 	rewritten, err := p.Expander.Rewrite(ctx, params, rec)
 	if err != nil {
-		return "", err
+		return "", generationError(err)
 	}
 	if float64(utf8.RuneCountInString(rewritten)) < float64(utf8.RuneCountInString(source))*MinRewriteRatio {
 		return "", ErrTruncatedRewrite
@@ -212,12 +263,10 @@ func (p *Processor) rewriteInPlace(ctx context.Context, e *store.Expansion, name
 		}
 		versionName := filepath.Base(path)
 		if err := files.CreateNew(p.FilesDir, versionName, []byte(anchored)); err != nil {
-			return err
+			return writeFailed(err)
 		}
 		p.stamp(ctx, e, StageFilesWritten)
-		if err := store.RecordServedFile(ctx, p.DB, versionName); err != nil {
-			return err
-		}
+		p.recordServedFiles(ctx, versionName)
 		url = versionURL(versionName, e.FallbackAnchor)
 		return nil
 	})
@@ -225,6 +274,21 @@ func (p *Processor) rewriteInPlace(ctx context.Context, e *store.Expansion, name
 		return "", err
 	}
 	return url, nil
+}
+
+// recordServedFiles records the files just written: the first name as new, the
+// others (the modified source) as touched. The files are already on disk and
+// the expansion has succeeded, so a failure is only logged (names, no content):
+// files.SyncServedFiles adds the missing rows later.
+func (p *Processor) recordServedFiles(ctx context.Context, created string, modified ...string) {
+	if err := store.RecordServedFile(ctx, p.DB, created); err != nil {
+		slog.Error("[Expansion] could not record the new served file", "file", created, "err", err)
+	}
+	for _, name := range modified {
+		if err := store.RecordServedFileModification(ctx, p.DB, name); err != nil {
+			slog.Error("[Expansion] could not record the modified served file", "file", name, "err", err)
+		}
+	}
 }
 
 // insertAnchor keeps the first anchor sentinel, as an element with the anchor
@@ -276,12 +340,12 @@ func urlEncode(s string) string {
 func withLock(filesDir, keyName string, fn func() error) error {
 	root, err := os.OpenRoot(filesDir)
 	if err != nil {
-		return err
+		return writeFailed(err)
 	}
 	defer root.Close()
 	f, err := root.OpenFile("."+keyName+".expansion.lock", os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return err
+		return writeFailed(err)
 	}
 	defer f.Close()
 	for {
@@ -291,7 +355,7 @@ func withLock(filesDir, keyName string, fn func() error) error {
 		}
 	}
 	if err != nil {
-		return err
+		return writeFailed(err)
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck // closing the file releases it anyway
 	return fn()

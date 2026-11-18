@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"serve-html-markdown/internal/db/testdb"
@@ -773,5 +776,243 @@ func TestRecorderStampsAndRecords(t *testing.T) {
 	got := e.reload(x)
 	if _, ok := got.Timings[llm.StageResponse]; !ok || got.ProviderUsed == nil || *got.ProviderUsed != "codex" || *got.HTMLBytes != 42 {
 		t.Errorf("got %+v", got)
+	}
+}
+
+// failingDB fails every statement on served_files, as a database that went away
+// would, and passes everything else on.
+type failingDB struct{ store.DB }
+
+func (d failingDB) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "served_files") {
+		return pgconn.CommandTag{}, errors.New("db down: SENSITIVE-DB-DETAIL")
+	}
+	return d.DB.Exec(ctx, sql, args...)
+}
+
+// captureLogs sends slog output to the returned buffer until the test ends.
+func captureLogs(t *testing.T) *syncBuffer {
+	t.Helper()
+	buf := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// The files are written and the expansion succeeded: a failure to record them
+// is logged (names, no content) and the url is still returned.
+func TestRecordingFailureStillReturnsTheURL(t *testing.T) {
+	logs := captureLogs(t)
+	e := newEnv(t)
+	e.proc.DB = failingDB{e.pool}
+	e.write("notes.md", "Alpha beta gamma, SECRET-DOCUMENT-TEXT.")
+	e.exp.rewrite = func(llm.Params) (string, error) {
+		return "Alpha ⟦EXPANSION_ANCHOR⟧beta SECRET-REWRITE expanded gamma, and then some more.", nil
+	}
+	if url := e.mustProcess(e.expansion(nil)); url != "/notes--expand-1.html" {
+		t.Errorf("url = %q", url)
+	}
+	if e.read("notes--expand-1.html") != answerHTML || !strings.Contains(e.read("notes.md"), "[beta](/notes--expand-1.html)") {
+		t.Error("files not written")
+	}
+	if url := e.mustProcess(e.expansion(editInPlace)); url != "/notes--v2.md#expansion-anchor" || !e.exists("notes--v2.md") {
+		t.Errorf("rewrite url = %q", url)
+	}
+	out := logs.String()
+	for _, want := range []string{"notes--expand-1.html", "notes.md", "notes--v2.md"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "SECRET-DOCUMENT-TEXT") || strings.Contains(out, "SECRET-REWRITE") {
+		t.Errorf("log holds document content:\n%s", out)
+	}
+	if e.servedFile("notes--expand-1.html") != nil {
+		t.Error("the row should be missing (the DB failed), to be healed by a sync")
+	}
+}
+
+// Another source (foo.html next to foo.md) takes the picked name between the
+// pick and the create: the page picks the next number and links to that.
+func TestNameCollisionRepicksAndRelinks(t *testing.T) {
+	e := newEnv(t)
+	e.write("notes.md", "Alpha beta gamma.")
+	first := true
+	e.proc.beforeCreate = func(pageName string) {
+		if first {
+			first = false
+			e.write(pageName, "the other source's page")
+		}
+	}
+	url := e.mustProcess(e.expansion(nil))
+	if url != "/notes--expand-2.html" {
+		t.Errorf("url = %q", url)
+	}
+	if e.read("notes--expand-1.html") != "the other source's page" || e.read("notes--expand-2.html") != answerHTML {
+		t.Error("pages wrong")
+	}
+	if got := e.read("notes.md"); got != "Alpha [beta](/notes--expand-2.html) gamma." {
+		t.Errorf("source = %q", got)
+	}
+	if e.servedFile("notes--expand-2.html") == nil {
+		t.Error("page not recorded")
+	}
+}
+
+func TestNameCollisionsGiveUpAfterAFewAttempts(t *testing.T) {
+	e := newEnv(t)
+	e.write("notes.md", "Alpha beta gamma.")
+	attempts := 0
+	e.proc.beforeCreate = func(pageName string) { attempts++; e.write(pageName, "taken") }
+	_, err := e.process(e.expansion(nil))
+	var ue *Error
+	if !errors.As(err, &ue) || ue.Message != "Could not save the expansion." {
+		t.Fatalf("err = %v", err)
+	}
+	if attempts != maxNameAttempts || e.read("notes.md") != "Alpha beta gamma." {
+		t.Errorf("attempts = %d, source = %q", attempts, e.read("notes.md"))
+	}
+}
+
+// foo.md and foo.html expanded at once both pick foo--expand-1.html under
+// different locks; each ends up with its own page and its own link.
+func TestConcurrentMdAndHTMLSourcesOfOneStem(t *testing.T) {
+	e := newEnv(t)
+	e.exp.expand = func(p llm.Params) (string, error) { return "<html>page for " + p.FileName + "</html>", nil }
+	for round := range 15 {
+		stem := fmt.Sprintf("doc%d", round)
+		e.write(stem+".md", "Alpha beta gamma.")
+		e.write(stem+".html", "<html><body><p>Alpha beta gamma.</p></body></html>")
+		xs := []*store.Expansion{
+			e.expansion(func(n *store.NewExpansion) { n.FileName = stem + ".md" }),
+			e.expansion(func(n *store.NewExpansion) { n.FileName = stem + ".html" }),
+		}
+		urls := make([]string, 2)
+		errs := make([]error, 2)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range xs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				urls[i], errs[i] = e.process(xs[i])
+			}()
+		}
+		close(start)
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		if urls[0] == urls[1] {
+			t.Fatalf("round %d: both got %s", round, urls[0])
+		}
+		md, html := e.read(stem+".md"), e.read(stem+".html")
+		if !strings.Contains(md, "[beta]("+urls[0]+")") || !strings.Contains(html, `<a href="`+urls[1]+`">beta</a>`) {
+			t.Fatalf("round %d: sources do not link to their own pages (%s, %s):\n%s\n%s", round, urls[0], urls[1], md, html)
+		}
+		if got := e.read(strings.TrimPrefix(urls[0], "/")); got != "<html>page for "+stem+".md</html>" {
+			t.Errorf("round %d: md page = %q", round, got)
+		}
+		if got := e.read(strings.TrimPrefix(urls[1], "/")); got != "<html>page for "+stem+".html</html>" {
+			t.Errorf("round %d: html page = %q", round, got)
+		}
+	}
+}
+
+// The source cannot be replaced (its directory is read-only): the generated
+// page is removed again, and the error is generic, with no path in it.
+func TestFailedSourceReplaceRemovesThePageAndHidesPaths(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	e := newEnv(t)
+	sub := filepath.Join(e.dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.write("sub/notes.md", "Alpha beta gamma.")
+	if err := os.Chmod(sub, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+
+	_, err := e.process(e.expansion(func(n *store.NewExpansion) { n.FileName = "sub/notes.md" }))
+	var ue *Error
+	if !errors.As(err, &ue) || err.Error() != "Could not save the expansion." {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "permission denied") || strings.Contains(err.Error(), e.dir) {
+		t.Errorf("error leaks the raw text: %v", err)
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("the cause should stay reachable: %v", err)
+	}
+	if e.exists("notes--expand-1.html") {
+		t.Error("the orphan page was left behind")
+	}
+	if e.read("sub/notes.md") != "Alpha beta gamma." {
+		t.Error("source changed")
+	}
+	if e.servedFile("notes--expand-1.html") != nil {
+		t.Error("orphan page recorded")
+	}
+}
+
+func TestUnwritableFilesDirIsAGenericError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	e := newEnv(t)
+	e.write("notes.md", "Alpha beta gamma.")
+	if err := os.Chmod(e.dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(e.dir, 0o755) })
+	_, err := e.process(e.expansion(nil))
+	if err == nil || err.Error() != "Could not save the expansion." || strings.Contains(err.Error(), e.dir) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A prompt the CLIs cannot take is refused with a user-facing error before any
+// process starts.
+func TestPromptTooLargeIsUserFacingAndSpawnsNothing(t *testing.T) {
+	for _, mode := range []string{"create_new", "edit_in_place"} {
+		e := newEnv(t)
+		spawned := 0
+		e.proc.Expander = &llm.ExpandService{Runner: func(context.Context, []string) ([]byte, []byte, error) {
+			spawned++
+			return nil, nil, errors.New("must not run")
+		}}
+		e.write("notes.md", "Alpha beta "+strings.Repeat("x", llm.MaxPromptArgBytes))
+		_, err := e.process(e.expansion(func(n *store.NewExpansion) { n.Mode = mode }))
+		var ue *Error
+		if !errors.Is(err, ErrDocumentTooLarge) || !errors.As(err, &ue) || err.Error() != "Document is too large to expand." {
+			t.Fatalf("%s: err = %v", mode, err)
+		}
+		if spawned != 0 || e.exists("notes--expand-1.html") || e.exists("notes--v2.md") {
+			t.Errorf("%s: spawned %d, files written", mode, spawned)
+		}
 	}
 }

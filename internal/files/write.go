@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 )
 
@@ -48,11 +49,31 @@ func FreeIndexedName(dir, prefix, suffix string) (string, error) {
 	return "", errNoFreeName(prefix)
 }
 
+// linkFile hard-links oldname to newname inside r. It is a variable so tests can
+// make it fail the way a file system without hard links does.
+var linkFile = func(r *os.Root, oldname, newname string) error { return r.Link(oldname, newname) }
+
+// noHardLinks reports whether err says the file system cannot hard-link
+// (FAT, some network and FUSE file systems, other devices).
+func noHardLinks(err error) bool {
+	for _, errno := range []syscall.Errno{syscall.EPERM, syscall.ENOTSUP, syscall.EOPNOTSUPP, syscall.EXDEV, syscall.ENOSYS} {
+		if errors.Is(err, errno) {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateNew creates dir/name with data, all or nothing: the data is written to
 // a hidden temporary file that is then hard-linked to name, so a reader never
 // sees a partial file and a name that is taken (by a file or a dangling
 // symlink) is never overwritten. It returns an error satisfying
 // errors.Is(err, fs.ErrExist) then. All access goes through an os.Root on dir.
+//
+// On a file system that cannot hard-link, it falls back to creating name
+// exclusively (O_EXCL, so it still never overwrites) and writing to it: not
+// atomic for readers, and a failed write removes the file. No temporary file is
+// left behind on any path.
 func CreateNew(dir, name string, data []byte) error {
 	if err := plainName(name); err != nil {
 		return err
@@ -67,7 +88,31 @@ func CreateNew(dir, name string, data []byte) error {
 		return err
 	}
 	defer r.Remove(tmp)
-	return nameError(r.Link(tmp, name))
+	err = linkFile(r, tmp, name)
+	if err != nil && noHardLinks(err) {
+		return createExclusive(r, name, data)
+	}
+	return nameError(err)
+}
+
+// createExclusive is CreateNew's fallback: O_EXCL create, write, sync, close.
+func createExclusive(r *os.Root, name string, data []byte) error {
+	f, err := r.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	if err != nil {
+		return nameError(err)
+	}
+	_, werr := f.Write(data)
+	if werr == nil {
+		werr = f.Sync()
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = r.Remove(name)
+		return werr
+	}
+	return nil
 }
 
 // ReplaceFile replaces the contents of the existing regular file rel (a path

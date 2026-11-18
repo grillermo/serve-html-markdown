@@ -2,20 +2,16 @@ package llm
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
-	"time"
 )
 
 const expandHTML = "<!DOCTYPE html><html><body>answer</body></html>"
@@ -446,226 +442,52 @@ func TestPromptEmbedsTextVerbatim(t *testing.T) {
 	}
 }
 
-// --- the real runner ---
-
-func TestExecRunnerCapturesOutputAndExit(t *testing.T) {
-	out, _, err := execRunner(context.Background(), []string{"sh", "-c", "printf hi; printf err >&2"})
-	if err != nil || string(out) != "hi" {
-		t.Fatalf("out = %q, err = %v", out, err)
+func TestPromptArgLimit(t *testing.T) {
+	if promptArgLimit("darwin") != 900_000 || promptArgLimit("linux") != 120_000 || promptArgLimit("freebsd") != 120_000 {
+		t.Errorf("limits: %d %d %d", promptArgLimit("darwin"), promptArgLimit("linux"), promptArgLimit("freebsd"))
 	}
-	_, _, err = execRunner(context.Background(), []string{"sh", "-c", "exit 3"})
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) || commandError("x", err).Error() != "x CLI failed" {
-		t.Errorf("err = %v", err)
-	}
-	_, _, err = execRunner(context.Background(), []string{"/nonexistent/binary"})
-	if err == nil || commandError("claude", err).Error() != "claude CLI could not be started" {
-		t.Errorf("err = %v / %v", err, commandError("claude", err))
+	if MaxPromptArgBytes != promptArgLimit(runtime.GOOS) {
+		t.Errorf("MaxPromptArgBytes = %d", MaxPromptArgBytes)
 	}
 }
 
-// The runner passes the environment on and gives the process no stdin.
-func TestExecRunnerEnvironmentAndStdin(t *testing.T) {
-	t.Setenv("EXPAND_TEST_VAR", "inherited")
-	out, _, err := execRunner(context.Background(), []string{"sh", "-c", `printf "%s" "$EXPAND_TEST_VAR"; cat | wc -c`})
-	if err != nil || !strings.HasPrefix(string(out), "inherited") || !strings.Contains(string(out), "0") {
-		t.Fatalf("out = %q, err = %v", out, err)
-	}
-}
-
-// Ruby: the 120 s timeout kills the process. Here with a short timeout; the
-// whole process group goes, so a child of the process does not linger.
-func TestExecRunnerTimeoutKillsTheProcessGroup(t *testing.T) {
-	pidFile := filepath.Join(t.TempDir(), "child.pid")
-	run := newExecRunner(300 * time.Millisecond)
-	start := time.Now()
-	_, _, err := run(context.Background(), []string{"sh", "-c", `sleep 30 & echo $! > "$1"; wait`, "sh", pidFile})
-	if !errors.Is(err, errTimedOut) {
-		t.Fatalf("err = %v", err)
-	}
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
-		t.Errorf("took %v", elapsed)
-	}
-	if got := commandError("claude", err).Error(); got != "claude timed out after 120s" {
-		t.Errorf("message = %q", got)
-	}
-	raw, err := os.ReadFile(pidFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pid int
-	if _, err := fmt.Sscan(string(raw), &pid); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
-			break
+// A prompt over the limit is refused before any process starts (so no useless
+// codex retry), and nothing is stamped.
+func TestExpandRefusesAPromptTheCLIsCannotTake(t *testing.T) {
+	f := &fakeRunner{claude: claudeJSON(false, expandHTML), codex: codexWrites(expandHTML)}
+	rec := &fakeRecorder{}
+	for _, run := range []func(*ExpandService, context.Context, Params, Recorder) (string, error){
+		(*ExpandService).Expand, (*ExpandService).Rewrite,
+	} {
+		p := expandArgs
+		p.Document = strings.Repeat("x", MaxPromptArgBytes)
+		_, err := run(serviceWith(f), context.Background(), p, rec)
+		if !errors.Is(err, ErrPromptTooLarge) || err.Error() != "Document is too large to expand." || !isExpandError(err) {
+			t.Fatalf("err = %v", err)
 		}
-		if time.Now().After(deadline) {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-			t.Fatal("the child of the killed process is still running")
-		}
-		time.Sleep(20 * time.Millisecond)
+	}
+	if len(f.calls) != 0 || len(rec.stages) != 0 {
+		t.Errorf("runner calls = %v, stages = %v", f.names(), rec.stages)
 	}
 }
 
-func TestExecRunnerStopsWithTheContext(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	start := time.Now()
-	_, _, err := execRunner(ctx, []string{"sleep", "30"})
-	if err == nil || time.Since(start) > 10*time.Second {
-		t.Fatalf("err = %v after %v", err, time.Since(start))
+// Just under the limit still goes through, and OpenAI has no limit.
+func TestExpandPromptLimitBoundaryAndOpenAI(t *testing.T) {
+	f := &fakeRunner{claude: claudeJSON(false, expandHTML)}
+	p := expandArgs
+	overhead := len(strings.NewReplacer("%{file_name}", p.FileName, "%{document}", "", "%{selection}", p.Selection,
+		"%{question}", p.Question).Replace(ExpandPromptTemplate))
+	p.Document = strings.Repeat("x", MaxPromptArgBytes-overhead)
+	if _, err := serviceWith(f).Expand(context.Background(), p, nil); err != nil {
+		t.Fatalf("exactly at the limit: %v", err)
 	}
-}
-
-func TestExecRunnerCapsStdout(t *testing.T) {
-	_, _, err := execRunner(context.Background(), []string{"sh", "-c", "yes | head -c 40000000"})
-	if !errors.Is(err, errOutputTooLarge) {
-		t.Fatalf("err = %v", err)
+	p.Document += "x"
+	if _, err := serviceWith(f).Expand(context.Background(), p, nil); !errors.Is(err, ErrPromptTooLarge) {
+		t.Fatalf("one byte over: %v", err)
 	}
-	if got := commandError("claude", err).Error(); got != "claude output was too large" {
-		t.Errorf("message = %q", got)
-	}
-}
-
-// An argument list the OS refuses (E2BIG) is a clean ExpandError, never a panic.
-func TestExecRunnerArgumentListTooLong(t *testing.T) {
-	huge := strings.Repeat("x", 4<<20)
-	_, _, err := execRunner(context.Background(), []string{"true", huge})
-	if !errors.Is(err, syscall.E2BIG) {
-		t.Fatalf("err = %v", err)
-	}
-	f := &fakeRunner{claude: func([]string) ([]byte, error) { return execErr(huge) }, codex: func([]string) ([]byte, error) { return execErr(huge) }}
-	_, err = serviceWith(f).Expand(context.Background(), expandArgs, nil)
-	if !isExpandError(err) || !strings.Contains(err.Error(), "prompt is too large") {
-		t.Errorf("err = %v", err)
-	}
-}
-
-func execErr(huge string) ([]byte, error) {
-	_, _, err := execRunner(context.Background(), []string{"true", huge})
-	return nil, err
-}
-
-// --- the prompts ---
-
-// Golden hashes of the two templates as the Ruby constants produce them, so the
-// check survives the Ruby code's removal.
-const (
-	goldenExpandPromptSHA256  = "c8cf67481d76b9c27156fc6a4f559a380f19278d5d593d104ab5a0d86b3ff486"
-	goldenRewritePromptSHA256 = "d2621f0449a34c937cf81129dfaae4d01f7d786725add22b132c643124e57f08"
-)
-
-func sha(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
-
-func TestExpandPromptGolden(t *testing.T) {
-	if got := sha(ExpandPromptTemplate); got != goldenExpandPromptSHA256 {
-		t.Errorf("ExpandPromptTemplate sha256 = %s, want %s", got, goldenExpandPromptSHA256)
-	}
-	if got := sha(RewritePromptTemplate); got != goldenRewritePromptSHA256 {
-		t.Errorf("RewritePromptTemplate sha256 = %s, want %s", got, goldenRewritePromptSHA256)
-	}
-}
-
-const expandServiceRuby = "claude_expand_service.rb"
-
-func expandRubySource(t *testing.T) string {
-	t.Helper()
-	src, err := os.ReadFile(filepath.Join("..", "..", "app", "services", expandServiceRuby))
-	if os.IsNotExist(err) {
-		t.Skip("the Ruby source is gone; TestExpandPromptGolden still guards the text")
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(src)
-}
-
-// heredoc returns the body of `NAME = <<~PROMPT ... PROMPT` as Ruby's squiggly
-// heredoc makes it: the common indentation (4 spaces) removed.
-func heredoc(t *testing.T, src, name string) string {
-	t.Helper()
-	start := strings.Index(src, "  "+name+" = <<~PROMPT\n")
-	if start < 0 {
-		t.Fatalf("%s not found", name)
-	}
-	body := src[start:]
-	body = body[strings.Index(body, "\n")+1:]
-	body = body[:strings.Index(body, "\n  PROMPT\n")+1]
-	var out strings.Builder
-	for _, line := range strings.SplitAfter(body, "\n") {
-		if strings.TrimSpace(line) == "" {
-			out.WriteString(strings.TrimLeft(line, " "))
-			continue
-		}
-		if !strings.HasPrefix(line, "    ") {
-			t.Fatalf("%s: line %q is not indented by 4", name, line)
-		}
-		out.WriteString(line[4:])
-	}
-	return strings.ReplaceAll(out.String(), "#{ANCHOR_SENTINEL}", AnchorSentinel)
-}
-
-// TestPromptsMatchRubySource compares both templates with the Ruby heredocs
-// byte for byte, parsed from the source independently of any interpreter.
-func TestPromptsMatchRubySource(t *testing.T) {
-	src := expandRubySource(t)
-	if got := heredoc(t, src, "PROMPT_TEMPLATE"); got != ExpandPromptTemplate {
-		t.Errorf("ExpandPromptTemplate differs from PROMPT_TEMPLATE:\n go:   %q\n ruby: %q", ExpandPromptTemplate, got)
-	}
-	if got := heredoc(t, src, "REWRITE_PROMPT_TEMPLATE"); got != RewritePromptTemplate {
-		t.Errorf("RewritePromptTemplate differs from REWRITE_PROMPT_TEMPLATE:\n go:   %q\n ruby: %q", RewritePromptTemplate, got)
-	}
-	if !regexp.MustCompile(`ANCHOR_SENTINEL = "⟦EXPANSION_ANCHOR⟧"`).MatchString(src) {
-		t.Error("ANCHOR_SENTINEL differs from the Ruby source")
-	}
-}
-
-// TestPromptsMatchRubyInterpreter evaluates the Ruby heredocs themselves. It
-// skips only when there is no ruby binary at all; a ruby that fails is a
-// failure. rbenv shims need the project's version, tried second as RBENV_VERSION.
-func TestPromptsMatchRubyInterpreter(t *testing.T) {
-	expandRubySource(t)
-	ruby, err := exec.LookPath("ruby")
-	if err != nil {
-		t.Skip("no ruby binary on PATH; the source comparison and the golden hashes still check the prompts")
-	}
-	const script = `
-src = File.read(ARGV[0])
-ANCHOR_SENTINEL = "⟦EXPANSION_ANCHOR⟧"
-which = ARGV[1] == "rewrite" ? "REWRITE_PROMPT_TEMPLATE" : "PROMPT_TEMPLATE"
-eval(src[/  #{which} = <<~PROMPT\n.*?\n  PROMPT\n/m].sub(/\A  #{which}/, "$p"))
-$stdout.binmode
-print $p
-`
-	path := filepath.Join("..", "..", "app", "services", expandServiceRuby)
-	run := func(which string, env ...string) ([]byte, error) {
-		cmd := exec.Command(ruby, "-e", script, path, which)
-		cmd.Env = append(os.Environ(), env...)
-		return cmd.Output()
-	}
-	for which, want := range map[string]string{"expand": ExpandPromptTemplate, "rewrite": RewritePromptTemplate} {
-		out, err := run(which)
-		if err != nil {
-			if v, rerr := os.ReadFile(filepath.Join("..", "..", ".ruby-version")); rerr == nil {
-				out, err = run(which, "RBENV_VERSION="+strings.TrimSpace(string(v)))
-			}
-		}
-		if err != nil {
-			var stderr []byte
-			var ee *exec.ExitError
-			if errors.As(err, &ee) {
-				stderr = ee.Stderr
-			}
-			t.Fatalf("ruby (%s) failed: %v\n%s", ruby, err, stderr)
-		}
-		if string(out) != want {
-			t.Errorf("%s prompt differs from Ruby's:\n go:   %q\n ruby: %q", which, want, out)
-		}
+	s, _, _ := openAIService(t, "k", 200, openAIExpandResponse)
+	p.UseOpenAI = true
+	if _, err := s.Expand(context.Background(), p, nil); err != nil {
+		t.Fatalf("openai: %v", err)
 	}
 }

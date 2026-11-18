@@ -1,21 +1,15 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
-	"time"
 	"unicode/utf8"
 )
 
@@ -29,13 +23,6 @@ const (
 	OpenAIExpandModel = "gpt-5.6-terra"
 	// OpenAIReasoningEffort is its reasoning.effort.
 	OpenAIReasoningEffort = "medium"
-	// CommandTimeout bounds each CLI call (claude, then codex).
-	CommandTimeout = 120 * time.Second
-	// maxCommandOutput caps the stdout and the codex output file that are read,
-	// so a runaway process cannot exhaust memory.
-	maxCommandOutput = 16 << 20
-	// maxCommandStderr caps what is kept of stderr (which is never used).
-	maxCommandStderr = 1 << 20
 )
 
 // Stages stamped on the expansion while it is generated.
@@ -44,62 +31,6 @@ const (
 	StageFirstFailure = "llm_first_failure"
 	StageResponse     = "llm_response"
 )
-
-// AnchorSentinel is the marker a rewrite carries just before the expanded
-// passage (ANCHOR_SENTINEL).
-const AnchorSentinel = "⟦EXPANSION_ANCHOR⟧"
-
-// ExpandPromptTemplate is PROMPT_TEMPLATE of app/services/claude_expand_service.rb
-// byte for byte (see expand_test.go). Its %{name} fields are filled by
-// strings.Replacer, never by a format verb, so a "%" in a document is harmless.
-const ExpandPromptTemplate = `You are given a document, a text selection from it, and a reader's question about that selection.
-
-Write a complete standalone HTML page that answers the question and expands on the selected text with additional depth: background, context, related concepts, and concrete details the original document leaves out.
-
-Requirements:
-- Output ONLY the HTML document, starting with <!DOCTYPE html>. No markdown fences, no commentary.
-- Dark theme, readable typography (max-width ~70ch, generous line-height), semantic HTML.
-- Title the page after the selection.
-- Ground the answer in the document's context, but bring in outside knowledge freely.
-
-<document filename="%{file_name}">
-%{document}
-</document>
-
-<selection>
-%{selection}
-</selection>
-
-<question>
-%{question}
-</question>
-`
-
-// RewritePromptTemplate is REWRITE_PROMPT_TEMPLATE, with AnchorSentinel in place
-// of its interpolation.
-const RewritePromptTemplate = `You are given a document, a text selection from it, and a reader's question about that selection.
-
-Rewrite the document so the selected passage is expanded in light of the question: add the background, context, related concepts, and concrete details the original leaves out, woven into the document's own voice.
-
-Requirements:
-- Output the COMPLETE document, from its first line to its last. Never truncate, summarize, or elide with "...".
-- Keep the document's original format exactly: Markdown stays Markdown, HTML stays HTML.
-- Preserve every part of the document unrelated to the selection verbatim, including front matter, links, and code blocks.
-- Immediately before the expanded passage, emit the marker ⟦EXPANSION_ANCHOR⟧ on a line of its own. Emit it exactly once.
-- Output ONLY the document. No markdown fences, no commentary.
-
-<document filename="%{file_name}">
-%{document}
-</document>
-
-<selection>
-%{selection}
-</selection>
-
-<question>
-%{question}
-</question>
-`
 
 // ExpandError is a failed generation. Message is generic and safe to log; it
 // never holds process output, a prompt, the API key or the upstream's words.
@@ -125,11 +56,6 @@ type Recorder interface {
 	Stamp(stage string)
 	RecordResponse(provider string, htmlBytes int)
 }
-
-// Runner starts argv (no shell) and returns what the process wrote. A non-nil
-// error means it failed: it could not start, exited non-zero, timed out or
-// wrote too much. The error text is never shown to users.
-type Runner func(ctx context.Context, argv []string) (stdout, stderr []byte, err error)
 
 // Params is one generation request.
 type Params struct {
@@ -191,6 +117,12 @@ func (s *ExpandService) generate(ctx context.Context, template string, validate 
 	).Replace(template)
 	finish := func(text string) (string, error) {
 		return validate(stripFence(text, preserveWhitespace))
+	}
+	if !p.UseOpenAI && len(prompt) > MaxPromptArgBytes {
+		// The CLIs take the prompt as an argument, which the OS limits (see
+		// promptArgLimit): refuse now rather than spawn two doomed processes.
+		slog.Warn("[ClaudeExpandService] prompt too large for the CLIs", "file", p.FileName, "prompt_bytes", len(prompt))
+		return "", ErrPromptTooLarge
 	}
 	stamp := func(stage string) {
 		if rec != nil {
@@ -323,94 +255,6 @@ func (s *ExpandService) runCodex(ctx context.Context, prompt string) (string, er
 		return "", ErrExpand("codex output was unreadable")
 	}
 	return string(data), nil
-}
-
-// commandError turns a Runner error into the generic ExpandError of the
-// command; the error text itself (which may hold paths or output) is dropped.
-func commandError(name string, err error) error {
-	var exitErr *exec.ExitError
-	var execErr *exec.Error
-	var pathErr *fs.PathError
-	var errno syscall.Errno
-	switch {
-	case errors.Is(err, errTimedOut):
-		return expandErr(fmt.Sprintf("%s timed out after %ds", name, int(CommandTimeout/time.Second)), err)
-	case errors.Is(err, errOutputTooLarge):
-		return expandErr(name+" output was too large", err)
-	case errors.Is(err, syscall.E2BIG):
-		return expandErr(name+" CLI could not be started: the prompt is too large", err)
-	case errors.As(err, &exitErr):
-		return expandErr(name+" CLI failed", err)
-	case errors.As(err, &execErr), errors.As(err, &pathErr), errors.As(err, &errno):
-		return expandErr(name+" CLI could not be started", err)
-	}
-	return expandErr(name+" CLI failed", err)
-}
-
-var (
-	errTimedOut       = errors.New("command timed out")
-	errOutputTooLarge = errors.New("command output too large")
-)
-
-var execRunner = newExecRunner(CommandTimeout)
-
-// newExecRunner returns the real Runner: it runs argv directly (no shell) with
-// the inherited environment and no stdin, in its own process group, and kills
-// that whole group when timeout passes, the context ends or stdout exceeds
-// maxCommandOutput, so claude's and codex's children never linger.
-func newExecRunner(timeout time.Duration) Runner {
-	return func(ctx context.Context, argv []string) ([]byte, []byte, error) {
-		ctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-		cmd.Stdin = nil
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error {
-			// The leader has not been reaped yet, so its pid is still the group's.
-			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			if err != nil && !errors.Is(err, syscall.ESRCH) {
-				return err
-			}
-			return nil
-		}
-		// A grandchild that keeps the pipes open must not hold Wait forever.
-		cmd.WaitDelay = 2 * time.Second
-		out := &capWriter{limit: maxCommandOutput, fail: true, cancel: cancel}
-		errb := &capWriter{limit: maxCommandStderr}
-		cmd.Stdout, cmd.Stderr = out, errb
-		err := cmd.Run()
-		switch {
-		case out.exceeded:
-			return nil, nil, fmt.Errorf("%s: %w", argv[0], errOutputTooLarge)
-		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			return nil, nil, fmt.Errorf("%s: %w", argv[0], errTimedOut)
-		}
-		return out.buf.Bytes(), errb.buf.Bytes(), err
-	}
-}
-
-// capWriter keeps at most limit bytes. Past it, a failing writer cancels the
-// command and errors (the process gets SIGPIPE/SIGKILL), a plain one discards.
-type capWriter struct {
-	buf      bytes.Buffer
-	limit    int
-	fail     bool
-	cancel   context.CancelFunc
-	exceeded bool
-}
-
-func (w *capWriter) Write(p []byte) (int, error) {
-	if room := w.limit - w.buf.Len(); len(p) <= room {
-		return w.buf.Write(p)
-	} else if room > 0 {
-		w.buf.Write(p[:room])
-	}
-	if w.fail {
-		w.exceeded = true
-		w.cancel()
-		return 0, errOutputTooLarge
-	}
-	return len(p), nil
 }
 
 // rubyStrip is String#strip: ASCII whitespace and NUL only.

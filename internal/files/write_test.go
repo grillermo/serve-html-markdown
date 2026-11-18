@@ -210,3 +210,60 @@ func TestReplaceFileMissingOrNotRegular(t *testing.T) {
 		t.Error("replaced a directory")
 	}
 }
+
+func hardLinkFails(err error) func(*os.Root, string, string) error {
+	return func(*os.Root, string, string) error { return &os.LinkError{Op: "link", Err: err} }
+}
+
+// A file system without hard links: the file is still created, whole, with no
+// temporary file left.
+func TestCreateNewFallsBackWhenHardLinksAreUnsupported(t *testing.T) {
+	for _, errno := range []error{syscall.EPERM, syscall.ENOTSUP, syscall.EXDEV, syscall.ENOSYS} {
+		dir := filesDir(t)
+		files.SetLinkFile(t, hardLinkFails(errno))
+		if err := files.CreateNew(dir, "a--expand-1.html", []byte("<html>")); err != nil {
+			t.Fatalf("%v: %v", errno, err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(dir, "a--expand-1.html")); string(b) != "<html>" {
+			t.Errorf("%v: content %q", errno, b)
+		}
+		if got := entries(t, dir); len(got) != 1 {
+			t.Errorf("%v: files = %v", errno, got)
+		}
+	}
+}
+
+func TestCreateNewFallbackNeverOverwrites(t *testing.T) {
+	dir := filesDir(t)
+	files.SetLinkFile(t, hardLinkFails(syscall.EPERM))
+	write(t, filepath.Join(dir, "a.html"), "existing")
+	if err := os.Symlink(filepath.Join(dir, "nowhere"), filepath.Join(dir, "dangling.html")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.html", "dangling.html"} {
+		if err := files.CreateNew(dir, name, []byte("new")); !errors.Is(err, fs.ErrExist) {
+			t.Errorf("%s: err = %v, want fs.ErrExist", name, err)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "a.html")); string(b) != "existing" {
+		t.Errorf("overwritten: %q", b)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "nowhere")); !os.IsNotExist(err) {
+		t.Errorf("wrote through the dangling symlink: %v", err)
+	}
+	if got := entries(t, dir); len(got) != 2 {
+		t.Fatalf("files = %v", got)
+	}
+}
+
+// Any other link failure is returned as is, and the temporary file is removed.
+func TestCreateNewCleansUpWhenTheLinkFails(t *testing.T) {
+	dir := filesDir(t)
+	files.SetLinkFile(t, hardLinkFails(syscall.EIO))
+	if err := files.CreateNew(dir, "a.html", []byte("x")); !errors.Is(err, syscall.EIO) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := entries(t, dir); len(got) != 0 {
+		t.Fatalf("left behind: %v", got)
+	}
+}

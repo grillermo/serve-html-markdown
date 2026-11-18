@@ -129,7 +129,56 @@ cases = [
   c("added_html_list_items_unsafe", ".html", "<ul><li>alpha</li><li>beta</li></ul>", "alpha beta"),
   c("added_html_list_item", ".html", "<ul><li>alpha</li><li>beta</li></ul>", "beta"),
   c("added_html_pre_block", ".html", "<pre>code here</pre>", "code here"),
-  c("added_html_uppercase_tags", ".html", "<P>Alpha <EM>beta</EM> gamma</P>", "beta gamma")
+  c("added_html_uppercase_tags", ".html", "<P>Alpha <EM>beta</EM> gamma</P>", "beta gamma"),
+
+  # --- Promoted from the Ruby-vs-Go differential fuzzing (random Markdown/HTML
+  #     documents, 480k cases, no divergences): shortest-to-typical cases that exercise
+  #     each feature. Appended after the cases above so those stay unchanged. ---
+  c("fuzz_md_multi_tick_code_span", ".txt", "   > cat <span>&lt; é</span> ```the &gt;beta``` the é\n```ruby\n````", "the", 0),
+  c("fuzz_md_bold_snap", ".txt", "> dog __and x1__\n  日本語\n\t&#x;beta *alpha **do ** alpha* [and $5]\n", "&#x", 7),
+  c("fuzz_md_underscore_emphasis", ".md", "dog 😀 ` ![1.5](http://x/(y)) cat\r\n###### and é _1.5 dog_ delta <a\n", " and é ", 0),
+  c("fuzz_md_around_image", ".txt", "> <!-- 日本語 --> delta **the delta**\r\n[x `](y)` z ![the]() &a cat\r\n", "delta x ``", 0),
+  c("fuzz_md_nested_link_label", ".md", "```\r\n- ```the beta```` [a [b](c) d](e)\n\t[a [b](c) d](e) <!-- dog -->\n\n", "```", 0),
+  c("fuzz_md_escaped_bracket_label", ".txt", "####### _&quot; the_ &a$5 [`&#xFFFE;delta\\](http:///(y)) a.b\r\n\tthe\r\n\r\n", "the", 3),
+  c("fuzz_md_entities_numeric_hex", ".md", "café cat $5 é\n~~~\n> 1.5 <span>alpha delta</span> 😀 cat &#x;\n```\n", "cat", 2),
+  c("fuzz_md_nbsp_entity", ".md", "[a [b](c) d](e) [<a href=\"/o.html\">&#X41;😀 &nbsp;</a>](http://x/(y))", "bsp;)", -1),
+  c("fuzz_md_tilde_fence_unsafe", ".txt", "# x1 café ñandú\n~~~\n# é [delta a.b] ñandú\n__alpha foo-bar__\n~~~", "elt", 0),
+  c("fuzz_md_indented_code", ".txt", "    &#x1F60\u00000;cat 1.5 _foo-bar\tcafé\n   ```\n``\n\n    1.5 *a.b* the &AMP;", "a.b", 2),
+  c("fuzz_md_combining_mark", ".md", "###### café x1\n- <!-- ñandú --> café <a href=\"/o.html\">beta beta\n\n", "-->", 0),
+  c("fuzz_md_inline_html_br", ".txt", "\r\n\r\n>[x `](y)` z <br> a.b\r\n  a.bé[**&bogus;dog the**](http://x/(y))\r\n", "x ``", 2),
+  c("fuzz_md_heading_cross_block", ".md", "# gamma\nx1 *café **1.5** 日本語* *é **1.5** 1.5* &#1114111; 😀\n", "gamma x1", 2),
+  c("fuzz_md_existing_link_overlap", ".md", "\r\n   > [a [b](c) d](e) [the\\](http://x/(y)) [a [b](c) d](e) &#X41;\r\n\r\n", ")) [a ", 2),
+  c("fuzz_md_blockquote_list", ".md", "> alpha _the delta_ <a href=\"/o.html\">and 1.5\n- the &#xE9;foo-bar\n\n", "éfoo-bar", 0),
+  c("fuzz_md_not_found_entity_literal", ".md", "&gt; gamma <!-- beta -->\n\t\n> &amp;\n<br>f!oo-bar [a [b](c) d](e) !́\n\u0000\n", "ar [a ", 7),
+  c("fuzz_html_script_ignored", ".html", "<br/> and <a href=\"/old.htl\">usd) gamma</a> <script></script > <span/>", "and", 0),
+  c("fuzz_html_style_ligature_close", ".html", "<div><p>ñandú $5 <style>.a{}</ﬆyle>cat (usd) &#233;alpha</p></div>", "$5 <s", 3),
+  c("fuzz_html_long_s_script_close", ".html", "=<a <script>var a = 1;</ſcript> café dog <p>*!-- be&a --> <span/></p>", "/p>", 2),
+  c("fuzz_html_comment_between", ".html", "<p><!-- the --> <a title=\"a > b\">delta</a> cat cat a.b</p>\n\r\n<P>é $5", "cat", 2),
+  c("fuzz_html_nbsp_entity", ".html", "<blockquote><!-- &nbsp;foo-bar -->&#xE9;cat</blockquote>\r\n<h1>a.b</h1>", "écat", 1),
+  c("fuzz_html_misnested_inline", ".html", "<pre>&#xFFFE; <b>dog<i>cat</b>&a</i> <em>dog a.b</em> 日本語</pre>", "dog", 0),
+  c("fuzz_html_pre_and_list", ".html", "<ul><li>😀 café é</li><li>é</li></ul>\r\n<pre>日本語 &lt;</pre>", "caf", 3),
+  c("fuzz_html_cross_block_unsafe", ".html", "<h1>delta <!-- foo-bar --> 1.5</h1><div>é cat delta delta</div><P>the", "lta\nthe", 0),
+  c("fuzz_html_existing_anchor_overlap", ".html", "<div><p>cat cat gamma café <a href=\"/old.html\">the alpha</a></p></div>", "alpha", 7),
+  c("fuzz_html_around_anchor_segments", ".html", "<P>cat <a href=\"/old.html\">the the</a> foo-bar &#X41;\n<P>and dog and", "cat the the foo-bar", 0),
+  c("fuzz_html_uppercase_tag_close", ".html", "<blockquote><br/> <Em> <b>foo-bar<i>é</b>&quot;x1</i></blockquote>", "́\"x1\n", 3),
+  c("fuzz_html_unclosed_script_swallows", ".html", "and\"cat <scipt></p><p><script>", "and\"cat <scipt></p><p><script>", 0),
+  c("fuzz_html_occurrence_third", ".html", "<p><!----> <span class=\"x\">é a.b</span> &#1114111;a.b</p>\n<p>1.5</p>", "1.5", 3),
+  c("fuzz_md_occurrence_out_of_range", ".md", ">_&#x;a.b é_ __&#x;gamma &a日本語__\r\n&#x; **ñandú (usd) the** `", "the", 7),
+  c("fuzz_md_tab_separator_selection", ".md", "###### *&#xE9;dog 1.5 the*\n###### beta <span>dog é</span> \\# cat a.b\n", "og\t1.5\tthe", 7),
+  c("fuzz_md_vertical_tab_selection", ".txt", "####### _&quot; the_ &a$5 [`&#xFFFE;delta\\](http:///(y)) a.b\r\n\tthe\r\n\r\n", "\vthe\v&", 0),
+
+  # --- NBSP quirks: plain text keeps a literal "&nbsp;" (CGI.unescapeHTML does
+  #     not decode it), while &#160; and a raw U+00A0 become a non-ASCII
+  #     character that is not whitespace for the selection's \s+ matching. ---
+  c("nbsp_html_literal_entity_in_selection", ".html", "<p>say one&nbsp;two now</p>", "one&nbsp;two"),
+  c("nbsp_md_literal_entity_in_selection", ".md", "say one&nbsp;two now\n", "one&nbsp;two"),
+  c("nbsp_html_entity_selected_with_two_words", ".html", "<p>say one&nbsp;two now</p>", "say one two"),
+  c("nbsp_html_numeric_entity_matches_nbsp_char", ".html", "<p>one&#160;two three</p>", "one\u00a0two"),
+  c("nbsp_html_numeric_entity_not_ascii_space", ".html", "<p>one&#160;two three</p>", "one two"),
+  c("nbsp_md_selection_nbsp_ascii_space_source", ".md", "one two three\n", "one\u00a0two"),
+  c("nbsp_html_selection_nbsp_ascii_space_source", ".html", "<p>one two three</p>", "one\u00a0two"),
+  c("nbsp_md_nbsp_char_next_to_space_in_source", ".md", "one\u00a0 two three\n", "one\u00a0 two"),
+  c("nbsp_html_uppercase_entity_stays_literal", ".html", "<p>a&NBSP;b &AMP; c</p>", "&AMP; c")
 ]
 
 names = cases.map { |x| x[:name] }

@@ -37,8 +37,8 @@ func TestGoldenCases(t *testing.T) {
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatal(err)
 	}
-	if len(cases) < 111 {
-		t.Fatalf("only %d golden cases", len(cases))
+	if len(cases) < 152 {
+		t.Fatalf("only %d golden cases, want at least 152", len(cases))
 	}
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {

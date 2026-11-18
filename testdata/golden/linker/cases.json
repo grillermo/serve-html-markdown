@@ -886,5 +886,333 @@
     "selected_text": "beta gamma",
     "occurrence": 0,
     "output": "<P>Alpha <a href=\"/x--expand-1.html\"><EM>beta</EM> gamma</a></P>"
+  },
+  {
+    "name": "fuzz_md_multi_tick_code_span",
+    "extension": ".txt",
+    "source": "   > cat <span>&lt; é</span> ```the &gt;beta``` the é\n```ruby\n````",
+    "selected_text": "the",
+    "occurrence": 0,
+    "output": "   > cat <span>&lt; é</span> ```[the](/x--expand-1.html) &gt;beta``` the é\n```ruby\n````"
+  },
+  {
+    "name": "fuzz_md_bold_snap",
+    "extension": ".txt",
+    "source": "> dog __and x1__\n  日本語\n\t&#x;beta *alpha **do ** alpha* [and $5]\n",
+    "selected_text": "&#x",
+    "occurrence": 7,
+    "output": "> dog __and x1__\n  日本語\n\t[&#x](/x--expand-1.html);beta *alpha **do ** alpha* [and $5]\n"
+  },
+  {
+    "name": "fuzz_md_underscore_emphasis",
+    "extension": ".md",
+    "source": "dog 😀 ` ![1.5](http://x/(y)) cat\r\n###### and é _1.5 dog_ delta <a\n",
+    "selected_text": " and é ",
+    "occurrence": 0,
+    "output": "dog 😀 ` ![1.5](http://x/(y)) cat\r\n###### [and é](/x--expand-1.html) _1.5 dog_ delta <a\n"
+  },
+  {
+    "name": "fuzz_md_around_image",
+    "extension": ".txt",
+    "source": "> <!-- 日本語 --> delta **the delta**\r\n[x `](y)` z ![the]() &a cat\r\n",
+    "selected_text": "delta x ``",
+    "occurrence": 0,
+    "output": "> <!-- 日本語 --> delta [**the delta**](/x--expand-1.html)\r\n[x `](y)[`](/x--expand-1.html) z ![the]() &a cat\r\n"
+  },
+  {
+    "name": "fuzz_md_nested_link_label",
+    "extension": ".md",
+    "source": "```\r\n- ```the beta```` [a [b](c) d](e)\n\t[a [b](c) d](e) <!-- dog -->\n\n",
+    "selected_text": "```",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection is inside a code block."
+  },
+  {
+    "name": "fuzz_md_escaped_bracket_label",
+    "extension": ".txt",
+    "source": "####### _&quot; the_ &a$5 [`&#xFFFE;delta\\](http:///(y)) a.b\r\n\tthe\r\n\r\n",
+    "selected_text": "the",
+    "occurrence": 3,
+    "output": "####### _&quot; [the](/x--expand-1.html)_ &a$5 [`&#xFFFE;delta\\](http:///(y)) a.b\r\n\tthe\r\n\r\n"
+  },
+  {
+    "name": "fuzz_md_entities_numeric_hex",
+    "extension": ".md",
+    "source": "café cat $5 é\n~~~\n> 1.5 <span>alpha delta</span> 😀 cat &#x;\n```\n",
+    "selected_text": "cat",
+    "occurrence": 2,
+    "output": "café [cat](/x--expand-1.html) $5 é\n~~~\n> 1.5 <span>alpha delta</span> 😀 cat &#x;\n```\n"
+  },
+  {
+    "name": "fuzz_md_nbsp_entity",
+    "extension": ".md",
+    "source": "[a [b](c) d](e) [<a href=\"/o.html\">&#X41;😀 &nbsp;</a>](http://x/(y))",
+    "selected_text": "bsp;)",
+    "occurrence": -1,
+    "output": "[a [b](c) d](e) [<a href=\"/o.html\">&#X41;😀 &nbsp;</a>](http://x/(y)[)](/x--expand-1.html)"
+  },
+  {
+    "name": "fuzz_md_tilde_fence_unsafe",
+    "extension": ".txt",
+    "source": "# x1 café ñandú\n~~~\n# é [delta a.b] ñandú\n__alpha foo-bar__\n~~~",
+    "selected_text": "elt",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection is inside a code block."
+  },
+  {
+    "name": "fuzz_md_indented_code",
+    "extension": ".txt",
+    "source": "    &#x1F60\u00000;cat 1.5 _foo-bar\tcafé\n   ```\n``\n\n    1.5 *a.b* the &AMP;",
+    "selected_text": "a.b",
+    "occurrence": 2,
+    "error": "UnsafeMatch: Selection is inside a code block."
+  },
+  {
+    "name": "fuzz_md_combining_mark",
+    "extension": ".md",
+    "source": "###### café x1\n- <!-- ñandú --> café <a href=\"/o.html\">beta beta\n\n",
+    "selected_text": "-->",
+    "occurrence": 0,
+    "output": "###### café x1\n- <!-- ñandú [-->](/x--expand-1.html) café <a href=\"/o.html\">beta beta\n\n"
+  },
+  {
+    "name": "fuzz_md_inline_html_br",
+    "extension": ".txt",
+    "source": "\r\n\r\n>[x `](y)` z <br> a.b\r\n  a.bé[**&bogus;dog the**](http://x/(y))\r\n",
+    "selected_text": "x ``",
+    "occurrence": 2,
+    "output": "\r\n\r\n>[x `](y)[`](/x--expand-1.html) z <br> a.b\r\n  a.bé[**&bogus;dog the**](http://x/(y))\r\n"
+  },
+  {
+    "name": "fuzz_md_heading_cross_block",
+    "extension": ".md",
+    "source": "# gamma\nx1 *café **1.5** 日本語* *é **1.5** 1.5* &#1114111; 😀\n",
+    "selected_text": "gamma x1",
+    "occurrence": 2,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "fuzz_md_existing_link_overlap",
+    "extension": ".md",
+    "source": "\r\n   > [a [b](c) d](e) [the\\](http://x/(y)) [a [b](c) d](e) &#X41;\r\n\r\n",
+    "selected_text": ")) [a ",
+    "occurrence": 2,
+    "error": "UnsafeMatch: Selection overlaps an existing link."
+  },
+  {
+    "name": "fuzz_md_blockquote_list",
+    "extension": ".md",
+    "source": "> alpha _the delta_ <a href=\"/o.html\">and 1.5\n- the &#xE9;foo-bar\n\n",
+    "selected_text": "éfoo-bar",
+    "occurrence": 0,
+    "output": "> alpha _the delta_ <a href=\"/o.html\">and 1.5\n- the [&#xE9;foo-bar](/x--expand-1.html)\n\n"
+  },
+  {
+    "name": "fuzz_md_not_found_entity_literal",
+    "extension": ".md",
+    "source": "&gt; gamma <!-- beta -->\n\t\n> &amp;\n<br>f!oo-bar [a [b](c) d](e) !́\n\u0000\n",
+    "selected_text": "ar [a ",
+    "occurrence": 7,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "fuzz_html_script_ignored",
+    "extension": ".html",
+    "source": "<br/> and <a href=\"/old.htl\">usd) gamma</a> <script></script > <span/>",
+    "selected_text": "and",
+    "occurrence": 0,
+    "output": "<br/> <a href=\"/x--expand-1.html\">and</a> <a href=\"/old.htl\">usd) gamma</a> <script></script > <span/>"
+  },
+  {
+    "name": "fuzz_html_style_ligature_close",
+    "extension": ".html",
+    "source": "<div><p>ñandú $5 <style>.a{}</ﬆyle>cat (usd) &#233;alpha</p></div>",
+    "selected_text": "$5 <s",
+    "occurrence": 3,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "fuzz_html_long_s_script_close",
+    "extension": ".html",
+    "source": "=<a <script>var a = 1;</ſcript> café dog <p>*!-- be&a --> <span/></p>",
+    "selected_text": "/p>",
+    "occurrence": 2,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "fuzz_html_comment_between",
+    "extension": ".html",
+    "source": "<p><!-- the --> <a title=\"a > b\">delta</a> cat cat a.b</p>\n\r\n<P>é $5",
+    "selected_text": "cat",
+    "occurrence": 2,
+    "output": "<p><!-- the --> <a title=\"a > b\">delta</a> <a href=\"/x--expand-1.html\">cat</a> cat a.b</p>\n\r\n<P>é $5"
+  },
+  {
+    "name": "fuzz_html_nbsp_entity",
+    "extension": ".html",
+    "source": "<blockquote><!-- &nbsp;foo-bar -->&#xE9;cat</blockquote>\r\n<h1>a.b</h1>",
+    "selected_text": "écat",
+    "occurrence": 1,
+    "output": "<blockquote><!-- &nbsp;foo-bar --><a href=\"/x--expand-1.html\">&#xE9;cat</a></blockquote>\r\n<h1>a.b</h1>"
+  },
+  {
+    "name": "fuzz_html_misnested_inline",
+    "extension": ".html",
+    "source": "<pre>&#xFFFE; <b>dog<i>cat</b>&a</i> <em>dog a.b</em> 日本語</pre>",
+    "selected_text": "dog",
+    "occurrence": 0,
+    "output": "<pre>&#xFFFE; <b><a href=\"/x--expand-1.html\">dog</a><i>cat</b>&a</i> <em>dog a.b</em> 日本語</pre>"
+  },
+  {
+    "name": "fuzz_html_pre_and_list",
+    "extension": ".html",
+    "source": "<ul><li>😀 café é</li><li>é</li></ul>\r\n<pre>日本語 &lt;</pre>",
+    "selected_text": "caf",
+    "occurrence": 3,
+    "output": "<ul><li>😀 <a href=\"/x--expand-1.html\">caf</a>é é</li><li>é</li></ul>\r\n<pre>日本語 &lt;</pre>"
+  },
+  {
+    "name": "fuzz_html_cross_block_unsafe",
+    "extension": ".html",
+    "source": "<h1>delta <!-- foo-bar --> 1.5</h1><div>é cat delta delta</div><P>the",
+    "selected_text": "lta\nthe",
+    "occurrence": 0,
+    "error": "UnsafeMatch: Selection spans multiple paragraphs — select within one."
+  },
+  {
+    "name": "fuzz_html_existing_anchor_overlap",
+    "extension": ".html",
+    "source": "<div><p>cat cat gamma café <a href=\"/old.html\">the alpha</a></p></div>",
+    "selected_text": "alpha",
+    "occurrence": 7,
+    "error": "UnsafeMatch: Selection overlaps an existing link."
+  },
+  {
+    "name": "fuzz_html_around_anchor_segments",
+    "extension": ".html",
+    "source": "<P>cat <a href=\"/old.html\">the the</a> foo-bar &#X41;\n<P>and dog and",
+    "selected_text": "cat the the foo-bar",
+    "occurrence": 0,
+    "output": "<P><a href=\"/x--expand-1.html\">cat</a> <a href=\"/old.html\">the the</a> <a href=\"/x--expand-1.html\">foo-bar</a> &#X41;\n<P>and dog and"
+  },
+  {
+    "name": "fuzz_html_uppercase_tag_close",
+    "extension": ".html",
+    "source": "<blockquote><br/> <Em> <b>foo-bar<i>é</b>&quot;x1</i></blockquote>",
+    "selected_text": "́\"x1\n",
+    "occurrence": 3,
+    "output": "<blockquote><br/> <Em> <a href=\"/x--expand-1.html\"><b>foo-bar<i>é</b>&quot;x1</i></a></blockquote>"
+  },
+  {
+    "name": "fuzz_html_unclosed_script_swallows",
+    "extension": ".html",
+    "source": "and\"cat <scipt></p><p><script>",
+    "selected_text": "and\"cat <scipt></p><p><script>",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "fuzz_html_occurrence_third",
+    "extension": ".html",
+    "source": "<p><!----> <span class=\"x\">é a.b</span> &#1114111;a.b</p>\n<p>1.5</p>",
+    "selected_text": "1.5",
+    "occurrence": 3,
+    "output": "<p><!----> <span class=\"x\">é a.b</span> &#1114111;a.b</p>\n<p><a href=\"/x--expand-1.html\">1.5</a></p>"
+  },
+  {
+    "name": "fuzz_md_occurrence_out_of_range",
+    "extension": ".md",
+    "source": ">_&#x;a.b é_ __&#x;gamma &a日本語__\r\n&#x; **ñandú (usd) the** `",
+    "selected_text": "the",
+    "occurrence": 7,
+    "output": ">_&#x;a.b é_ __&#x;gamma &a日本語__\r\n&#x; **ñandú (usd) [the](/x--expand-1.html)** `"
+  },
+  {
+    "name": "fuzz_md_tab_separator_selection",
+    "extension": ".md",
+    "source": "###### *&#xE9;dog 1.5 the*\n###### beta <span>dog é</span> \\# cat a.b\n",
+    "selected_text": "og\t1.5\tthe",
+    "occurrence": 7,
+    "output": "###### *&#xE9;d[og 1.5 the](/x--expand-1.html)*\n###### beta <span>dog é</span> \\# cat a.b\n"
+  },
+  {
+    "name": "fuzz_md_vertical_tab_selection",
+    "extension": ".txt",
+    "source": "####### _&quot; the_ &a$5 [`&#xFFFE;delta\\](http:///(y)) a.b\r\n\tthe\r\n\r\n",
+    "selected_text": "\u000bthe\u000b&",
+    "occurrence": 0,
+    "output": "####### [_&quot; the_ &](/x--expand-1.html)a$5 [`&#xFFFE;delta\\](http:///(y)) a.b\r\n\tthe\r\n\r\n"
+  },
+  {
+    "name": "nbsp_html_literal_entity_in_selection",
+    "extension": ".html",
+    "source": "<p>say one&nbsp;two now</p>",
+    "selected_text": "one&nbsp;two",
+    "occurrence": 0,
+    "output": "<p>say <a href=\"/x--expand-1.html\">one&nbsp;two</a> now</p>"
+  },
+  {
+    "name": "nbsp_md_literal_entity_in_selection",
+    "extension": ".md",
+    "source": "say one&nbsp;two now\n",
+    "selected_text": "one&nbsp;two",
+    "occurrence": 0,
+    "output": "say [one&nbsp;two](/x--expand-1.html) now\n"
+  },
+  {
+    "name": "nbsp_html_entity_selected_with_two_words",
+    "extension": ".html",
+    "source": "<p>say one&nbsp;two now</p>",
+    "selected_text": "say one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "nbsp_html_numeric_entity_matches_nbsp_char",
+    "extension": ".html",
+    "source": "<p>one&#160;two three</p>",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "output": "<p><a href=\"/x--expand-1.html\">one&#160;two</a> three</p>"
+  },
+  {
+    "name": "nbsp_html_numeric_entity_not_ascii_space",
+    "extension": ".html",
+    "source": "<p>one&#160;two three</p>",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "nbsp_md_selection_nbsp_ascii_space_source",
+    "extension": ".md",
+    "source": "one two three\n",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "nbsp_html_selection_nbsp_ascii_space_source",
+    "extension": ".html",
+    "source": "<p>one two three</p>",
+    "selected_text": "one two",
+    "occurrence": 0,
+    "error": "NotFound: Selection not found in source — select a plainer run of text."
+  },
+  {
+    "name": "nbsp_md_nbsp_char_next_to_space_in_source",
+    "extension": ".md",
+    "source": "one  two three\n",
+    "selected_text": "one  two",
+    "occurrence": 0,
+    "output": "[one  two](/x--expand-1.html) three\n"
+  },
+  {
+    "name": "nbsp_html_uppercase_entity_stays_literal",
+    "extension": ".html",
+    "source": "<p>a&NBSP;b &AMP; c</p>",
+    "selected_text": "&AMP; c",
+    "occurrence": 0,
+    "output": "<p>a&NBSP;b <a href=\"/x--expand-1.html\">&AMP; c</a></p>"
   }
 ]

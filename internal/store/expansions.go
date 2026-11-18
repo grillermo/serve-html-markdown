@@ -206,18 +206,51 @@ func mergeTiming(keyArg, valArg string) string {
 		|| jsonb_build_object(` + keyArg + `::text, ` + valArg + `::bigint))::text`
 }
 
+// ExpansionFailedDetail is the generic detail of a failed expansion: what the
+// reader sees when the cause is not something they can act on.
+const ExpansionFailedDetail = "Expansion failed."
+
+// ErrExpansionFinished is returned by the terminal writes (CompleteExpansion,
+// FailExpansion, SetExpansionURL) when the row exists but is already completed
+// or failed: they never overwrite a finished expansion. It is a no-op, not a
+// failure, for callers that were merely late.
+var ErrExpansionFinished = errors.New("store: expansion already finished")
+
+// openExpansion is the guard of every write that must not touch a finished row.
+const openExpansion = `status IN ('pending', 'processing')`
+
+// guardedWrite turns a guarded UPDATE that touched no row into
+// ErrExpansionFinished when the row exists and ErrNotFound when it does not.
+func guardedWrite(ctx context.Context, db DB, id int64, tag pgconn.CommandTag, err error) error {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	var exists bool
+	if err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM expansions WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return ErrExpansionFinished
+	}
+	return ErrNotFound
+}
+
 // CompleteExpansion records the generated page: status "completed", the url and
-// the error cleared; ErrNotFound for a missing row. The "completed" stage is
-// then stamped in a second statement whose failure is only logged (as in Ruby,
-// where stamp! rescues): a timings column that holds invalid JSON must not
-// lose the result.
+// the error cleared; ErrNotFound for a missing row and ErrExpansionFinished for
+// one that is already completed or failed (a late writer never overwrites the
+// outcome). The "completed" stage is then stamped in a second statement whose
+// failure is only logged (as in Ruby, where stamp! rescues): a timings column
+// that holds invalid JSON must not lose the result.
 func CompleteExpansion(ctx context.Context, db DB, id int64, url string) error {
 	if !validText(url) {
 		return &InvalidExpansionError{"url", "is invalid"}
 	}
-	err := requireRow(db.Exec(ctx, `UPDATE expansions SET status = 'completed', url = $2, error_detail = NULL, updated_at = $3
-		WHERE id = $1`, id, url, utcNow()))
-	if err != nil {
+	tag, err := db.Exec(ctx, `UPDATE expansions SET status = 'completed', url = $2, error_detail = NULL, updated_at = $3
+		WHERE id = $1 AND `+openExpansion, id, url, utcNow())
+	if err := guardedWrite(ctx, db, id, tag, err); err != nil {
 		return err
 	}
 	StampExpansion(ctx, db, id, "completed", NowMS())
@@ -227,12 +260,48 @@ func CompleteExpansion(ctx context.Context, db DB, id int64, url string) error {
 // FailExpansion records a failure: status "failed", the url cleared and the
 // detail stored. It is the last resort of the job's rescue block, so it never
 // rejects odd text: NUL bytes are dropped and invalid UTF-8 replaced (see
-// sanitizeDetail). ErrNotFound for a missing row.
+// sanitizeDetail). ErrNotFound for a missing row, ErrExpansionFinished for one
+// that is already completed or failed.
 func FailExpansion(ctx context.Context, db DB, id int64, detail string) error {
 	detail = sanitizeDetail(detail)
-	return requireRow(db.Exec(ctx, `UPDATE expansions
+	tag, err := db.Exec(ctx, `UPDATE expansions
 		SET status = 'failed', url = NULL, error_detail = $2, updated_at = $3
-		WHERE id = $1`, id, detail, utcNow()))
+		WHERE id = $1 AND `+openExpansion, id, detail, utcNow())
+	return guardedWrite(ctx, db, id, tag, err)
+}
+
+// SetExpansionURL durably records the url of a result whose files are already
+// written, without changing the status: if the job dies before it completes the
+// expansion, its re-run completes it with this url instead of generating again.
+// ErrNotFound / ErrExpansionFinished as for CompleteExpansion.
+func SetExpansionURL(ctx context.Context, db DB, id int64, url string) error {
+	if !validText(url) {
+		return &InvalidExpansionError{"url", "is invalid"}
+	}
+	tag, err := db.Exec(ctx, `UPDATE expansions SET url = $2, updated_at = $3
+		WHERE id = $1 AND `+openExpansion, id, url, utcNow())
+	return guardedWrite(ctx, db, id, tag, err)
+}
+
+// FailStaleExpansions finishes the expansions that no job is working on any
+// more: pending or processing rows not touched (every stage stamp refreshes
+// updated_at) for staleAfter. They come from outages that kept the job from
+// claiming or from recording its outcome, and from crashes. A row that already
+// has a url (its files were written, only the completion was lost) completes
+// with it; the others fail with ExpansionFailedDetail. One statement, guarded
+// by status, so a row finished meanwhile is left alone. It returns how many
+// rows it finished.
+func FailStaleExpansions(ctx context.Context, db DB, staleAfter time.Duration) (int64, error) {
+	now := utcNow()
+	tag, err := db.Exec(ctx, `UPDATE expansions SET
+		status = CASE WHEN COALESCE(url, '') <> '' THEN 'completed' ELSE 'failed' END,
+		error_detail = CASE WHEN COALESCE(url, '') <> '' THEN NULL ELSE $2 END,
+		updated_at = $1
+		WHERE `+openExpansion+` AND updated_at < $3`, now, ExpansionFailedDetail, now.Add(-staleAfter))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // StampExpansion records when a stage happened (epoch milliseconds, see NowMS)

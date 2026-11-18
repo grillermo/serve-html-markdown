@@ -1016,3 +1016,24 @@ func TestPromptTooLargeIsUserFacingAndSpawnsNothing(t *testing.T) {
 		}
 	}
 }
+
+// The url is stored on the row as soon as the files are written, without
+// finishing the expansion, so a re-run can complete it (see jobs).
+func TestPersistsTheResultURLWithoutChangingTheStatus(t *testing.T) {
+	e := newEnv(t)
+	e.write("notes.md", "Alpha beta gamma.")
+	x := e.expansion(nil)
+	url := e.mustProcess(x)
+	if got := e.reload(x); got.URL == nil || *got.URL != url || got.Status != "pending" {
+		t.Errorf("create_new: url %v status %q, want %q pending", got.URL, got.Status, url)
+	}
+
+	e.exp.rewrite = func(llm.Params) (string, error) {
+		return "Alpha ⟦EXPANSION_ANCHOR⟧beta, at length, gamma. Plus much more text here.", nil
+	}
+	y := e.expansion(editInPlace)
+	url = e.mustProcess(y)
+	if got := e.reload(y); got.URL == nil || *got.URL != url || got.Status != "pending" {
+		t.Errorf("edit_in_place: url %v status %q, want %q pending", got.URL, got.Status, url)
+	}
+}

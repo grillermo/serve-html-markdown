@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"serve-html-markdown/internal/files"
@@ -228,6 +229,7 @@ func (p *Processor) linkNewPage(ctx context.Context, e *store.Expansion, name st
 			}
 			break
 		}
+		p.persistResult(e, url)
 		p.stamp(ctx, e, StageFilesWritten)
 		p.recordServedFiles(ctx, pageName, name)
 		return nil
@@ -265,15 +267,31 @@ func (p *Processor) rewriteInPlace(ctx context.Context, e *store.Expansion, name
 		if err := files.CreateNew(p.FilesDir, versionName, []byte(anchored)); err != nil {
 			return writeFailed(err)
 		}
+		url = versionURL(versionName, e.FallbackAnchor)
+		p.persistResult(e, url)
 		p.stamp(ctx, e, StageFilesWritten)
 		p.recordServedFiles(ctx, versionName)
-		url = versionURL(versionName, e.FallbackAnchor)
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
 	return url, nil
+}
+
+// persistResult stores the url on the expansion row, as soon as the files are
+// written and before anything else can fail, without changing its status. If
+// the job dies before it completes the expansion, the re-run finds the url and
+// completes with it instead of generating (and writing) a second result. It is
+// best effort and runs on its own short context: the files exist, so a
+// cancelled job context must not skip it, and a failure only means the re-run
+// regenerates, as before.
+func (p *Processor) persistResult(e *store.Expansion, url string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := store.SetExpansionURL(ctx, p.DB, e.ID, url); err != nil && !errors.Is(err, store.ErrExpansionFinished) {
+		slog.Error("[Expansion] could not record the result url", "expansion_id", e.ID, "err", err)
+	}
 }
 
 // recordServedFiles records the files just written: the first name as new, the

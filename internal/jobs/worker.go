@@ -50,6 +50,11 @@ type Runner struct {
 	// Needed because the heartbeat keeps a hung job locked indefinitely.
 	Timeouts map[string]time.Duration
 
+	// Sweepers are optional housekeeping functions, run when the Runner starts
+	// and on every cleanup tick (CleanupEvery). An error is logged, never fatal,
+	// and does not stop the other sweepers.
+	Sweepers []func(context.Context) error
+
 	StaleAfter     time.Duration // lock age after which an unfinished job is reclaimed
 	HeartbeatEvery time.Duration // how often a running job refreshes its lock; at most StaleAfter/3
 	ShutdownGrace  time.Duration // how long in-flight handlers get after Run's context is cancelled
@@ -215,12 +220,39 @@ func (r Runner) cleanupLoop(ctx context.Context) {
 		case err == nil && n > 0:
 			r.Logger.Info("jobs: cleaned up finished jobs", "deleted", n)
 		}
+		r.sweep(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
 		}
 	}
+}
+
+// sweep runs the Sweepers, each under its own timeout.
+func (r Runner) sweep(ctx context.Context) {
+	for _, sweeper := range r.Sweepers {
+		if ctx.Err() != nil {
+			return
+		}
+		sctx, cancel := context.WithTimeout(ctx, finishTimeout)
+		err := runSweeper(sctx, sweeper)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			r.Logger.Warn("jobs: sweeper failed", "err", err)
+		}
+	}
+}
+
+// runSweeper calls f, turning a panic into an error: housekeeping must never
+// take the Runner down.
+func runSweeper(ctx context.Context, f func(context.Context) error) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("panic in sweeper: %v", p)
+		}
+	}()
+	return f(ctx)
 }
 
 func (r Runner) execute(handlerCtx context.Context, j *job) {

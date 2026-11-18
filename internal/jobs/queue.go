@@ -12,9 +12,18 @@
 //     the stale window (30 minutes). A job whose handler was cut short by the
 //     shutdown grace period is released at once and runs again in the next
 //     process. So handlers must be safe to run again after a partial run:
-//     GenerateExpansionJob already is (it claim!s the expansion first) and so
-//     is TwitterVideoCaptionsJob (it only acts on status awaiting_captions),
-//     but TwitterVideoIngestJob does NOT check the video's status, so a re-run
+//     the generate_expansion handler is, precisely: it claims the expansion
+//     first (a finished or running one is a no-op); a run cut short by shutdown
+//     puts it back to pending; a run that died leaves a processing row that
+//     the next run takes over once it is 15 minutes untouched; the processor
+//     stores the result url on the row as soon as its files are written, and a
+//     re-run that finds one completes with it, so files are never written
+//     twice; and a sweeper finishes rows no job will ever claim. What it
+//     cannot undo: a crash after the LLM answered but before any file was
+//     written repeats the (paid) LLM call, and a crash between writing the
+//     files and storing the url (two statements apart) can still write a
+//     second result. TwitterVideoCaptionsJob is safe too (it only acts on
+//     status awaiting_captions), but TwitterVideoIngestJob does NOT check the video's status, so a re-run
 //     would download again (or reuse the file) and upload a duplicate YouTube
 //     video. The ingest handler (Task 9.6) must add a status/youtube_id guard.
 //   - Running jobs refresh their lock (heartbeat), so a long handler such as a

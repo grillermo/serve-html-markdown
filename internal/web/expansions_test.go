@@ -32,14 +32,17 @@ type fakeEnqueuer struct {
 	got  []enqueued
 	err  error
 	onGo func() // runs inside Enqueue (to check ordering)
+	// ctxErrs is the Err() of the context of each call, after onGo ran.
+	ctxErrs []error
 }
 
-func (f *fakeEnqueuer) Enqueue(_ context.Context, kind string, args jobs.Args, wait time.Duration) error {
+func (f *fakeEnqueuer) Enqueue(ctx context.Context, kind string, args jobs.Args, wait time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.onGo != nil {
 		f.onGo()
 	}
+	f.ctxErrs = append(f.ctxErrs, ctx.Err())
 	if f.err != nil {
 		return f.err
 	}
@@ -450,10 +453,15 @@ func TestShowExpansionStatusPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(`{"id":` + itoa(x.ID) + `,"status":"completed","url":"/notes--expand-1.html"}`)
-	if err := store.FailExpansion(ctx, e.srv.pool, x.ID, `Selection <not> "found"`); err != nil {
+	y, err := store.CreateExpansion(ctx, e.srv.pool, store.NewExpansion{UserID: e.user.ID, FileName: "notes.md", SelectedText: "beta", Question: "why?"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	check(`{"id":` + itoa(x.ID) + `,"status":"failed","detail":"Selection <not> \"found\""}`)
+	if err := store.FailExpansion(ctx, e.srv.pool, y.ID, `Selection <not> "found"`); err != nil {
+		t.Fatal(err)
+	}
+	path = "/expansions/" + itoa(y.ID)
+	check(`{"id":` + itoa(y.ID) + `,"status":"failed","detail":"Selection <not> \"found\""}`)
 }
 
 // Ruby: "does not reveal another user's job or missing jobs".
@@ -591,3 +599,93 @@ func readFile(t *testing.T, dir, name string) string {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func onlyExpansionID(t *testing.T, e *expEnv) int64 {
+	t.Helper()
+	var id int64
+	if err := e.srv.pool.QueryRow(context.Background(), `SELECT id FROM expansions`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// An enqueue that fails must not overwrite an outcome the row already has.
+func TestEnqueueFailureDoesNotOverwriteAFinishedExpansion(t *testing.T) {
+	e := newExpEnv(t)
+	e.enq.err = errors.New("enqueue failed after all")
+	e.enq.onGo = func() {
+		var id int64
+		_ = e.srv.pool.QueryRow(context.Background(), `SELECT id FROM expansions`).Scan(&id)
+		if err := store.CompleteExpansion(context.Background(), e.srv.pool, id, "/done.html"); err != nil {
+			t.Error(err)
+		}
+	}
+	if rec := e.post(validBody); rec.Code != 500 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if x := e.load(t, onlyExpansionID(t, e)); x.Status != "completed" || x.URL == nil || *x.URL != "/done.html" {
+		t.Errorf("row %+v", x)
+	}
+}
+
+// If even recording the failure fails, the client still gets the generic 500.
+func TestEnqueueFailureWhenFailingTheRowFailsToo(t *testing.T) {
+	e := newExpEnv(t)
+	e.enq.err = errors.New("enqueue failed")
+	e.enq.onGo = func() { // the row vanishes, so FailExpansion reports ErrNotFound
+		if _, err := e.srv.pool.Exec(context.Background(), `DELETE FROM expansions`); err != nil {
+			t.Error(err)
+		}
+	}
+	rec := e.post(validBody)
+	if rec.Code != 500 || strings.TrimSpace(rec.Body.String()) != `{"detail":"Internal server error."}` {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+// Failing to remember the user's mode is logged; the request still succeeds.
+func TestCreateExpansionSurvivesAFailureToRememberTheMode(t *testing.T) {
+	e := newExpEnv(t)
+	ctx := context.Background()
+	if _, err := e.srv.pool.Exec(ctx, `ALTER TABLE users ADD CONSTRAINT test_no_edit_in_place CHECK (expansion_mode <> 'edit_in_place')`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = e.srv.pool.Exec(context.Background(), `ALTER TABLE users DROP CONSTRAINT IF EXISTS test_no_edit_in_place`)
+	})
+	rec := e.post(bodyWith(t, map[string]any{"mode": "edit_in_place"}))
+	if rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	x := e.load(t, idOf(t, rec))
+	if x.Mode != "edit_in_place" || x.Timings["job_enqueued"] == 0 || len(e.enq.got) != 1 {
+		t.Errorf("row %+v, enqueued %+v", x, e.enq.got)
+	}
+	if u, _ := store.FindUserByID(ctx, e.srv.pool, e.user.ID); u.ExpansionMode != "create_new" {
+		t.Errorf("the mode should not have been saved: %q", u.ExpansionMode)
+	}
+}
+
+// A client that hangs up after the row was inserted still gets its job enqueued
+// and stamped: everything after the insert runs detached from the request.
+func TestCreateExpansionClientHangUpStillEnqueues(t *testing.T) {
+	e := newExpEnv(t)
+	rctx, hangUp := context.WithCancel(context.Background())
+	e.enq.onGo = hangUp // the client goes away right before the enqueue
+	req := httptest.NewRequest("POST", "/expansions", strings.NewReader(validBody)).WithContext(rctx)
+	for k, v := range e.h {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	e.srv.ServeHTTP(rec, req)
+	if rctx.Err() == nil {
+		t.Fatal("the request context should have been cancelled")
+	}
+	if len(e.enq.got) != 1 || len(e.enq.ctxErrs) != 1 || e.enq.ctxErrs[0] != nil {
+		t.Fatalf("enqueued %+v, ctx errors %v", e.enq.got, e.enq.ctxErrs)
+	}
+	x := e.load(t, onlyExpansionID(t, e))
+	if x.Status != "pending" || x.Timings["job_enqueued"] == 0 {
+		t.Errorf("row %+v", x)
+	}
+}

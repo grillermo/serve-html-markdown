@@ -48,7 +48,6 @@ const (
 	msgAnchorTooLong          = "Fallback anchor is too long."
 	msgInvalidExpansionText   = "file_name, selected_text, question, and fallback_anchor must be valid text."
 	msgExpansionNotFound      = "Expansion not found."
-	msgExpansionFailed        = "Expansion failed."
 )
 
 // WithEnqueuer sets where POST /expansions enqueues its job (default: the
@@ -151,7 +150,9 @@ func (s *Server) createExpansion(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.enqueuer.Enqueue(ctx, jobs.KindGenerateExpansion, jobs.Args{ID: e.ID}, 0); err != nil {
 		// Without a job the expansion would stay pending, and the page poll forever.
-		if ferr := store.FailExpansion(ctx, s.pool, e.ID, msgExpansionFailed); ferr != nil {
+		// FailExpansion never overwrites a finished row, so a job that somehow
+		// ran already keeps its outcome.
+		if ferr := store.FailExpansion(ctx, s.pool, e.ID, store.ExpansionFailedDetail); ferr != nil && !errors.Is(ferr, store.ErrExpansionFinished) {
 			slog.Error("could not fail an expansion that was not enqueued", "expansion_id", e.ID, "err", ferr)
 		}
 		s.serverFailure(w, r, err)

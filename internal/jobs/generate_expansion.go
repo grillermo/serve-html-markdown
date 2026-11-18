@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"serve-html-markdown/internal/expansion"
@@ -35,10 +36,7 @@ const DefaultExpansionStaleAfter = 15 * time.Minute
 const finalWriteTimeout = 10 * time.Second
 
 // Messages the reader sees (Ruby: GenerateExpansionJob).
-const (
-	msgGenerationFailed = "Generation failed."
-	msgExpansionFailed  = "Expansion failed."
-)
+const msgGenerationFailed = "Generation failed."
 
 // ExpansionDeps are what the generate_expansion handler needs.
 type ExpansionDeps struct {
@@ -46,8 +44,42 @@ type ExpansionDeps struct {
 	Processor ExpansionProcessor
 	// StaleAfter defaults to DefaultExpansionStaleAfter.
 	StaleAfter time.Duration
+	// SweepAfter is how long a pending or processing expansion may go
+	// untouched before the sweeper finishes it; defaults to
+	// DefaultExpansionSweepAfter.
+	SweepAfter time.Duration
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+}
+
+// DefaultExpansionSweepAfter is how long a pending or processing expansion may
+// go untouched (stage stamps refresh updated_at) before the sweeper gives up on
+// it. It is longer than the queue's stale-lock window (30 minutes) plus
+// DefaultExpansionStaleAfter's take-over, so a crashed run's job gets its
+// chance first.
+const DefaultExpansionSweepAfter = 40 * time.Minute
+
+// ExpansionSweeper returns the function for Runner.Sweepers that finishes the
+// expansions no job is working on any more (store.FailStaleExpansions): the
+// ones whose job never claimed them (a database outage), whose outcome could
+// not be written, or whose process died.
+func ExpansionSweeper(db store.DB, staleAfter time.Duration) func(context.Context) error {
+	if staleAfter <= 0 {
+		staleAfter = DefaultExpansionSweepAfter
+	}
+	return func(ctx context.Context) error {
+		n, err := store.FailStaleExpansions(ctx, db, staleAfter)
+		if err == nil && n > 0 {
+			slog.Warn("expansion sweeper: finished stale expansions", "count", n)
+		}
+		return err
+	}
+}
+
+// ExpansionSweepers is the sibling of ExpansionHandlers for wiring:
+// Runner{Handlers: jobs.ExpansionHandlers(deps), Sweepers: jobs.ExpansionSweepers(deps)}.
+func ExpansionSweepers(deps ExpansionDeps) []func(context.Context) error {
+	return []func(context.Context) error{ExpansionSweeper(deps.DB, deps.SweepAfter)}
 }
 
 // ExpansionHandlers is the kind-to-handler map for the Runner, so wiring is
@@ -75,7 +107,12 @@ func ExpansionHandlers(deps ExpansionDeps) map[string]Handler {
 //     timeout.
 //
 // A row left "processing" by a run that died is taken over once it is older
-// than StaleAfter (store.ReclaimExpansion), tried before the claim.
+// than StaleAfter (store.ReclaimExpansion), tried before the claim. If an
+// earlier run wrote the files and stored the result url (the processor does, as
+// soon as the files exist) but died before completing, this run completes with
+// that url and calls nothing else. The claim and every write of state use
+// contexts detached from the job's, so their outcome is never in doubt; rows
+// that still end up stuck (a database outage) are finished by the sweeper.
 func NewGenerateExpansion(deps ExpansionDeps) Handler {
 	if deps.StaleAfter <= 0 {
 		deps.StaleAfter = DefaultExpansionStaleAfter
@@ -88,8 +125,19 @@ func NewGenerateExpansion(deps ExpansionDeps) Handler {
 	}
 }
 
+// detached is a short context for the writes that record state. It outlives the
+// job's context: once a write may have reached the database, its outcome must
+// be known (a cancelled claim could have committed), and a shutdown or deadline
+// that ended the generation must not also lose its result.
+func detached(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), finalWriteTimeout)
+}
+
 func runGenerateExpansion(ctx context.Context, deps ExpansionDeps, id int64) error {
 	log := deps.Logger.With("expansion_id", id)
+	if err := ctx.Err(); err != nil {
+		return err // nothing claimed: the queue releases or finishes the job
+	}
 	e, err := store.FindExpansion(ctx, deps.DB, id)
 	if err != nil {
 		return fmt.Errorf("find expansion %d: %w", id, err)
@@ -98,45 +146,38 @@ func runGenerateExpansion(ctx context.Context, deps ExpansionDeps, id int64) err
 		log.Warn("expansion job: expansion not found, nothing to do")
 		return nil
 	}
-	if reclaimed, err := store.ReclaimExpansion(ctx, deps.DB, id, deps.StaleAfter); err != nil {
-		return fmt.Errorf("reclaim expansion %d: %w", id, err)
-	} else if reclaimed {
-		log.Warn("expansion job: took over an expansion left processing by a run that died")
+
+	var claimed bool
+	e, claimed, err = claimExpansion(ctx, deps, log, e)
+	if err != nil || !claimed {
+		return err // not claimed: being worked on, finished, or the database failed
 	}
-	claimed, err := store.ClaimExpansion(ctx, deps.DB, id)
-	if err != nil {
-		return fmt.Errorf("claim expansion %d: %w", id, err)
-	}
-	if !claimed {
-		return nil // being worked on, or already finished
-	}
-	store.StampExpansion(ctx, deps.DB, id, "job_started", store.NowMS())
-	// Process reads the row it is given; reload so it sees the claim and stamp.
-	if fresh, err := store.FindExpansion(ctx, deps.DB, id); err == nil && fresh != nil {
-		e = fresh
+	// From here this run owns the row: every exit records an outcome or releases it.
+
+	if e.URL != nil && *e.URL != "" {
+		// A previous run wrote the files and stored their url but died before
+		// completing: finish with that result instead of generating another.
+		log.Warn("expansion job: completing from the result of an earlier run")
+		wctx, cancel := detached(ctx)
+		defer cancel()
+		return completeExpansion(wctx, deps, log, id, *e.URL)
 	}
 
 	url, procErr := process(ctx, deps.Processor, e)
 
-	// The outcome is written on a context that survives the job's.
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalWriteTimeout)
+	wctx, cancel := detached(ctx)
 	defer cancel()
-
 	if procErr == nil {
-		if err := store.CompleteExpansion(wctx, deps.DB, id, url); err != nil {
-			log.Error("expansion job: could not record the result", "err", err)
-			return failExpansion(wctx, deps, log, id, msgExpansionFailed)
-		}
-		return nil
+		return completeExpansion(wctx, deps, log, id, url)
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
 		// Shutdown, not a failure of the expansion: give it back.
 		if _, err := store.ReleaseExpansion(wctx, deps.DB, id); err != nil {
-			log.Error("expansion job: could not release the expansion after shutdown; it is retried once stale", "err", err)
+			log.Error("expansion job: could not release the expansion after shutdown; the sweeper finishes it", "err", err)
 		}
 		return procErr
 	}
-	log.Error("expansion job failed", "err", procErr, "type", fmt.Sprintf("%T", procErr))
+	logFailure(log, procErr)
 	if err := failExpansion(wctx, deps, log, id, failureDetail(procErr)); err != nil {
 		return err
 	}
@@ -146,21 +187,82 @@ func runGenerateExpansion(ctx context.Context, deps ExpansionDeps, id int64) err
 	return nil
 }
 
-func failExpansion(ctx context.Context, deps ExpansionDeps, log *slog.Logger, id int64, detail string) error {
-	if err := store.FailExpansion(ctx, deps.DB, id, detail); err != nil {
-		log.Error("expansion job: could not record the failure", "err", err)
-		return fmt.Errorf("fail expansion %d: %w", id, err)
+// claimExpansion takes over a stale processing row, claims the row and stamps
+// job_started, all on detached contexts so the claim's outcome is never left
+// to a cancelled context. It returns the row as of the claim.
+func claimExpansion(ctx context.Context, deps ExpansionDeps, log *slog.Logger, e *store.Expansion) (*store.Expansion, bool, error) {
+	cctx, cancel := detached(ctx)
+	defer cancel()
+	if reclaimed, err := store.ReclaimExpansion(cctx, deps.DB, e.ID, deps.StaleAfter); err != nil {
+		return e, false, fmt.Errorf("reclaim expansion %d: %w", e.ID, err)
+	} else if reclaimed {
+		log.Warn("expansion job: took over an expansion left processing by a run that died")
 	}
-	return nil
+	claimed, err := store.ClaimExpansion(cctx, deps.DB, e.ID)
+	if err != nil {
+		return e, false, fmt.Errorf("claim expansion %d: %w", e.ID, err)
+	}
+	if !claimed {
+		return e, false, nil
+	}
+	store.StampExpansion(cctx, deps.DB, e.ID, "job_started", store.NowMS())
+	// Process reads the row it is given; reload so it sees the claim and stamp.
+	if fresh, err := store.FindExpansion(cctx, deps.DB, e.ID); err == nil && fresh != nil {
+		e = fresh
+	}
+	return e, true, nil
 }
 
-// process calls the processor, turning a panic into an error.
+// completeExpansion records the result. A row that is already finished is left
+// as it is; any other failure falls back to failing the expansion.
+func completeExpansion(ctx context.Context, deps ExpansionDeps, log *slog.Logger, id int64, url string) error {
+	err := store.CompleteExpansion(ctx, deps.DB, id, url)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, store.ErrExpansionFinished):
+		log.Info("expansion job: the expansion was already finished, result not recorded")
+		return nil
+	}
+	log.Error("expansion job: could not record the result", "err", err)
+	return failExpansion(ctx, deps, log, id, store.ExpansionFailedDetail)
+}
+
+// failExpansion records a failure unless the expansion is already finished.
+func failExpansion(ctx context.Context, deps ExpansionDeps, log *slog.Logger, id int64, detail string) error {
+	err := store.FailExpansion(ctx, deps.DB, id, detail)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, store.ErrExpansionFinished):
+		log.Info("expansion job: the expansion was already finished, failure not recorded")
+		return nil
+	}
+	log.Error("expansion job: could not record the failure", "err", err)
+	return fmt.Errorf("fail expansion %d: %w", id, err)
+}
+
+// logFailure logs the real error of a failed generation: its type, its text and,
+// for a reader-facing error that hides one (a failed write), the cause. Never
+// the document, the selection or the question.
+func logFailure(log *slog.Logger, err error) {
+	attrs := []any{"err", err, "type", fmt.Sprintf("%T", err)}
+	var ee *expansion.Error
+	if errors.As(err, &ee) {
+		if cause := errors.Unwrap(ee); cause != nil {
+			attrs = append(attrs, "cause", cause.Error(), "cause_type", fmt.Sprintf("%T", cause))
+		}
+	}
+	log.Error("expansion job failed", attrs...)
+}
+
+// process calls the processor, turning a panic into an error and logging its
+// stack.
 func process(ctx context.Context, p ExpansionProcessor, e *store.Expansion) (url string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			// The panic value is not logged by the caller (it could quote
-			// the document); log it here without the expansion's text.
-			slog.Error("expansion job: panic in processor", "expansion_id", e.ID, "panic", fmt.Sprint(r))
+			// The expansion's text is not logged; a panic value rarely quotes it.
+			slog.Error("expansion job: panic in processor", "expansion_id", e.ID, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
 			url, err = "", fmt.Errorf("panic: %v", r)
 		}
 	}()
@@ -186,6 +288,6 @@ func failureDetail(err error) string {
 	case errors.As(err, &xe):
 		return msgGenerationFailed
 	default:
-		return msgExpansionFailed
+		return store.ExpansionFailedDetail
 	}
 }

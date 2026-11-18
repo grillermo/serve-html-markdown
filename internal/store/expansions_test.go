@@ -558,3 +558,107 @@ func TestReclaimExpansionOnlyTakesStaleProcessingRows(t *testing.T) {
 		t.Fatal("a failed row is never reclaimed")
 	}
 }
+
+func TestTerminalWritesNeverOverwriteAFinishedExpansion(t *testing.T) {
+	pool := testdb.New(t)
+	clock(t, t0)
+	u := newExpansionUser(t, pool, "e@x.com")
+
+	done := newExpansion(t, pool, u.ID)
+	must(t, store.CompleteExpansion(ctx, pool, done.ID, "/done.html"))
+	if err := store.FailExpansion(ctx, pool, done.ID, "late"); !errors.Is(err, store.ErrExpansionFinished) {
+		t.Fatalf("late Fail: %v", err)
+	}
+	if err := store.CompleteExpansion(ctx, pool, done.ID, "/other.html"); !errors.Is(err, store.ErrExpansionFinished) {
+		t.Fatalf("second Complete: %v", err)
+	}
+	if err := store.SetExpansionURL(ctx, pool, done.ID, "/other.html"); !errors.Is(err, store.ErrExpansionFinished) {
+		t.Fatalf("late SetExpansionURL: %v", err)
+	}
+	got, err := store.FindExpansion(ctx, pool, done.ID)
+	must(t, err)
+	if got.Status != "completed" || *got.URL != "/done.html" || got.ErrorDetail != nil {
+		t.Fatalf("completed row was overwritten: %+v", got)
+	}
+
+	bad := newExpansion(t, pool, u.ID)
+	must(t, store.FailExpansion(ctx, pool, bad.ID, "Generation failed."))
+	if err := store.CompleteExpansion(ctx, pool, bad.ID, "/late.html"); !errors.Is(err, store.ErrExpansionFinished) {
+		t.Fatalf("late Complete: %v", err)
+	}
+	got, err = store.FindExpansion(ctx, pool, bad.ID)
+	must(t, err)
+	if got.Status != "failed" || got.URL != nil || *got.ErrorDetail != "Generation failed." || got.Timings["completed"] != 0 {
+		t.Fatalf("failed row was overwritten: %+v", got)
+	}
+	if err := store.SetExpansionURL(ctx, pool, 999, "/x"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetExpansionURL missing: %v", err)
+	}
+}
+
+func TestSetExpansionURLKeepsTheStatus(t *testing.T) {
+	pool := testdb.New(t)
+	clock(t, t0)
+	u := newExpansionUser(t, pool, "e@x.com")
+	e := newExpansion(t, pool, u.ID)
+	_, err := store.ClaimExpansion(ctx, pool, e.ID)
+	must(t, err)
+	must(t, store.SetExpansionURL(ctx, pool, e.ID, "/n--v2.md#expansion-anchor"))
+	got, err := store.FindExpansion(ctx, pool, e.ID)
+	must(t, err)
+	if got.Status != "processing" || got.URL == nil || *got.URL != "/n--v2.md#expansion-anchor" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestFailStaleExpansions(t *testing.T) {
+	pool := testdb.New(t)
+	advance := clock(t, t0)
+	u := newExpansionUser(t, pool, "e@x.com")
+	stale := 40 * time.Minute
+
+	pending := newExpansion(t, pool, u.ID)
+	processing := newExpansion(t, pool, u.ID)
+	_, err := store.ClaimExpansion(ctx, pool, processing.ID)
+	must(t, err)
+	withURL := newExpansion(t, pool, u.ID)
+	must(t, store.SetExpansionURL(ctx, pool, withURL.ID, "/kept.html"))
+	finished := newExpansion(t, pool, u.ID)
+	must(t, store.CompleteExpansion(ctx, pool, finished.ID, "/done.html"))
+
+	advance(stale - time.Second)
+	n, err := store.FailStaleExpansions(ctx, pool, stale)
+	must(t, err)
+	if n != 0 {
+		t.Fatalf("nothing is stale yet, swept %d", n)
+	}
+	recent := newExpansion(t, pool, u.ID) // created later, so younger
+	advance(2 * time.Second)
+	n, err = store.FailStaleExpansions(ctx, pool, stale)
+	must(t, err)
+	if n != 3 {
+		t.Fatalf("swept %d, want 3", n)
+	}
+	for _, id := range []int64{pending.ID, processing.ID} {
+		got, err := store.FindExpansion(ctx, pool, id)
+		must(t, err)
+		if got.Status != "failed" || got.ErrorDetail == nil || *got.ErrorDetail != "Expansion failed." {
+			t.Errorf("stale row %d: %+v", id, got)
+		}
+	}
+	got, err := store.FindExpansion(ctx, pool, withURL.ID)
+	must(t, err)
+	if got.Status != "completed" || *got.URL != "/kept.html" || got.ErrorDetail != nil {
+		t.Errorf("a row with a url completes with it: %+v", got)
+	}
+	for id, want := range map[int64]string{finished.ID: "completed", recent.ID: "pending"} {
+		got, err := store.FindExpansion(ctx, pool, id)
+		must(t, err)
+		if got.Status != want {
+			t.Errorf("row %d: status %q, want %q", id, got.Status, want)
+		}
+	}
+	if n, err = store.FailStaleExpansions(ctx, pool, stale); err != nil || n != 0 {
+		t.Errorf("second sweep: %d %v", n, err)
+	}
+}

@@ -49,22 +49,74 @@ func TestRunHasNoStdin(t *testing.T) {
 }
 
 func TestSafeEnvAllowlist(t *testing.T) {
-	environ := []string{
+	allowed := []string{
 		"PATH=/usr/bin", "HOME=/home/u", "USER=u", "LOGNAME=u", "SHELL=/bin/zsh", "LANG=en_US.UTF-8",
 		"LC_ALL=C", "LC_CTYPE=UTF-8", "TERM=xterm", "TMPDIR=/tmp", "TZ=UTC", "XDG_CONFIG_HOME=/c", "XDG_CACHE_HOME=/d",
 		"SSL_CERT_FILE=/f", "SSL_CERT_DIR=/d", "HTTP_PROXY=p", "HTTPS_PROXY=p", "NO_PROXY=n", "ALL_PROXY=p",
 		"http_proxy=p", "https_proxy=p", "no_proxy=n", "all_proxy=p",
+		// what yt-dlp and the runtimes behind it read
+		"REQUESTS_CA_BUNDLE=/b", "CURL_CA_BUNDLE=/b", "NODE_EXTRA_CA_CERTS=/b", "DENO_DIR=/d", "DENO_INSTALL=/d",
+		"YTDLP_NO_UPDATE=1", "YT_DLP_X=1", "PYTHONPATH=/p", "PYTHONHOME=/h", "PYTHONUSERBASE=/u", "PYTHONIOENCODING=utf-8",
+		"VIRTUAL_ENV=/v",
+	}
+	denied := []string{
 		"DATABASE_PASSWORD=s", "DATABASE_URL=u", "SECRET_KEY_BASE=s", "API_TOKEN=t", "SLACK_TOKEN=s",
 		"YOUTUBE_CLIENT_SECRET=y", "RULINKY_TOKEN=r", "OPENAI_API_KEY=o", "EXPANSION_LLM_API_KEY=k", "ADMIN_PASSWORD=a",
-		"PATHOLOGICAL=1", "LCX=1", "XDG=1", "malformed", "=novalue", "HOME_EXTRA=1", "path=lower",
+		"ANTHROPIC_API_KEY=a", "AWS_SECRET_ACCESS_KEY=a",
+		"PATHOLOGICAL=1", "LCX=1", "XDG=1", "YTDL=1", "YT_DLPX=1", "NOPYTHON=1", "malformed", "=novalue", "HOME_EXTRA=1", "path=lower",
+	}
+	var environ []string
+	for i := 0; i < len(allowed) || i < len(denied); i++ { // interleave, to check the order is kept
+		if i < len(denied) {
+			environ = append(environ, denied[i])
+		}
+		if i < len(allowed) {
+			environ = append(environ, allowed[i])
+		}
 	}
 	got := execx.SafeEnv(environ)
-	want := environ[:23]
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Errorf("env = %q\nwant  %q", got, want)
+	if fmt.Sprint(got) != fmt.Sprint(allowed) {
+		t.Errorf("env = %q\nwant  %q", got, allowed)
 	}
 	if execx.SafeEnv(nil) != nil {
 		t.Error("nil environment should stay empty")
+	}
+}
+
+func TestSafeEnvExtra(t *testing.T) {
+	environ := []string{"PATH=/bin", "FOO=1", "FOO_BAR=2", "FOOD=3", "BAZ_A=4", "BAZ_B=5", "BAZ=6", "DATABASE_URL=u", "SECRET_KEY_BASE=s"}
+	got := execx.SafeEnv(environ, "FOO", "BAZ_*", "NOT_SET")
+	if want := []string{"PATH=/bin", "FOO=1", "BAZ_A=4", "BAZ_B=5"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("env = %q, want %q", got, want)
+	}
+	// a bare "*" or an empty entry never opens the whole environment
+	got = execx.SafeEnv(environ, "*", "")
+	if want := []string{"PATH=/bin"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("env = %q, want %q", got, want)
+	}
+}
+
+func TestRunExtraEnv(t *testing.T) {
+	t.Setenv("SHM_EXTRA_ONE", "visible")
+	t.Setenv("SHM_EXTRA_TWO", "visible2")
+	t.Setenv("SHM_OTHER", "hidden")
+	t.Setenv("DATABASE_PASSWORD", "hidden")
+	out, _, err := execx.Run(context.Background(), []string{"env"}, execx.Options{ExtraEnv: []string{"SHM_EXTRA_*", "NOT_THERE"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"SHM_EXTRA_ONE=visible", "SHM_EXTRA_TWO=visible2"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("missing %s in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(string(out), "hidden") {
+		t.Errorf("leaked:\n%s", out)
+	}
+	// Env wins over ExtraEnv.
+	out, _, err = execx.Run(context.Background(), []string{"env"}, execx.Options{Env: []string{"A=1"}, ExtraEnv: []string{"SHM_EXTRA_*"}})
+	if err != nil || strings.TrimSpace(string(out)) != "A=1" {
+		t.Errorf("out = %q, err = %v", out, err)
 	}
 }
 
@@ -173,17 +225,31 @@ func TestRunArgumentListTooLong(t *testing.T) {
 	}
 }
 
-// A grandchild that keeps the pipes open must not hold Run forever once the
-// process itself is done and killed.
-func TestRunDoesNotWaitForLingeringPipeHolders(t *testing.T) {
+// A process the command leaves behind in its group (a daemon, an ffmpeg) is
+// killed once the command is done, and a grandchild that keeps the pipes open
+// does not hold Run forever.
+func TestRunKillsLeftoverGroupMembersAndDoesNotHang(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	start := time.Now()
-	out, _, err := execx.Run(context.Background(), []string{"sh", "-c", "(sleep 30 &) ; echo done"}, execx.Options{Timeout: 10 * time.Second})
+	out, _, err := execx.Run(context.Background(), []string{"sh", "-c", `sleep 30 & echo $! > "$1"; echo done`, "sh", pidFile}, execx.Options{Timeout: 10 * time.Second})
 	if err != nil || strings.TrimSpace(string(out)) != "done" {
 		t.Fatalf("out = %q, err = %v", out, err)
 	}
 	if time.Since(start) > 8*time.Second {
 		t.Errorf("took %v", time.Since(start))
 	}
+	waitForExit(t, pidFile)
+}
+
+// Same for a failing command, and for one that detaches its output.
+func TestRunKillsLeftoversOfAFailedCommand(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	_, _, err := execx.Run(context.Background(), []string{"sh", "-c", `sleep 30 >/dev/null 2>&1 & echo $! > "$1"; exit 3`, "sh", pidFile}, execx.Options{})
+	var exitErr *execx.ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 3 {
+		t.Fatalf("err = %v", err)
+	}
+	waitForExit(t, pidFile)
 }
 
 func waitForExit(t *testing.T, pidFile string) {

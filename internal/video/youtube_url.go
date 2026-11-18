@@ -27,8 +27,8 @@ var (
 // or from an /attribution_link whose u= is one of those paths on
 // www.youtube.com.
 //
-// URLs Ruby's URI.parse refuses are refused too (see uriSafe for the rules and
-// the one known gap).
+// URLs Ruby's URI.parse refuses are refused too; parseRubyURI lists the Ruby
+// behaviours replicated (including tab, CR and LF being deleted from the query).
 func YoutubeVideoID(rawURL string) string {
 	u, ok := parseRubyURI(WithScheme(rubyStrip(rawURL)))
 	if !ok {

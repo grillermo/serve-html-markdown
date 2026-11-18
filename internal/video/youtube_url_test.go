@@ -131,6 +131,31 @@ func TestYoutubeVideoID(t *testing.T) {
 		{"https://www.youtube.com/watch?v=" + id + "#", true},
 		{"https://www.youtube.com/watch?v=" + id + "\t", true}, // trailing whitespace is stripped first
 	}
+	// uri 1.1.1 deletes tab, CR and LF from a query, so they neither hide nor break an id
+	for _, c := range []struct {
+		url  string
+		want bool
+	}{
+		{"https://www.youtube.com/watch?v=KpILHX2D-A\nA", true},
+		{"https://www.youtube.com/watch?v=KpILHX2D-A\rA", true},
+		{"https://www.youtube.com/watch?v=KpILHX2D-A\tA", true},
+		{"https://www.youtube.com/watch?v=KpILHX2D-A\r\nA", true},
+		{"https://www.youtube.com/watch?v=\nKpILHX2D-AA", true},
+		{"https://www.youtube.com/watch?\nv=KpILHX2D-AA", true},
+		{"https://www.youtube.com/watch?v=KpILHX2D%4\n1A", false}, // %41 is "A": KpILHX2DAA has 10 characters
+		{"https://www.youtube.com/watch?v=KpILHX2D-A%4\n1", true},
+		{"https://www.youtube.com/watch?v=KpILHX2D-A%\n41", true},
+		{"https://www.youtube.com/watch?v=KpILHX2D-A%\n\nzz", false}, // still a bad escape once the line breaks are gone
+		{"https://www.youtube.com/watch?v=KpILHX2D-A%\nzz", false},
+		{"https://youtu.be/KpILHX2D-AA?si=a\nb", true},
+		{"https://www.youtube.com/attribution_link?a=xyz&u=%2Fwatch%3Fv%3DKpILHX2D-A%0AA%26feature%3Dshare", true}, // the decoded LF lands in the re-parsed query and is deleted
+		{"https://www.youtube.com/attribution_link?u=%2Fwatch%3Fv%3DKpILHX2D-\nAA", true},
+		{"https://www.youtube.com/attribution_link?u=/shorts/KpILHX2D\n-AA", true},
+		{"https://www.youtube.com/attribution_link?u\n=%2Fwatch%3Fv%3DKpILHX2D-AA", true},
+		{"https://www.youtube.com/watch\n?v=KpILHX2D-AA", false}, // a line break in the path is refused
+	} {
+		cases = append(cases, c)
+	}
 	for _, c := range cases {
 		want := ""
 		if c.want {

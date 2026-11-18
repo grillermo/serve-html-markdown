@@ -39,19 +39,53 @@ var (
 	egoTopFrameSites = []string{"", "https://youtube.com"}
 )
 
+// EgoErrorKind tells an EgoCookiesError's cause apart, so a job can decide what
+// it means (see EgoCookiesError.Kind).
+type EgoErrorKind int
+
+const (
+	// KindOther is everything not listed below: the sqlite3 query or the copy of
+	// the database failed, the key could not be derived, the file could not be
+	// written, or the platform is not macOS.
+	KindOther EgoErrorKind = iota
+	// KindNotFound: the ego lite cookie database does not exist (ego lite is not
+	// installed or never run).
+	KindNotFound
+	// KindNoCookies: the database holds no usable YouTube cookies (not signed in,
+	// or none could be decrypted).
+	KindNoCookies
+	// KindKeychain: the "ego safe storage" Keychain item could not be read
+	// (missing, or /usr/bin/security is not allowed to read it).
+	KindKeychain
+	// KindTimeout: security or sqlite3 did not answer within 10 s (typically a
+	// Keychain prompt waiting for approval).
+	KindTimeout
+)
+
 // EgoCookiesError is Ruby's EgoCookies::Error. Its message is fixed text: never
 // cookie contents, the Keychain password or the output of the commands. Err is
-// the underlying cause, if any (for example a timeout or a cancelled context).
+// the underlying cause, if any (for example a timeout). A cancelled or expired
+// context is not reported with this type: Export returns ctx.Err() itself.
 type EgoCookiesError struct {
 	Message string
 	Err     error
+	kind    EgoErrorKind
 }
 
 func (e *EgoCookiesError) Error() string { return e.Message }
 func (e *EgoCookiesError) Unwrap() error { return e.Err }
 
-func egoError(cause error, format string, args ...any) error {
-	return &EgoCookiesError{Message: fmt.Sprintf(format, args...), Err: cause}
+// Kind says what went wrong.
+func (e *EgoCookiesError) Kind() EgoErrorKind { return e.kind }
+
+// IsEgoKind reports whether err is (or wraps) an *EgoCookiesError of kind.
+func IsEgoKind(err error, kind EgoErrorKind) bool {
+	var ee *EgoCookiesError
+	return errors.As(err, &ee) && ee.kind == kind
+}
+
+func egoError(kind EgoErrorKind, cause error, format string, args ...any) error {
+	return &EgoCookiesError{Message: fmt.Sprintf(format, args...), Err: cause, kind: kind}
 }
 
 // EgoCookies exports the YouTube/Google cookies of the ego lite browser (a
@@ -63,8 +97,10 @@ func egoError(cause error, format string, args ...any) error {
 // Reading the key needs the "ego safe storage" Keychain item to allow
 // /usr/bin/security ("Always Allow" on the first prompt). The database is
 // copied to a private temporary directory first (the browser keeps it locked),
-// and the Keychain password and the derived key never leave this process:
-// they are not logged, not put in an error and are cleared after use.
+// and the Keychain password and the derived key never leave this process: they
+// are not logged and not put in an error, and their buffers are wiped after use
+// on a best-effort basis (Go may have copied them, for instance into the string
+// handed to PBKDF2).
 type EgoCookies struct {
 	// DBPath is the browser's Cookies database.
 	DBPath string
@@ -93,8 +129,11 @@ func NewEgoCookies() *EgoCookies {
 // tab, a line break or a NUL (a Netscape line cannot carry them; Ruby would
 // write a corrupt line).
 func (c *EgoCookies) Export(ctx context.Context, destPath string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(c.DBPath); c.DBPath == "" || err != nil {
-		return "", egoError(nil, "ego lite cookie database not found")
+		return "", egoError(KindNotFound, nil, "ego lite cookie database not found")
 	}
 	run := c.Runner
 	if run == nil {
@@ -103,7 +142,7 @@ func (c *EgoCookies) Export(ctx context.Context, destPath string) (string, error
 			goos = runtime.GOOS
 		}
 		if goos != "darwin" {
-			return "", egoError(nil, "ego lite cookies can only be read on macOS")
+			return "", egoError(KindOther, nil, "ego lite cookies can only be read on macOS")
 		}
 		run = execx.Run
 	}
@@ -111,12 +150,19 @@ func (c *EgoCookies) Export(ctx context.Context, destPath string) (string, error
 	// The browser keeps the database locked while it runs, so read a copy.
 	dir, err := os.MkdirTemp("", "ego-cookies-")
 	if err != nil {
-		return "", egoError(err, "could not read the ego lite cookie database")
+		return "", egoError(KindOther, err, "could not read the ego lite cookie database")
 	}
 	defer os.RemoveAll(dir)
 	db := filepath.Join(dir, "Cookies")
 	if err := copyPrivate(c.DBPath, db); err != nil {
-		return "", egoError(err, "could not read the ego lite cookie database")
+		return "", egoError(KindOther, err, "could not read the ego lite cookie database")
+	}
+	// A running browser may keep recent cookies in the write-ahead log: copy it
+	// (and its shared-memory index) beside the copy when there is one.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := copyPrivate(c.DBPath+suffix, db+suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", egoError(KindOther, err, "could not read the ego lite cookie database")
+		}
 	}
 
 	password, err := keychainPassword(ctx, run)
@@ -126,7 +172,7 @@ func (c *EgoCookies) Export(ctx context.Context, destPath string) (string, error
 	key, err := pbkdf2.Key(sha1.New, string(password), []byte("saltysalt"), 1003, 16)
 	clear(password)
 	if err != nil {
-		return "", egoError(err, "could not derive the ego lite cookie key")
+		return "", egoError(KindOther, err, "could not derive the ego lite cookie key")
 	}
 	defer clear(key)
 
@@ -151,10 +197,10 @@ func (c *EgoCookies) Export(ctx context.Context, destPath string) (string, error
 		}
 	}
 	if lines == 0 {
-		return "", egoError(nil, "ego lite has no YouTube cookies")
+		return "", egoError(KindNoCookies, nil, "ego lite has no YouTube cookies")
 	}
 	if err := writePrivate(destPath, content.Bytes()); err != nil {
-		return "", egoError(err, "could not write the cookies file")
+		return "", egoError(KindOther, err, "could not write the cookies file")
 	}
 	return destPath, nil
 }
@@ -166,7 +212,7 @@ func keychainPassword(ctx context.Context, run execx.Runner) ([]byte, error) {
 	stdout, _, err := run(ctx, argv, execx.Options{Timeout: egoCommandTimeout, MaxStdout: maxEgoOutput})
 	if err != nil {
 		clear(stdout)
-		return nil, egoRunError(err, argv[0], fmt.Sprintf("could not read the %q Keychain item", egoKeychainService))
+		return nil, egoRunError(ctx, err, argv[0], KindKeychain, fmt.Sprintf("could not read the %q Keychain item", egoKeychainService))
 	}
 	// String#chomp: one trailing "\n", "\r\n" or "\r".
 	switch {
@@ -182,17 +228,22 @@ func queryDB(ctx context.Context, run execx.Runner, db, sql string) ([]byte, err
 	argv := []string{"/usr/bin/sqlite3", "-readonly", "-separator", "\t", db, sql}
 	stdout, _, err := run(ctx, argv, execx.Options{Timeout: egoCommandTimeout, MaxStdout: maxEgoOutput})
 	if err != nil {
-		return nil, egoRunError(err, argv[0], "could not read the ego lite cookie database")
+		return nil, egoRunError(ctx, err, argv[0], KindOther, "could not read the ego lite cookie database")
 	}
 	return stdout, nil
 }
 
-// egoRunError names the failure of one command without any of its output.
-func egoRunError(err error, command, message string) error {
-	if errors.Is(err, execx.ErrTimedOut) {
-		return egoError(err, "%s timed out (Keychain prompt waiting for approval?)", command)
+// egoRunError names the failure of one command without any of its output. A
+// context that is done wins: its error is returned as it is, so callers can
+// tell a shutdown from a real failure.
+func egoRunError(ctx context.Context, err error, command string, kind EgoErrorKind, message string) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
 	}
-	return egoError(err, "%s", message)
+	if errors.Is(err, execx.ErrTimedOut) {
+		return egoError(KindTimeout, err, "%s timed out (Keychain prompt waiting for approval?)", command)
+	}
+	return egoError(kind, err, "%s", message)
 }
 
 // cookiesSQL is Ruby's query: the YouTube and Google cookies, unpartitioned

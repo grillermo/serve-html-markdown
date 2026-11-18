@@ -13,22 +13,38 @@ type rubyURI struct {
 	query string // raw, without the "?"
 }
 
-// parseRubyURI parses raw like Ruby's URI.parse and returns the host, path and
-// query, or false where Ruby raises URI::InvalidURIError (or a subclass). raw
-// must already have a scheme (see WithScheme).
+// queryJunk removes what uri 1.1.1's Generic#query= deletes (v.delete!("\t\r\n")):
+// tab, CR and LF vanish from a query, and only then is it checked for bad escapes.
+var queryJunk = strings.NewReplacer("\t", "", "\r", "", "\n", "")
+
+// parseRubyURI parses raw like Ruby's URI.parse (uri 1.1.1, the RFC 3986
+// parser) and returns the host, path and query, or false where Ruby raises
+// URI::InvalidURIError (or a subclass). raw must already have a scheme (see
+// WithScheme).
+//
+// The Ruby behaviours replicated here, each probed against Ruby 3.4.8:
+//   - uriSafe: which characters each part refuses (non-ASCII everywhere; space,
+//     control characters and |<>\^`{}[]" outside the query; "%" not followed by
+//     two hex digits, though the query only refuses "%" plus two non-hex ones;
+//     a second "#" in the fragment).
+//   - tab, CR and LF are deleted from the query before it is checked and
+//     returned, so "v=KpILHX2D-A<LF>A" is "v=KpILHX2D-AA" and "%4<LF>1" is a
+//     valid "%41".
+//   - URI::FTP drops the leading "/" of the path (an encoded leading "%2F"
+//     becomes "/") and cuts it at ";type=".
+//   - URI::LDAP/LDAPS refuse a fragment, URI::MailTo needs a query (these raise
+//     in Ruby, where the services do not rescue them: Go reports "no match").
 //
 // Only the base (scheme, authority, path) goes through net/url; the query and
 // the fragment are validated by uriSafe and split off by hand, because net/url
-// refuses control characters in a query that Ruby accepts. The schemes Ruby
-// gives their own class are mirrored: URI::FTP drops the leading "/" of the
-// path (an encoded leading "%2F" becomes "/") and cuts it at ";type=",
-// URI::LDAP refuses a fragment, and URI::MailTo needs a query.
+// refuses control characters in a query that Ruby accepts.
 func parseRubyURI(raw string) (rubyURI, bool) {
 	if !uriSafe(raw) {
 		return rubyURI{}, false
 	}
 	rest, _, hasFragment := strings.Cut(raw, "#")
 	base, query, hasQuery := strings.Cut(rest, "?")
+	query = queryJunk.Replace(query)
 	scheme, _, _ := strings.Cut(base, "://")
 	switch strings.ToLower(scheme) {
 	case "ldap", "ldaps":
@@ -85,7 +101,7 @@ func uriSafe(s string) bool {
 	if !strictPart(base) || (hasFragment && (strings.Contains(fragment, "#") || !strictPart(fragment))) {
 		return false
 	}
-	return !hasQuery || !badQueryPct.MatchString(query)
+	return !hasQuery || !badQueryPct.MatchString(queryJunk.Replace(query))
 }
 
 var pctEscape = regexp.MustCompile(`%[0-9A-Fa-f]{2}`)

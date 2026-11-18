@@ -42,6 +42,12 @@ type YtdlpError struct {
 func (e *YtdlpError) Error() string { return e.Message }
 func (e *YtdlpError) Unwrap() error { return e.Err }
 
+// ErrInvalidURL is returned, before anything runs, for a URL yt-dlp must not be
+// given: not a plain http(s) link, or not one this service ever downloads (see
+// YtdlpClient.Download and FetchAutoSubs). Its text is fixed; it never repeats
+// the URL. It is a shared value: never modify it.
+var ErrInvalidURL = errors.New("yt-dlp: url not allowed")
+
 // YtdlpClient runs yt-dlp. The zero value is not usable; see NewYtdlpClient.
 type YtdlpClient struct {
 	// Bin is the yt-dlp executable (config YTDLP_BIN).
@@ -50,11 +56,31 @@ type YtdlpClient struct {
 	Runner execx.Runner
 	// DownloadTimeout and SubsTimeout bound each command.
 	DownloadTimeout, SubsTimeout time.Duration
+	// ValidateURL is an extra check every URL passes before the shape rules of
+	// Download and FetchAutoSubs; nil skips it. NewYtdlpClient sets it to
+	// HTTPURLOnly. The http(s)-only rule and those shape rules are always applied.
+	ValidateURL func(string) error
 }
 
 // NewYtdlpClient returns a client for the yt-dlp at bin that really runs it.
 func NewYtdlpClient(bin string) *YtdlpClient {
-	return &YtdlpClient{Bin: bin, Runner: execx.Run, DownloadTimeout: DefaultDownloadTimeout, SubsTimeout: DefaultSubsTimeout}
+	return &YtdlpClient{Bin: bin, Runner: execx.Run, DownloadTimeout: DefaultDownloadTimeout, SubsTimeout: DefaultSubsTimeout, ValidateURL: HTTPURLOnly}
+}
+
+// HTTPURLOnly accepts only plain "http://" and "https://" URLs (lowercase
+// scheme) made of printable ASCII without spaces, so no "ytsearch:" prefix, no
+// file:// or other scheme, no option, no control character. It returns
+// ErrInvalidURL otherwise.
+func HTTPURLOnly(url string) error {
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+		return ErrInvalidURL
+	}
+	for i := 0; i < len(url); i++ {
+		if url[i] <= ' ' || url[i] >= 0x7f {
+			return ErrInvalidURL
+		}
+	}
+	return nil
 }
 
 // Downloaded is what Download found out: the file yt-dlp wrote and the video's
@@ -65,11 +91,24 @@ type Downloaded struct {
 }
 
 // Download fetches the video at url into destDir (created, mode 0700, when
-// missing) as "<id>.<ext>", preferring mp4, and returns the path yt-dlp printed
-// and the title. It ports YtdlpClient#download, command line included.
+// missing) as "<id>.<ext>", preferring mp4, and returns the absolute path yt-dlp
+// printed and the title. It ports YtdlpClient#download, command line included.
+// destDir may be relative: it is made absolute first (yt-dlp runs inside it).
+//
+// The URL must be what the ingest job passes in Ruby, a tweet in its canonical
+// form (what NormalizeTwitterURL returns for it), or else a YouTube link
+// (YoutubeVideoID finds an id in it); anything else, ytsearch: prefixes and
+// other schemes included, is refused with ErrInvalidURL before yt-dlp starts.
 func (c *YtdlpClient) Download(ctx context.Context, url, destDir string) (Downloaded, error) {
-	if err := checkURL(url); err != nil {
+	if err := c.checkURL(url, func(u string) bool {
+		canonical, err := NormalizeTwitterURL(u)
+		return (err == nil && canonical == u) || YoutubeVideoID(u) != ""
+	}); err != nil {
 		return Downloaded{}, err
+	}
+	destDir, err := filepath.Abs(destDir)
+	if err != nil {
+		return Downloaded{}, fmt.Errorf("yt-dlp download: %w", err)
 	}
 	argv := []string{c.Bin,
 		"-f", "best[ext=mp4]/best",
@@ -86,18 +125,38 @@ func (c *YtdlpClient) Download(ctx context.Context, url, destDir string) (Downlo
 	if !ok || path == "" {
 		return Downloaded{}, &YtdlpError{Message: "yt-dlp produced no file"}
 	}
+	if !filepath.IsAbs(path) { // relative to where yt-dlp ran
+		path = filepath.Join(destDir, path)
+	}
 	title, _ := parsePrefixed(stdout, "TW2WL_TITLE:")
 	return Downloaded{Path: path, Title: title}, nil
 }
 
 // FetchAutoSubs fetches the English captions of the YouTube video at youtubeURL
 // into destDir (no media; uploaded captions win over auto-captions) and returns
-// the path of the first "*.vtt" in destDir by name, or "" when there is none.
-// A non-empty cookies is the path of a Netscape cookies file for yt-dlp. It
-// ports YtdlpClient#fetch_auto_subs.
+// the absolute path of the first "*.vtt" in destDir by name, or "" when there
+// is none. A non-empty cookies is the path of a Netscape cookies file for
+// yt-dlp. destDir and cookies may be relative: both are made absolute first
+// (yt-dlp runs inside destDir). It ports YtdlpClient#fetch_auto_subs.
+//
+// The URL must be the one the captions job passes in Ruby, the watch URL of a
+// video id (YoutubeWatchURL), exactly; anything else is refused with
+// ErrInvalidURL before yt-dlp starts.
 func (c *YtdlpClient) FetchAutoSubs(ctx context.Context, youtubeURL, destDir, cookies string) (string, error) {
-	if err := checkURL(youtubeURL); err != nil {
+	if err := c.checkURL(youtubeURL, func(u string) bool {
+		id := YoutubeVideoID(u)
+		return id != "" && YoutubeWatchURL(id) == u
+	}); err != nil {
 		return "", err
+	}
+	destDir, err := filepath.Abs(destDir)
+	if err != nil {
+		return "", fmt.Errorf("yt-dlp subs fetch: %w", err)
+	}
+	if cookies != "" {
+		if cookies, err = filepath.Abs(cookies); err != nil {
+			return "", fmt.Errorf("yt-dlp subs fetch: %w", err)
+		}
 	}
 	argv := []string{c.Bin,
 		"--write-subs",
@@ -145,11 +204,20 @@ func (c *YtdlpClient) run(ctx context.Context, what string, argv []string, dir s
 	return nil, nil, fmt.Errorf("yt-dlp %s: %w", what, err)
 }
 
-// checkURL refuses what yt-dlp would take for an option instead of the URL.
-// (The command line stays exactly Ruby's, without a "--" separator.)
-func checkURL(url string) error {
+// checkURL refuses what yt-dlp would take for an option instead of the URL
+// (the command line stays exactly Ruby's, without a "--" separator), then
+// applies ValidateURL, the always-on http(s)-only rule and the method's shape rule.
+func (c *YtdlpClient) checkURL(url string, shape func(string) bool) error {
 	if url == "" || strings.HasPrefix(url, "-") {
-		return errors.New("yt-dlp: refusing an empty or option-like url")
+		return ErrInvalidURL
+	}
+	if c.ValidateURL != nil {
+		if err := c.ValidateURL(url); err != nil {
+			return ErrInvalidURL
+		}
+	}
+	if HTTPURLOnly(url) != nil || !shape(url) {
+		return ErrInvalidURL
 	}
 	return nil
 }

@@ -332,25 +332,250 @@ func TestEgoCookiesFileMode(t *testing.T) {
 func TestEgoCookiesCommandFailures(t *testing.T) {
 	dir, db := emptyDB(t)
 	dest := filepath.Join(dir, "cookies.txt")
-	run := func(err error) error {
+	run := func(ctx context.Context, err error) error {
 		exp := &video.EgoCookies{DBPath: db, Runner: func(context.Context, []string, execx.Options) ([]byte, []byte, error) {
 			return nil, nil, err
 		}}
-		_, got := exp.Export(context.Background(), dest)
+		_, got := exp.Export(ctx, dest)
 		return got
 	}
 	timeout := fmt.Errorf("/usr/bin/security: %w", execx.ErrTimedOut)
-	got := run(timeout)
-	if got == nil || got.Error() != "/usr/bin/security timed out (Keychain prompt waiting for approval?)" || !errors.Is(got, execx.ErrTimedOut) {
+	got := run(context.Background(), timeout)
+	if got == nil || got.Error() != "/usr/bin/security timed out (Keychain prompt waiting for approval?)" || !errors.Is(got, execx.ErrTimedOut) || !video.IsEgoKind(got, video.KindTimeout) {
 		t.Errorf("timeout: %v", got)
 	}
+	// the binary is missing: still the clean error type
+	missing := &os.PathError{Op: "fork/exec", Path: "/usr/bin/security", Err: os.ErrNotExist}
+	got = run(context.Background(), missing)
 	var ee *video.EgoCookiesError
-	// the binary is missing, or the context is cancelled: still the clean error type
-	for _, cause := range []error{&os.PathError{Op: "fork/exec", Path: "/usr/bin/security", Err: os.ErrNotExist}, context.Canceled} {
-		got = run(cause)
-		if !errors.As(got, &ee) || !errors.Is(got, cause) {
-			t.Errorf("cause %v: err = %v", cause, got)
+	if !errors.As(got, &ee) || !errors.Is(got, missing) || ee.Kind() != video.KindKeychain {
+		t.Errorf("missing binary: %v", got)
+	}
+}
+
+// A context that is done comes back as ctx.Err(), plain, so a shutdown is not
+// mistaken for "no cookies".
+func TestEgoCookiesContextDone(t *testing.T) {
+	dir, db := emptyDB(t)
+	dest := filepath.Join(dir, "cookies.txt")
+	for name, mk := range map[string]func() (context.Context, context.CancelFunc){
+		"cancelled": func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx, cancel
+		},
+		"expired": func() (context.Context, context.CancelFunc) {
+			return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		},
+	} {
+		ctx, cancel := mk()
+		defer cancel()
+		want := ctx.Err()
+		// before anything runs
+		f := newFake(nil)
+		if _, err := f.exporter(db).Export(ctx, dest); err != want {
+			t.Errorf("%s: err = %v, want exactly %v", name, err, want)
 		}
+		if len(f.calls) != 0 {
+			t.Errorf("%s: ran %v", name, f.calls)
+		}
+	}
+	// while a command is running: the runner reports its own failure, the context is what we return
+	for _, runErr := range []error{context.Canceled, &execx.ExitError{Code: -1}, fmt.Errorf("x: %w", execx.ErrTimedOut)} {
+		ctx, cancel := context.WithCancel(context.Background())
+		exp := &video.EgoCookies{DBPath: db, Runner: func(context.Context, []string, execx.Options) ([]byte, []byte, error) {
+			cancel()
+			return nil, nil, runErr
+		}}
+		_, err := exp.Export(ctx, dest)
+		var ee *video.EgoCookiesError
+		if err != context.Canceled || errors.As(err, &ee) {
+			t.Errorf("runner error %v: err = %v (%T)", runErr, err, err)
+		}
+	}
+}
+
+// 9.6 classifies failures by Kind.
+func TestEgoCookiesErrorKinds(t *testing.T) {
+	dir, db := emptyDB(t)
+	dest := filepath.Join(dir, "cookies.txt")
+	kind := func(err error) video.EgoErrorKind {
+		var ee *video.EgoCookiesError
+		if !errors.As(err, &ee) {
+			t.Fatalf("not an EgoCookiesError: %v", err)
+		}
+		return ee.Kind()
+	}
+	_, err := newFake(nil).exporter("/nope").Export(context.Background(), dest)
+	if kind(err) != video.KindNotFound || !video.IsEgoKind(err, video.KindNotFound) || video.IsEgoKind(err, video.KindOther) {
+		t.Errorf("not found: %v", err)
+	}
+	_, err = newFake(nil).exporter(db).Export(context.Background(), dest)
+	if kind(err) != video.KindNoCookies {
+		t.Errorf("no cookies: %v", err)
+	}
+	keychain := &video.EgoCookies{DBPath: db, Runner: func(_ context.Context, argv []string, _ execx.Options) ([]byte, []byte, error) {
+		return nil, nil, &execx.ExitError{Code: 44}
+	}}
+	_, err = keychain.Export(context.Background(), dest)
+	if kind(err) != video.KindKeychain {
+		t.Errorf("keychain: %v", err)
+	}
+	sqlite := &video.EgoCookies{DBPath: db, Runner: func(_ context.Context, argv []string, _ execx.Options) ([]byte, []byte, error) {
+		if strings.HasSuffix(argv[0], "security") {
+			return []byte("pw\n"), nil, nil
+		}
+		return nil, nil, &execx.ExitError{Code: 1}
+	}}
+	_, err = sqlite.Export(context.Background(), dest)
+	if kind(err) != video.KindOther {
+		t.Errorf("sqlite: %v", err)
+	}
+	sqliteTimeout := &video.EgoCookies{DBPath: db, Runner: func(_ context.Context, argv []string, _ execx.Options) ([]byte, []byte, error) {
+		if strings.HasSuffix(argv[0], "security") {
+			return []byte("pw\n"), nil, nil
+		}
+		return nil, nil, fmt.Errorf("sqlite3: %w", execx.ErrTimedOut)
+	}}
+	_, err = sqliteTimeout.Export(context.Background(), dest)
+	if kind(err) != video.KindTimeout {
+		t.Errorf("sqlite timeout: %v", err)
+	}
+	off := &video.EgoCookies{DBPath: db}
+	video.SetEgoGOOS(off, "linux")
+	_, err = off.Export(context.Background(), dest)
+	if kind(err) != video.KindOther {
+		t.Errorf("platform: %v", err)
+	}
+	if video.IsEgoKind(errors.New("other"), video.KindOther) || video.IsEgoKind(nil, video.KindOther) {
+		t.Error("IsEgoKind must be false for other errors")
+	}
+	if video.KindOther != 0 {
+		t.Error("the zero Kind is KindOther")
+	}
+}
+
+// A WAL-mode database whose newest rows are still in the -wal file: the copy
+// takes the sidecars along, or those cookies would be missed.
+func TestEgoCookiesCopiesWALSidecars(t *testing.T) {
+	sqlite, err := exec.LookPath("sqlite3")
+	if err != nil {
+		t.Skip("sqlite3 is not installed: cannot build the fixture database")
+	}
+	dir := t.TempDir()
+	db := filepath.Join(dir, "Cookies")
+	blob := "x'" + hexUpper(encryptCookie(t, egoPassword, true, "from-the-wal")) + "'"
+	// A live connection keeps the log from being checkpointed away, like a running browser.
+	holder := exec.Command(sqlite, db)
+	stdin, err := holder.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { stdin.Close(); _ = holder.Wait() }()
+	fmt.Fprint(stdin, `.output /dev/null
+PRAGMA journal_mode=WAL;
+PRAGMA wal_autocheckpoint=0;
+.output stdout
+CREATE TABLE meta (key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
+INSERT INTO meta VALUES ('version', '24');
+CREATE TABLE cookies (host_key TEXT, top_frame_site_key TEXT, name TEXT, encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER);
+INSERT INTO cookies VALUES ('.youtube.com', '', 'WALCOOKIE', `+blob+`, '/', 0, 1);
+`)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		fi, err := os.Stat(db + "-wal")
+		if err == nil && fi.Size() > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Skip("sqlite3 did not produce a -wal file here")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if fi, _ := os.Stat(db); fi != nil && fi.Size() > 0 {
+		// the main file may hold the (empty) header only; the rows must be in the log
+		if out, _ := exec.Command(sqlite, "-readonly", "file:"+db+"?immutable=1", "SELECT count(*) FROM cookies").CombinedOutput(); strings.TrimSpace(string(out)) == "1" {
+			t.Skip("the rows reached the main file; the fixture does not test the log")
+		}
+	}
+	real := func(ctx context.Context, argv []string, opts execx.Options) ([]byte, []byte, error) {
+		if strings.HasSuffix(argv[0], "security") {
+			return []byte(egoPassword + "\n"), nil, nil
+		}
+		return execx.Run(ctx, append([]string{sqlite}, argv[1:]...), opts)
+	}
+	dest := filepath.Join(dir, "cookies.txt")
+	if _, err := (&video.EgoCookies{DBPath: db, Runner: real}).Export(context.Background(), dest); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	raw, _ := os.ReadFile(dest)
+	if !strings.Contains(string(raw), "WALCOOKIE\tfrom-the-wal") {
+		t.Errorf("the cookie that lives in the -wal file is missing:\n%s", raw)
+	}
+}
+
+// The sidecars are copied privately and removed with the copy.
+func TestEgoCookiesSidecarCopiesArePrivateAndRemoved(t *testing.T) {
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+	dir, db := emptyDB(t)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.WriteFile(db+suffix, []byte("sidecar"+suffix), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	modes := map[string]os.FileMode{}
+	contents := map[string]string{}
+	f := newFake([][]string{{".youtube.com", "SID", "/", "1", "0", "", hexUpper(encryptCookie(t, egoPassword, true, "abc"))}})
+	exp := &video.EgoCookies{DBPath: db, Runner: func(ctx context.Context, argv []string, o execx.Options) ([]byte, []byte, error) {
+		if strings.HasSuffix(argv[0], "sqlite3") && len(modes) == 0 {
+			copyPath := argv[len(argv)-2]
+			for _, suffix := range []string{"", "-wal", "-shm"} {
+				fi, err := os.Stat(copyPath + suffix)
+				if err != nil {
+					t.Errorf("%s was not copied: %v", suffix, err)
+					continue
+				}
+				modes[suffix] = fi.Mode().Perm()
+				raw, _ := os.ReadFile(copyPath + suffix)
+				contents[suffix] = string(raw)
+			}
+		}
+		return f.run(ctx, argv, o)
+	}}
+	if _, err := exp.Export(context.Background(), filepath.Join(dir, "cookies.txt")); err != nil {
+		t.Fatal(err)
+	}
+	for suffix, mode := range modes {
+		if mode != 0o600 {
+			t.Errorf("copy%s mode = %v", suffix, mode)
+		}
+	}
+	if contents["-wal"] != "sidecar-wal" || contents["-shm"] != "sidecar-shm" {
+		t.Errorf("contents = %v", contents)
+	}
+	if left, _ := os.ReadDir(scratch); len(left) != 0 {
+		t.Errorf("left %d entries in the temp dir", len(left))
+	}
+	// without sidecars nothing extra is created
+	for _, suffix := range []string{"-wal", "-shm"} {
+		os.Remove(db + suffix)
+	}
+	seen := false
+	exp.Runner = func(ctx context.Context, argv []string, o execx.Options) ([]byte, []byte, error) {
+		if strings.HasSuffix(argv[0], "sqlite3") {
+			copyPath := argv[len(argv)-2]
+			if _, err := os.Stat(copyPath + "-wal"); err == nil {
+				seen = true
+			}
+		}
+		return f.run(ctx, argv, o)
+	}
+	if _, err := exp.Export(context.Background(), filepath.Join(dir, "cookies.txt")); err != nil || seen {
+		t.Errorf("err = %v, a -wal copy appeared from nothing: %v", err, seen)
 	}
 }
 

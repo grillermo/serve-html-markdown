@@ -135,6 +135,44 @@ cases.concat(vtts.map do |input|
   end
 end)
 
+# Tab, CR and LF are deleted from a URI's query by uri 1.1.1, so they must not hide or
+# break a video id. Appended last so the generated entries above never move.
+NEWLINE_URLS = [
+  "https://www.youtube.com/watch?v=KpILHX2D-A\nA", "https://www.youtube.com/watch?v=KpILHX2D-A\rA",
+  "https://www.youtube.com/watch?v=KpILHX2D-A\tA", "https://www.youtube.com/watch?v=KpILHX2D-A\r\nA",
+  "https://www.youtube.com/watch?v=\nKpILHX2D-AA", "https://www.youtube.com/watch?v=KpILHX2D-AA\n",
+  "https://www.youtube.com/watch?v=KpILHX2D-AA\n&t=5", "https://www.youtube.com/watch?\nv=KpILHX2D-AA",
+  "https://www.youtube.com/watch?v\n=KpILHX2D-AA", "https://www.youtube.com/watch?v=KpILHX2D-AA&\nt=1",
+  "https://www.youtube.com/watch?v=KpILHX2D%4\n1A", "https://www.youtube.com/watch?v=KpILHX2D-A%4\n1",
+  "https://www.youtube.com/watch?v=KpILHX2D-A%\n41", "https://www.youtube.com/watch?v=KpILHX2D-A%\n\nzz",
+  "https://www.youtube.com/watch?v=KpILHX2D-A%\nzz", "https://www.youtube.com/watch?v=%\n\t%",
+  "https://youtu.be/KpILHX2D-AA?si=a\nb", "https://youtu.be/KpILHX2D-A\nA", "https://youtu.be/KpILHX2D-AA?\n",
+  "https://www.youtube.com/attribution_link?a=xyz&u=%2Fwatch%3Fv%3DKpILHX2D-A%0AA%26feature%3Dshare",
+  "https://www.youtube.com/attribution_link?u=%2Fwatch%3Fv%3DKpILHX2D-AA\n",
+  "https://www.youtube.com/attribution_link?u=%2Fwatch%3Fv%3DKpILHX2D-\nAA",
+  "https://www.youtube.com/attribution_link?u=%2Fwatch%3Fv%3DKpILHX2D-A%0D%0AA",
+  "https://www.youtube.com/attribution_link?u=/shorts/KpILHX2D\n-AA",
+  "https://www.youtube.com/attribution_link?u\n=%2Fwatch%3Fv%3DKpILHX2D-AA",
+  "https://x.com/foo/status/123?s=2\n0&t=abc", "https://x.com/foo/status/123?s=%4\n1", "https://x.com/foo/status/123?s=%4\nz",
+  "https://x.com/foo/status/123?\r\n", "https://x.com/foo/status/123?a=%\n\n%", "x.com/foo/status/123?\t",
+  "mailto://x.com/foo/status/123?\n", "ftp://x.com//foo/status/123?a\nb", "https://www.youtube.com/watch\n?v=KpILHX2D-AA",
+  "https://www.youtube.com/watch?v=KpILHX2D-AA#\n", "https://www.youtube.com/watch?v=KpILHX2D-AA\n#frag"
+].freeze
+NEWLINE_URLS.each do |input|
+  entry = { kind: "url", input: input }
+  begin
+    entry[:twitter] = begin
+      TwitterUrl.normalize(input)
+    rescue TwitterUrl::InvalidError
+      nil
+    end
+    entry[:youtube] = YoutubeUrl.video_id(input)
+  rescue URI::Error => error
+    entry = { kind: "url", input: input, ruby_raises: error.class.name }
+  end
+  cases << entry
+end
+
 FileUtils.mkdir_p(File.dirname(opts[:out]))
 File.write(opts[:out], JSON.generate(cases) + "\n")
 puts "wrote #{cases.size} cases to #{opts[:out]}"

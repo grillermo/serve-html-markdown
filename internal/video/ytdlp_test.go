@@ -16,6 +16,11 @@ import (
 	"serve-html-markdown/internal/video"
 )
 
+const (
+	tweetURL = "https://x.com/foo/status/1"
+	watchURL = "https://www.youtube.com/watch?v=KpILHX2D-AA"
+)
+
 // recorder is a fake execx.Runner: it remembers the call and answers from fn.
 type recorder struct {
 	argv []string
@@ -53,7 +58,7 @@ func TestYtdlpDownloadReturnsPathAndTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &recorder{fn: ok("TW2WL_FILE:" + path + "\nTW2WL_TITLE:Hello Tweet\n")}
-	got, err := r.client().Download(context.Background(), "https://x.com/foo/status/1", dir)
+	got, err := r.client().Download(context.Background(), tweetURL, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +74,7 @@ func TestYtdlpDownloadReturnsPathAndTitle(t *testing.T) {
 func TestYtdlpDownloadArgv(t *testing.T) {
 	dir := t.TempDir()
 	r := &recorder{fn: ok("TW2WL_FILE:/v/a.mp4\n")}
-	if _, err := r.client().Download(context.Background(), "https://x.com/foo/status/1", dir); err != nil {
+	if _, err := r.client().Download(context.Background(), tweetURL, dir); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"yt-dlp", "-f", "best[ext=mp4]/best", "--no-playlist",
@@ -88,7 +93,7 @@ func TestYtdlpDownloadArgv(t *testing.T) {
 // Ruby: "download raises on failure" ("ERROR: unavailable", not ok).
 func TestYtdlpDownloadFailure(t *testing.T) {
 	r := &recorder{fn: failing("ERROR: unavailable\n")}
-	_, err := r.client().Download(context.Background(), "u", t.TempDir())
+	_, err := r.client().Download(context.Background(), tweetURL, t.TempDir())
 	var ye *video.YtdlpError
 	if !errors.As(err, &ye) {
 		t.Fatalf("err = %v", err)
@@ -101,7 +106,7 @@ func TestYtdlpDownloadFailure(t *testing.T) {
 func TestYtdlpDownloadNoFile(t *testing.T) {
 	for _, stdout := range []string{"", "TW2WL_TITLE:Only a title\n", "noise\n", "TW2WL_FILE:\n", "TW2WL_FILE:   \n"} {
 		r := &recorder{fn: ok(stdout)}
-		_, err := r.client().Download(context.Background(), "u", t.TempDir())
+		_, err := r.client().Download(context.Background(), tweetURL, t.TempDir())
 		var ye *video.YtdlpError
 		if !errors.As(err, &ye) || err.Error() != "yt-dlp produced no file" {
 			t.Errorf("stdout %q: err = %v", stdout, err)
@@ -112,13 +117,13 @@ func TestYtdlpDownloadNoFile(t *testing.T) {
 // parse_prefixed: the first line with the prefix, stripped; CRLF and spaces go.
 func TestYtdlpDownloadParsing(t *testing.T) {
 	r := &recorder{fn: ok("[download] noise\r\nTW2WL_FILE:  /v/a b.mp4 \r\nTW2WL_FILE:/v/other.mp4\nTW2WL_TITLE:  Hello: World  \r\nTW2WL_TITLE:second\n")}
-	got, err := r.client().Download(context.Background(), "u", t.TempDir())
+	got, err := r.client().Download(context.Background(), tweetURL, t.TempDir())
 	if err != nil || got.Path != "/v/a b.mp4" || got.Title != "Hello: World" {
 		t.Errorf("got %+v, %v", got, err)
 	}
 	// Ruby returns a nil title; the job turns "no title" into "Twitter video".
 	r = &recorder{fn: ok("TW2WL_FILE:/v/a.mp4\n")}
-	got, err = r.client().Download(context.Background(), "u", t.TempDir())
+	got, err = r.client().Download(context.Background(), tweetURL, t.TempDir())
 	if err != nil || got.Title != "" {
 		t.Errorf("got %+v, %v", got, err)
 	}
@@ -136,7 +141,7 @@ func TestYtdlpFetchAutoSubsReturnsTheVttPath(t *testing.T) {
 		}
 		return "", "", os.WriteFile(vtt, []byte("WEBVTT"), 0o600)
 	}}
-	got, err := r.client().FetchAutoSubs(context.Background(), "https://youtube.com/watch?v=abc", dir, "")
+	got, err := r.client().FetchAutoSubs(context.Background(), watchURL, dir, "")
 	if err != nil || got != vtt {
 		t.Errorf("got %q, %v", got, err)
 	}
@@ -146,7 +151,7 @@ func TestYtdlpFetchAutoSubsReturnsTheVttPath(t *testing.T) {
 func TestYtdlpFetchAutoSubsNoVtt(t *testing.T) {
 	dir := t.TempDir()
 	r := &recorder{fn: ok("")}
-	got, err := r.client().FetchAutoSubs(context.Background(), "u", dir, "")
+	got, err := r.client().FetchAutoSubs(context.Background(), watchURL, dir, "")
 	if err != nil || got != "" {
 		t.Errorf("got %q, %v", got, err)
 	}
@@ -157,7 +162,7 @@ func TestYtdlpFetchAutoSubsNoVtt(t *testing.T) {
 func TestYtdlpFetchAutoSubsArgv(t *testing.T) {
 	dir := t.TempDir()
 	r := &recorder{fn: ok("")}
-	if _, err := r.client().FetchAutoSubs(context.Background(), "u", dir, "/c.txt"); err != nil {
+	if _, err := r.client().FetchAutoSubs(context.Background(), watchURL, dir, "/c.txt"); err != nil {
 		t.Fatal(err)
 	}
 	i := indexOf(r.argv, "--cookies")
@@ -169,7 +174,7 @@ func TestYtdlpFetchAutoSubsArgv(t *testing.T) {
 	}
 	want := []string{"yt-dlp", "--write-subs", "--write-auto-subs", "--sub-langs", "en.*", "--sub-format", "vtt",
 		"--skip-download", "--ignore-no-formats-error", "--no-playlist",
-		"-o", dir + "/%(id)s.%(ext)s", "--cookies", "/c.txt", "u"}
+		"-o", dir + "/%(id)s.%(ext)s", "--cookies", "/c.txt", watchURL}
 	if !reflect.DeepEqual(r.argv, want) {
 		t.Errorf("argv\n got %q\nwant %q", r.argv, want)
 	}
@@ -177,12 +182,12 @@ func TestYtdlpFetchAutoSubsArgv(t *testing.T) {
 		t.Errorf("opts = %+v", r.opts)
 	}
 
-	if _, err := r.client().FetchAutoSubs(context.Background(), "u", dir, ""); err != nil {
+	if _, err := r.client().FetchAutoSubs(context.Background(), watchURL, dir, ""); err != nil {
 		t.Fatal(err)
 	}
 	want = []string{"yt-dlp", "--write-subs", "--write-auto-subs", "--sub-langs", "en.*", "--sub-format", "vtt",
 		"--skip-download", "--ignore-no-formats-error", "--no-playlist",
-		"-o", dir + "/%(id)s.%(ext)s", "u"}
+		"-o", dir + "/%(id)s.%(ext)s", watchURL}
 	if !reflect.DeepEqual(r.argv, want) {
 		t.Errorf("without cookies\n got %q\nwant %q", r.argv, want)
 	}
@@ -191,7 +196,7 @@ func TestYtdlpFetchAutoSubsArgv(t *testing.T) {
 // Ruby: "fetch_auto_subs failure carries yt-dlp's ERROR lines".
 func TestYtdlpFetchAutoSubsFailureCarriesErrorLines(t *testing.T) {
 	r := &recorder{fn: failing("WARNING: noise\nERROR: [youtube] abc: Sign in to confirm you're not a bot\n")}
-	_, err := r.client().FetchAutoSubs(context.Background(), "u", t.TempDir(), "")
+	_, err := r.client().FetchAutoSubs(context.Background(), watchURL, t.TempDir(), "")
 	var ye *video.YtdlpError
 	if !errors.As(err, &ye) {
 		t.Fatalf("err = %v", err)
@@ -215,14 +220,14 @@ func TestYtdlpFailureMessage(t *testing.T) {
 	}
 	for _, c := range cases {
 		r := &recorder{fn: failing(c.stderr)}
-		_, err := r.client().Download(context.Background(), "u", t.TempDir())
+		_, err := r.client().Download(context.Background(), tweetURL, t.TempDir())
 		if err == nil || err.Error() != c.want {
 			t.Errorf("%s: message = %v, want %q", c.name, err, c.want)
 		}
 	}
 	// A pathological stderr cannot make an unbounded message.
 	r := &recorder{fn: failing("ERROR: " + strings.Repeat("x", 100000) + "\n")}
-	_, err := r.client().Download(context.Background(), "u", t.TempDir())
+	_, err := r.client().Download(context.Background(), tweetURL, t.TempDir())
 	if err == nil || len(err.Error()) > 5000 || !strings.HasPrefix(err.Error(), "yt-dlp download failed: ERROR: xxx") {
 		t.Errorf("len = %d", len(err.Error()))
 	}
@@ -240,7 +245,7 @@ func TestYtdlpFetchAutoSubsPicksTheFirstVtt(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &recorder{fn: ok("")}
-	got, err := r.client().FetchAutoSubs(context.Background(), "u", dir, "")
+	got, err := r.client().FetchAutoSubs(context.Background(), watchURL, dir, "")
 	if want := filepath.Join(dir, "a.en-US.vtt"); err != nil || got != want {
 		t.Errorf("got %q, %v; want %q", got, err, want)
 	}
@@ -252,7 +257,7 @@ func TestYtdlpUnusualDirectoryNames(t *testing.T) {
 	r := &recorder{fn: func([]string) (string, string, error) {
 		return "", "", os.WriteFile(filepath.Join(dir, "v.en.vtt"), nil, 0o600)
 	}}
-	got, err := r.client().FetchAutoSubs(context.Background(), "u", dir, "")
+	got, err := r.client().FetchAutoSubs(context.Background(), watchURL, dir, "")
 	if err != nil || got != filepath.Join(dir, "v.en.vtt") {
 		t.Errorf("got %q, %v", got, err)
 	}
@@ -284,7 +289,7 @@ func TestYtdlpRefusesOptionLookingURLs(t *testing.T) {
 func TestYtdlpCreatesTheDestinationPrivately(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "a", "videos")
 	r := &recorder{fn: ok("TW2WL_FILE:/v/a.mp4\n")}
-	if _, err := r.client().Download(context.Background(), "u", dir); err != nil {
+	if _, err := r.client().Download(context.Background(), tweetURL, dir); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(dir)
@@ -296,7 +301,7 @@ func TestYtdlpCreatesTheDestinationPrivately(t *testing.T) {
 	if err := os.Chmod(existing, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.client().Download(context.Background(), "u", existing); err != nil {
+	if _, err := r.client().Download(context.Background(), tweetURL, existing); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Stat(existing); fi.Mode().Perm() != 0o755 {
@@ -321,7 +326,7 @@ func TestYtdlpErrorKinds(t *testing.T) {
 		{"cannot start", &os.PathError{Op: "fork/exec", Path: "yt-dlp", Err: syscall.ENOENT}, false, ""},
 	} {
 		r := &recorder{fn: func([]string) (string, string, error) { return "", "", c.err }}
-		_, err := r.client().Download(context.Background(), "u", t.TempDir())
+		_, err := r.client().Download(context.Background(), tweetURL, t.TempDir())
 		var ye *video.YtdlpError
 		if got := errors.As(err, &ye); got != c.kind {
 			t.Errorf("%s: YtdlpError = %v (%v)", c.name, got, err)
@@ -344,7 +349,7 @@ env > "$ENV_FILE"
 pwd -P > "$PWD_FILE"
 case "$*" in
   *--skip-download*) printf WEBVTT > "$DEST/abc.en.vtt"; echo "WARNING: x" >&2; exit 0 ;;
-  *FAILME*) echo "ERROR: boom" >&2; echo "ERROR: second" >&2; exit 1 ;;
+  *status/999*) echo "ERROR: boom" >&2; echo "ERROR: second" >&2; exit 1 ;;
 esac
 printf 'TW2WL_FILE:%s/abc.mp4\nTW2WL_TITLE:Real Title\n' "$DEST"
 `
@@ -377,18 +382,18 @@ printf 'TW2WL_FILE:%s/abc.mp4\nTW2WL_TITLE:Real Title\n' "$DEST"
 		t.Errorf("ran in %q, want %q", pwd, want)
 	}
 
-	vtt, err := c.FetchAutoSubs(context.Background(), "https://www.youtube.com/watch?v=abc", dest, "")
+	vtt, err := c.FetchAutoSubs(context.Background(), watchURL, dest, "")
 	if err != nil || vtt != dest+"/abc.en.vtt" {
 		t.Errorf("vtt = %q, %v", vtt, err)
 	}
 
-	_, err = c.Download(context.Background(), "FAILME", dest)
+	_, err = c.Download(context.Background(), "https://x.com/foo/status/999", dest)
 	if err == nil || err.Error() != "yt-dlp download failed: ERROR: boom | ERROR: second" {
 		t.Errorf("err = %v", err)
 	}
 
 	missing := video.NewYtdlpClient(filepath.Join(scratch, "nope"))
-	_, err = missing.Download(context.Background(), "u", dest)
+	_, err = missing.Download(context.Background(), tweetURL, dest)
 	var ye *video.YtdlpError
 	if err == nil || errors.As(err, &ye) {
 		t.Errorf("a missing binary should be a plain error, got %v", err)
@@ -404,7 +409,7 @@ func TestYtdlpContextCancelKillsTheProcess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := video.NewYtdlpClient(bin).Download(ctx, "u", t.TempDir())
+	_, err := video.NewYtdlpClient(bin).Download(ctx, tweetURL, t.TempDir())
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 10*time.Second {
 		t.Errorf("err = %v after %v", err, time.Since(start))
 	}
@@ -426,4 +431,212 @@ func indexOf(list []string, s string) int {
 		}
 	}
 	return -1
+}
+
+// A relative destination works: yt-dlp runs inside it, so a relative -o would
+// land in videos/videos. A stand-in yt-dlp writes where -o says and prints that path.
+func TestYtdlpRelativeDestination(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	bin := filepath.Join(t.TempDir(), "yt-dlp")
+	script := `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    --cookies) cookies="$2"; shift ;;
+    --skip-download) subs=1 ;;
+  esac
+  shift
+done
+if [ -n "$subs" ]; then
+  f=$(printf '%s' "$out" | sed 's/%(id)s.%(ext)s/abc.en.vtt/')
+  printf WEBVTT > "$f" || exit 5
+  [ -z "$cookies" ] || cp "$cookies" "$f.cookies" || exit 6
+  exit 0
+fi
+f=$(printf '%s' "$out" | sed 's/%(id)s.%(ext)s/abc.mp4/')
+printf video > "$f" || exit 5
+printf 'TW2WL_FILE:%s\nTW2WL_TITLE:T\n' "$f"
+`
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c := video.NewYtdlpClient(bin)
+
+	got, err := c.Download(context.Background(), tweetURL, "videos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDir, _ := filepath.EvalSymlinks(root)
+	gotDir, _ := filepath.EvalSymlinks(filepath.Dir(got.Path))
+	if !filepath.IsAbs(got.Path) || gotDir != filepath.Join(wantDir, "videos") || filepath.Base(got.Path) != "abc.mp4" {
+		t.Errorf("Path = %q, want %s/videos/abc.mp4", got.Path, wantDir)
+	}
+	if raw, err := os.ReadFile(got.Path); err != nil || string(raw) != "video" {
+		t.Errorf("the returned path does not hold the video: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "videos", "videos")); !os.IsNotExist(err) {
+		t.Errorf("a doubled videos/videos was created (%v)", err)
+	}
+
+	// subs with a relative directory and a relative cookies file
+	if err := os.WriteFile("cookies.txt", []byte("# Netscape HTTP Cookie File\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	vtt, err := c.FetchAutoSubs(context.Background(), watchURL, "subs/en", "cookies.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(vtt) || filepath.Base(vtt) != "abc.en.vtt" {
+		t.Errorf("vtt = %q", vtt)
+	}
+	if _, err := os.Stat(vtt); err != nil {
+		t.Error(err)
+	}
+	if raw, err := os.ReadFile(vtt + ".cookies"); err != nil || !strings.HasPrefix(string(raw), "# Netscape") {
+		t.Errorf("yt-dlp could not read the relative cookies path from its own directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "subs", "en", "subs")); !os.IsNotExist(err) {
+		t.Errorf("a doubled subs directory was created (%v)", err)
+	}
+}
+
+// With a fake runner: argv, options and the returned path are all absolute.
+func TestYtdlpMakesPathsAbsolute(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	wantRoot, _ := os.Getwd()
+	r := &recorder{fn: ok("TW2WL_FILE:rel/out.mp4\n")}
+	got, err := r.client().Download(context.Background(), tweetURL, "vids")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(wantRoot, "vids")
+	if r.opts.Dir != dir || !slicesContains(r.argv, dir+"/%(id)s.%(ext)s") {
+		t.Errorf("opts.Dir = %q, argv %q", r.opts.Dir, r.argv)
+	}
+	// a path yt-dlp prints relative to where it ran is resolved against that directory
+	if got.Path != filepath.Join(dir, "rel/out.mp4") {
+		t.Errorf("Path = %q", got.Path)
+	}
+	r = &recorder{fn: ok("")}
+	if _, err := r.client().FetchAutoSubs(context.Background(), watchURL, "s", "c.txt"); err != nil {
+		t.Fatal(err)
+	}
+	i := indexOf(r.argv, "--cookies")
+	if i < 0 || r.argv[i+1] != filepath.Join(wantRoot, "c.txt") || r.opts.Dir != filepath.Join(wantRoot, "s") {
+		t.Errorf("argv %q, dir %q", r.argv, r.opts.Dir)
+	}
+}
+
+// Only the URLs this service really downloads reach yt-dlp.
+func TestYtdlpURLValidation(t *testing.T) {
+	dir := t.TempDir()
+	bad := []string{
+		"ytsearch:cats", "ytsearch5:cats", "ytsearchall:x", "gvsearch:x", "file:///etc/passwd", "ftp://x.com/foo/status/1",
+		"http://169.254.169.254/latest/meta-data/", "http://localhost:3000/", "https://evil.example/video.mp4",
+		"--exec=touch /tmp/pwned", "-o/etc/x", "https://x.com/foo/status/1 --exec id", " https://x.com/foo/status/1",
+		"https://x.com/foo/status/1\n", "https://x.com/foo/status/1\x00", "https://x.com/foo/status/1\t", "https://x.com/foo/status/é1",
+		"HTTPS://x.com/foo/status/1", "Https://x.com/foo/status/1", "HTTP://www.youtube.com/watch?v=KpILHX2D-AA",
+		"x.com/foo/status/1", "youtube.com/watch?v=KpILHX2D-AA",
+		"https://twitter.com/foo/status/1", // not canonical: the controller normalizes first
+		"https://x.com/foo/status/1?s=20", "https://x.com/foo",
+		"", "u",
+	}
+	for _, u := range bad {
+		r := &recorder{fn: ok("TW2WL_FILE:/v/a.mp4\n")}
+		if _, err := r.client().Download(context.Background(), u, dir); !errors.Is(err, video.ErrInvalidURL) || r.runs != 0 {
+			t.Errorf("Download(%q): err = %v, runs = %d", u, err, r.runs)
+		}
+		if _, err := r.client().FetchAutoSubs(context.Background(), u, dir, ""); !errors.Is(err, video.ErrInvalidURL) || r.runs != 0 {
+			t.Errorf("FetchAutoSubs(%q): err = %v, runs = %d", u, err, r.runs)
+		}
+	}
+	// the error is static text, whatever the URL
+	r := &recorder{fn: ok("")}
+	_, err := r.client().Download(context.Background(), "ytsearch:secret-looking", dir)
+	if err == nil || strings.Contains(err.Error(), "secret") {
+		t.Errorf("err = %v", err)
+	}
+	var ye *video.YtdlpError
+	if errors.As(err, &ye) {
+		t.Error("an invalid URL is not a YtdlpError (the captions job must not retry it)")
+	}
+
+	// good ones: what Ruby's callers pass, plus YouTube links for Download
+	for _, u := range []string{tweetURL, "https://x.com/i/status/123", "https://www.youtube.com/watch?v=KpILHX2D-AA", "https://youtu.be/KpILHX2D-AA", "http://www.youtube.com/watch?v=KpILHX2D-AA&t=5"} {
+		r := &recorder{fn: ok("TW2WL_FILE:/v/a.mp4\n")}
+		if _, err := r.client().Download(context.Background(), u, dir); err != nil {
+			t.Errorf("Download(%q): %v", u, err)
+		}
+	}
+	// the captions job passes the canonical watch URL and nothing else
+	for _, u := range []string{watchURL} {
+		r := &recorder{fn: ok("")}
+		if _, err := r.client().FetchAutoSubs(context.Background(), u, dir, ""); err != nil {
+			t.Errorf("FetchAutoSubs(%q): %v", u, err)
+		}
+	}
+	for _, u := range []string{"https://youtu.be/KpILHX2D-AA", "https://www.youtube.com/watch?v=KpILHX2D-AA&t=5", "https://m.youtube.com/watch?v=KpILHX2D-AA", tweetURL} {
+		r := &recorder{fn: ok("")}
+		if _, err := r.client().FetchAutoSubs(context.Background(), u, dir, ""); !errors.Is(err, video.ErrInvalidURL) {
+			t.Errorf("FetchAutoSubs(%q) should be refused, got %v", u, err)
+		}
+	}
+}
+
+func TestYtdlpValidateURLHook(t *testing.T) {
+	dir := t.TempDir()
+	r := &recorder{fn: ok("TW2WL_FILE:/v/a.mp4\n")}
+	c := r.client()
+	c.ValidateURL = func(u string) error {
+		if strings.Contains(u, "banned") {
+			return errors.New("custom reason that must not leak")
+		}
+		return nil
+	}
+	if _, err := c.Download(context.Background(), "https://x.com/banned/status/1", dir); !errors.Is(err, video.ErrInvalidURL) || strings.Contains(err.Error(), "leak") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := c.Download(context.Background(), tweetURL, dir); err != nil {
+		t.Error(err)
+	}
+	// nil removes the extra check only: the shape rules and http(s)-only stay
+	c.ValidateURL = nil
+	if _, err := c.Download(context.Background(), "ytsearch:x", dir); !errors.Is(err, video.ErrInvalidURL) {
+		t.Errorf("err = %v", err)
+	}
+	if err := video.HTTPURLOnly("https://x.com/a"); err != nil {
+		t.Error(err)
+	}
+	if c := video.NewYtdlpClient("yt-dlp"); c.ValidateURL == nil {
+		t.Error("NewYtdlpClient must set ValidateURL")
+	}
+}
+
+// yt-dlp gets the runtimes' and its own settings, and no server secret.
+func TestYtdlpEnvironmentInAProcess(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "yt-dlp")
+	out := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nenv > '"+out+"'\nprintf 'TW2WL_FILE:/v/a.mp4\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REQUESTS_CA_BUNDLE", "/ca.pem")
+	t.Setenv("PYTHONPATH", "/py")
+	t.Setenv("DENO_DIR", "/deno")
+	t.Setenv("YTDLP_NO_UPDATE", "1")
+	t.Setenv("SLACK_WEBHOOK_URL", "https://hooks.example/secret")
+	t.Setenv("YOUTUBE_CLIENT_SECRET", "secret")
+	if _, err := video.NewYtdlpClient(bin).Download(context.Background(), tweetURL, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := os.ReadFile(out)
+	for _, want := range []string{"REQUESTS_CA_BUNDLE=/ca.pem", "PYTHONPATH=/py", "DENO_DIR=/deno", "YTDLP_NO_UPDATE=1"} {
+		if !strings.Contains(string(env), want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if strings.Contains(string(env), "secret") {
+		t.Errorf("secrets leaked:\n%s", env)
+	}
 }

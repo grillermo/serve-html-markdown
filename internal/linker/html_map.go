@@ -3,6 +3,8 @@ package linker
 import (
 	"regexp"
 	"strings"
+
+	"serve-html-markdown/internal/textutil"
 )
 
 // inlineTags ports HtmlMap::INLINE_TAGS.
@@ -218,7 +220,7 @@ func (b *htmlBuilder) handleToken(start, end int, kind tokenKind) int {
 	text := b.src[start:end]
 	switch kind {
 	case tokEntity:
-		decoded := cgiUnescape(text)
+		decoded := textutil.CGIUnescape(text)
 		for i := 0; i < len(decoded); i++ {
 			b.m.emit(decoded[i], start, end, b.blockID)
 		}

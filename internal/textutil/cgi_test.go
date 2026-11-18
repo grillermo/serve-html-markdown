@@ -1,4 +1,4 @@
-package linker
+package textutil
 
 import "testing"
 
@@ -28,8 +28,8 @@ func TestCGIUnescape(t *testing.T) {
 		{"", ""},
 	}
 	for _, tc := range tests {
-		if got := cgiUnescape(tc.in); got != tc.want {
-			t.Errorf("cgiUnescape(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := CGIUnescape(tc.in); got != tc.want {
+			t.Errorf("CGIUnescape(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

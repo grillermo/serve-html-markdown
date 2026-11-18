@@ -5,7 +5,6 @@ package video
 
 import (
 	"encoding/hex"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -31,23 +30,16 @@ var (
 // URLs Ruby's URI.parse refuses are refused too (see uriSafe for the rules and
 // the one known gap).
 func YoutubeVideoID(rawURL string) string {
-	raw := strings.TrimSpace(rawURL)
-	if !hasScheme.MatchString(raw) {
-		raw = "https://" + raw
-	}
-	if !uriSafe(raw) {
+	u, ok := parseRubyURI(WithScheme(rubyStrip(rawURL)))
+	if !ok {
 		return ""
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	host := strings.TrimPrefix(strings.ToLower(u.host), "www.")
 	if !slices.Contains(youtubeHosts, host) {
 		return ""
 	}
-	query := decodeWWWForm(u.RawQuery)
-	path := u.EscapedPath()
+	query := decodeWWWForm(u.query)
+	path := u.path
 	var id string
 	switch {
 	case host == "youtu.be":
@@ -67,39 +59,20 @@ func YoutubeVideoID(rawURL string) string {
 	return id
 }
 
-// strictBad are the characters Ruby's URI.parse refuses outside the query.
-const strictBad = "|<>\\^`{}[]\""
-
-// badQueryPct is a "%" followed by two non-hex characters, which Ruby refuses
-// even in the query (a lone "%", "%a" or "%az" are accepted there).
-var badQueryPct = regexp.MustCompile(`%[^0-9A-Fa-f]{2}`)
-
-// uriSafe reports whether Ruby's URI.parse would accept s (probed against Ruby
-// 3.4 / uri 1.1): non-ASCII is refused everywhere; the part before the query
-// and the fragment also refuse space and control characters, strictBad, and
-// any "%" not followed by two hex digits; the fragment refuses a second "#";
-// the query is lenient (see badQueryPct). One known gap: Go's url.Parse refuses
-// control characters in the query, which Ruby accepts.
-func uriSafe(s string) bool {
-	if strings.ContainsFunc(s, func(r rune) bool { return r >= 0x80 }) {
-		return false
-	}
-	rest, fragment, hasFragment := strings.Cut(s, "#")
-	base, query, hasQuery := strings.Cut(rest, "?")
-	if !strictPart(base) || (hasFragment && (strings.Contains(fragment, "#") || !strictPart(fragment))) {
-		return false
-	}
-	return !hasQuery || !badQueryPct.MatchString(query)
+// YoutubeWatchURL is the canonical watch link of a video id (Ruby's
+// YoutubeUrl.watch_url). The store keys YouTube-link rows on it, and
+// YoutubeVideoID maps it back to the same id.
+func YoutubeWatchURL(videoID string) string {
+	return "https://www.youtube.com/watch?v=" + videoID
 }
 
-var pctEscape = regexp.MustCompile(`%[0-9A-Fa-f]{2}`)
-
-func strictPart(s string) bool {
-	if strings.ContainsFunc(s, func(r rune) bool { return r <= ' ' || r == 0x7f || strings.ContainsRune(strictBad, r) }) {
-		return false
+// WithScheme prefixes "https://" unless url already starts with a scheme
+// ("[a-z][a-z0-9+.-]*://", any case): Ruby's YoutubeUrl.with_scheme.
+func WithScheme(url string) string {
+	if hasScheme.MatchString(url) {
+		return url
 	}
-	// every "%" must start a %XX escape
-	return strings.Count(s, "%") == len(pctEscape.FindAllString(s, -1))
+	return "https://" + url
 }
 
 // decodeWWWForm is Ruby's URI.decode_www_form(query).to_h: pairs split on "&"

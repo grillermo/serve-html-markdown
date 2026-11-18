@@ -141,3 +141,84 @@ func TestYoutubeVideoID(t *testing.T) {
 		}
 	}
 }
+
+// Ruby: YoutubeUrl.watch_url.
+func TestYoutubeWatchURL(t *testing.T) {
+	if got := video.YoutubeWatchURL("KpILHX2D-AA"); got != "https://www.youtube.com/watch?v=KpILHX2D-AA" {
+		t.Errorf("YoutubeWatchURL = %q", got)
+	}
+	// What the store keys on: the watch URL maps back to the same id.
+	if got := video.YoutubeVideoID(video.YoutubeWatchURL("KpILHX2D-AA")); got != "KpILHX2D-AA" {
+		t.Errorf("round trip = %q", got)
+	}
+}
+
+// Ruby: YoutubeUrl.with_scheme (a URL with any scheme://, any case, is left alone).
+func TestWithScheme(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"youtube.com/watch", "https://youtube.com/watch"},
+		{"https://a", "https://a"},
+		{"http://a", "http://a"},
+		{"HTTPS://A", "HTTPS://A"},
+		{"ftp://a", "ftp://a"},
+		{"a+b.c-d://x", "a+b.c-d://x"},
+		{"1a://x", "https://1a://x"},
+		{"x:/y", "https://x:/y"},
+		{"x//y", "https://x//y"},
+		{"", "https://"},
+		{"\nhttps://a", "https://\nhttps://a"},
+	} {
+		if got := video.WithScheme(c.in); got != c.want {
+			t.Errorf("WithScheme(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Ruby: YoutubeUrlTest, each of its three tests verbatim.
+func TestYoutubeVideoIDRubyTests(t *testing.T) {
+	const id = "KpILHX2D-AA"
+	for _, url := range []string{
+		"https://www.youtube.com/watch?v=" + id,
+		"https://youtube.com/watch?v=" + id + "&t=42",
+		"https://www.youtube.com/watch?feature=share&v=" + id,
+		"https://www.youtube.com/watch/?v=" + id,
+		"https://m.youtube.com/watch?v=" + id + "&list=PL123&index=2",
+		"https://music.youtube.com/watch?v=" + id + "&si=abc",
+		"https://gaming.youtube.com/watch?v=" + id,
+		"https://youtu.be/" + id,
+		"https://youtu.be/" + id + "?si=3zdm0UjTBIYF-k0c&t=10",
+		"https://www.youtube.com/shorts/" + id + "?feature=share",
+		"https://youtube.com/live/" + id + "?si=x",
+		"https://www.youtube.com/embed/" + id + "?start=5",
+		"https://www.youtube-nocookie.com/embed/" + id,
+		"https://www.youtube.com/v/" + id,
+		"https://www.youtube.com/e/" + id,
+		"https://www.youtube.com/watch/" + id,
+		"https://www.youtube.com/attribution_link?a=xyz&u=%2Fwatch%3Fv%3D" + id + "%26feature%3Dshare",
+		"http://www.youtube.com/watch?v=" + id,
+		"HTTPS://WWW.YOUTUBE.COM/watch?v=" + id,
+		"www.youtube.com/watch?v=" + id,
+		"youtu.be/" + id,
+		"  https://youtu.be/" + id + "\n",
+	} {
+		if got := video.YoutubeVideoID(url); got != id {
+			t.Errorf("YoutubeVideoID(%q) = %q, want %q", url, got, id)
+		}
+	}
+	if got := video.YoutubeVideoID("https://www.youtube.com/watch?v=hWe-j78vNpc"); got != "hWe-j78vNpc" {
+		t.Errorf("reported link: %q", got)
+	}
+	for _, url := range []string{
+		"https://x.com/a/status/1",
+		"https://www.youtube.com/watch?v=x",
+		"https://www.youtube.com/@channel",
+		"https://www.youtube.com/playlist?list=PL123",
+		"https://notyoutube.com/watch?v=" + id,
+		"not a url",
+		"",
+	} {
+		if got := video.YoutubeVideoID(url); got != "" {
+			t.Errorf("YoutubeVideoID(%q) = %q, want none", url, got)
+		}
+	}
+}

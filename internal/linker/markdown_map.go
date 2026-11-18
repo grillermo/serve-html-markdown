@@ -3,6 +3,8 @@ package linker
 import (
 	"sort"
 	"strings"
+
+	"serve-html-markdown/internal/textutil"
 )
 
 // mdBuilder ports SelectionLinker::MarkdownMap. It is a line-oriented
@@ -353,7 +355,7 @@ func (b *mdBuilder) handleInlineToken(start, end int, kind inlineKind, upto int)
 	case inTag:
 		return b.htmlTag(text, start, end)
 	case inEntity:
-		decoded := cgiUnescape(text)
+		decoded := textutil.CGIUnescape(text)
 		for i := 0; i < len(decoded); i++ {
 			b.m.emit(decoded[i], start, end, b.blockID)
 		}

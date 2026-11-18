@@ -1,4 +1,6 @@
-package linker
+// Package textutil holds small text helpers shared by several packages. It is a
+// leaf package: it imports nothing from this module.
+package textutil
 
 import "strings"
 
@@ -7,13 +9,13 @@ import "strings"
 // U+10FFFF itself is left as-is).
 const maxNumericRef = 0x10FFFF
 
-// cgiUnescape ports Ruby's CGI.unescapeHTML. It decodes only &amp; &lt; &gt;
+// CGIUnescape ports Ruby's CGI.unescapeHTML. It decodes only &amp; &lt; &gt;
 // &quot; &apos; (lowercase) and decimal/hex numeric references (&#NN;
 // &#xHH; &#XHH;), never named entities such as &nbsp;. Values are emitted as
 // raw UTF-8 without validation, exactly like Ruby: a surrogate reference
 // yields the invalid 3-byte sequence, which later makes the locator fail with
 // ErrInvalidUTF8 just as Ruby's regexp raises ArgumentError.
-func cgiUnescape(s string) string {
+func CGIUnescape(s string) string {
 	if !strings.Contains(s, "&") {
 		return s
 	}
@@ -94,3 +96,7 @@ func appendUTF8Raw(b []byte, v int) []byte {
 		return append(b, 0xF0|byte(v>>18), 0x80|byte(v>>12&0x3F), 0x80|byte(v>>6&0x3F), 0x80|byte(v&0x3F))
 	}
 }
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+func isHex(b byte) bool { return isDigit(b) || ((b|0x20) >= 'a' && (b|0x20) <= 'f') }

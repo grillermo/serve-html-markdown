@@ -23,9 +23,14 @@
 //     written repeats the (paid) LLM call, and a crash between writing the
 //     files and storing the url (two statements apart) can still write a
 //     second result. TwitterVideoCaptionsJob is safe too (it only acts on
-//     status awaiting_captions), but TwitterVideoIngestJob does NOT check the video's status, so a re-run
-//     would download again (or reuse the file) and upload a duplicate YouTube
-//     video. The ingest handler (Task 9.6) must add a status/youtube_id guard.
+//     status awaiting_captions, and its writes are guarded by status and by
+//     the attempt number, see NewTwitterVideoCaptions), and so is
+//     TwitterVideoIngestJob, which Ruby was not: Task 9.6 added the
+//     guard. A video that already has a youtube_id (or is past the upload) is
+//     never downloaded or uploaded again, and the id is recorded in the
+//     statement that moves the row on, before anything else. What remains is
+//     the window of an upload that was cut short before it returned an id: a
+//     re-run uploads again (see NewTwitterVideoIngest).
 //   - Running jobs refresh their lock (heartbeat), so a long handler such as a
 //     yt-dlp download is never mistaken for a crashed one. The flip side: the
 //     heartbeat also keeps a hung job locked forever, so handlers that can

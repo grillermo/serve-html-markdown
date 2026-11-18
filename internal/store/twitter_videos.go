@@ -259,15 +259,25 @@ type TwitterVideoChanges struct {
 // clears error_detail itself). An invalid status gives an *InvalidTwitterVideoError; a missing
 // row gives ErrNotFound.
 func UpdateTwitterVideo(ctx context.Context, db DB, id int64, c TwitterVideoChanges) error {
-	args := []any{id, utcNow()}
-	sets := []string{"updated_at = $2"}
+	sets, args, err := twitterVideoSets(id, c)
+	if err != nil {
+		return err
+	}
+	return requireRow(db.Exec(ctx, `UPDATE twitter_videos SET `+strings.Join(sets, ", ")+` WHERE id = $1`, args...))
+}
+
+// twitterVideoSets turns changes into SET clauses and their arguments: $1 is
+// the id, $2 the updated_at stamp, further placeholders follow.
+func twitterVideoSets(id int64, c TwitterVideoChanges) (sets []string, args []any, err error) {
+	args = []any{id, utcNow()}
+	sets = []string{"updated_at = $2"}
 	set := func(column string, value any) {
 		args = append(args, value)
 		sets = append(sets, column+" = $"+strconv.Itoa(len(args)))
 	}
 	if c.Status != nil {
 		if err := validTwitterStatus(*c.Status); err != nil {
-			return err
+			return nil, nil, err
 		}
 		set("status", *c.Status)
 	}
@@ -282,7 +292,7 @@ func UpdateTwitterVideo(ctx context.Context, db DB, id int64, c TwitterVideoChan
 			continue
 		}
 		if !validText(*f.value) {
-			return &InvalidTwitterVideoError{f.column, "is invalid"}
+			return nil, nil, &InvalidTwitterVideoError{f.column, "is invalid"}
 		}
 		set(f.column, *f.value)
 	}
@@ -292,7 +302,46 @@ func UpdateTwitterVideo(ctx context.Context, db DB, id int64, c TwitterVideoChan
 	if c.CaptionAttempts != nil {
 		set("caption_attempts", *c.CaptionAttempts)
 	}
-	return requireRow(db.Exec(ctx, `UPDATE twitter_videos SET `+strings.Join(sets, ", ")+` WHERE id = $1`, args...))
+	return sets, args, nil
+}
+
+// TransitionTwitterVideo is UpdateTwitterVideo guarded by the current status:
+// the row is only changed while its status is one of from, in the same
+// statement, so a late writer (a re-run job, a sweeper that got there first)
+// cannot move a row backwards. It reports whether a row was changed; a missing
+// row and a row in another status are both "false, nil". from must be
+// non-empty and hold valid statuses.
+func TransitionTwitterVideo(ctx context.Context, db DB, id int64, from []string, c TwitterVideoChanges) (bool, error) {
+	if len(from) == 0 {
+		return false, errors.New("store: TransitionTwitterVideo needs at least one from status")
+	}
+	sets, args, err := twitterVideoSets(id, c)
+	if err != nil {
+		return false, err
+	}
+	placeholders := make([]string, len(from))
+	for i, s := range from {
+		if err := validTwitterStatus(s); err != nil {
+			return false, err
+		}
+		args = append(args, s)
+		placeholders[i] = "$" + strconv.Itoa(len(args))
+	}
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos SET `+strings.Join(sets, ", ")+
+		` WHERE id = $1 AND status IN (`+strings.Join(placeholders, ", ")+`)`, args...)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// FailTwitterVideoFrom is FailTwitterVideo guarded by status (see
+// TransitionTwitterVideo): a row already done, or failed by someone else, is
+// left alone and false is returned. The detail is sanitised like
+// FailTwitterVideo's.
+func FailTwitterVideoFrom(ctx context.Context, db DB, id int64, from []string, detail string) (bool, error) {
+	detail = sanitizeDetail(detail)
+	return TransitionTwitterVideo(ctx, db, id, from, TwitterVideoChanges{Status: new("failed"), ErrorDetail: &detail})
 }
 
 // FailTwitterVideo records a failure: status "failed" and the detail. It is the
@@ -353,4 +402,82 @@ func (v *TwitterVideo) NextCaptionWait(now time.Time) (wait time.Duration, ok bo
 	}
 	target := v.UploadCompletedAt.Add(time.Duration(checkpoints[v.CaptionAttempts]) * time.Minute)
 	return max(target.Sub(now).Truncate(time.Second), 0), true
+}
+
+// AdvanceCaptionAttempt counts one caption check as made, but only if the
+// video is still awaiting_captions with exactly `from` attempts: the compare and
+// the increment are one statement, so of several jobs that read the same
+// attempt only one advances it (and so only one schedules the next check). It
+// returns the new count and whether this call advanced it.
+func AdvanceCaptionAttempt(ctx context.Context, db DB, id int64, from int) (attempts int, advanced bool, err error) {
+	err = db.QueryRow(ctx, `UPDATE twitter_videos SET caption_attempts = caption_attempts + 1, updated_at = $3
+		WHERE id = $1 AND status = 'awaiting_captions' AND caption_attempts = $2
+		RETURNING caption_attempts`, id, from, utcNow()).Scan(&attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	return attempts, err == nil, err
+}
+
+// RecordTwitterVideoUpload records a finished YouTube upload in ONE statement:
+// youtube_id, status awaiting_captions, upload_completed_at now and
+// caption_attempts 0. It is guarded by the id being unset (NULL or blank), not
+// by the status: the video exists on YouTube whatever happened to the row
+// meanwhile (a sweeper may have failed it during a long upload), and an id that
+// is already stored is never replaced. false means an id was already stored (or
+// the row is gone).
+func RecordTwitterVideoUpload(ctx context.Context, db DB, id int64, youtubeID string) (bool, error) {
+	if blank(youtubeID) || !validText(youtubeID) {
+		return false, &InvalidTwitterVideoError{"youtube_id", "can't be blank"}
+	}
+	now := utcNow()
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos
+		SET status = 'awaiting_captions', youtube_id = $2, upload_completed_at = $3, caption_attempts = 0, updated_at = $3
+		WHERE id = $1 AND COALESCE(youtube_id, '') = ''`, id, youtubeID, now)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ReclaimTwitterVideo puts a video left in summarizing or publishing by a run
+// that died back to awaiting_captions, so the next run of its captions job
+// starts over (it re-reads the captions, which is safe). Only rows untouched for
+// staleAfter are taken: a live run moves its row through these statuses in
+// seconds to minutes, and the caller passes a staleAfter well below the queue's
+// stale-lock window. It reports whether the row was reclaimed.
+func ReclaimTwitterVideo(ctx context.Context, db DB, id int64, staleAfter time.Duration) (bool, error) {
+	now := utcNow()
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos SET status = 'awaiting_captions', updated_at = $2
+		WHERE id = $1 AND status IN ('summarizing', 'publishing') AND updated_at < $3`, id, now, now.Add(-staleAfter))
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// TwitterVideoFailedDetail is the error_detail of a video the sweeper gave up on.
+const TwitterVideoFailedDetail = "Processing failed."
+
+// FailStaleTwitterVideos fails the videos stuck in downloading, uploading,
+// summarizing or publishing for staleAfter without being touched (every status
+// change refreshes updated_at): their job died, or never ran. awaiting_captions
+// is not swept: it legitimately waits up to two days between checks. One
+// statement, guarded by status. It returns how many rows it failed.
+func FailStaleTwitterVideos(ctx context.Context, db DB, staleAfter time.Duration) (int64, error) {
+	now := utcNow()
+	tag, err := db.Exec(ctx, `UPDATE twitter_videos SET status = 'failed', error_detail = $1, updated_at = $2
+		WHERE status IN ('downloading', 'uploading', 'summarizing', 'publishing') AND updated_at < $3`,
+		TwitterVideoFailedDetail, now, now.Add(-staleAfter))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// AwaitingCaptionVideos lists up to limit videos in awaiting_captions, oldest
+// first: the ones that should have a caption check queued.
+func AwaitingCaptionVideos(ctx context.Context, db DB, limit int) ([]TwitterVideo, error) {
+	return collectTwitterVideos(db.Query(ctx, `SELECT `+twitterVideoColumns+` FROM twitter_videos
+		WHERE status = 'awaiting_captions' ORDER BY id LIMIT $1`, limit))
 }

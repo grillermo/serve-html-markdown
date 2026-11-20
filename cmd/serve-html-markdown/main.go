@@ -17,7 +17,6 @@ commands:
   seed-admin          create the admin user from ADMIN_EMAIL / ADMIN_PASSWORD
   youtube-reauth-url  print the YouTube re-authorization URL
   sync-files          sync the files/ directory into the database
-  move-solid-queue-jobs  one-off cutover: move Rails' pending jobs to the Go queue (Rails stopped)
   help                show this help
 `
 
@@ -67,13 +66,6 @@ func runTo(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return youtubeReauthURL(config.Load(root), stdout)
-	case "move-solid-queue-jobs":
-		root, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(stderr, "%s: getwd: %v\n", cmd, err)
-			return 1
-		}
-		return moveSolidQueueJobs(config.Load(root), stdout, stderr)
 	case "sync-files":
 		root, err := os.Getwd()
 		if err != nil {

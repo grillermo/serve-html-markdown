@@ -7,9 +7,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
-
-	"serve-html-markdown/db/cutover"
 	"serve-html-markdown/internal/auth"
 	"serve-html-markdown/internal/config"
 	"serve-html-markdown/internal/db"
@@ -134,51 +131,5 @@ func youtubeReauthURL(cfg config.Config, stdout io.Writer) int {
 	fmt.Fprintln(stdout, video.YoutubeReauthURL(cfg.YoutubeReauthURL, cfg.YoutubeHost, ""))
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "You must be signed in to the app first — the page is behind the sign-in page.")
-	return 0
-}
-
-// moveSolidQueueJobs runs db/cutover/move_solid_queue_jobs.sql once, over a
-// direct connection (see migrate), with Rails stopped: its pending jobs become
-// go_jobs rows and the Solid Queue rows are finished. It prints how many jobs
-// moved, and refuses to run while Rails workers are registered as alive.
-func moveSolidQueueJobs(cfg config.Config, stdout, stderr io.Writer) int {
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
-	defer cancel()
-	pool, err := db.Open(ctx, db.URL(cfg), 1, true)
-	if err != nil {
-		fmt.Fprintf(stderr, "move-solid-queue-jobs: %v\n", err)
-		return 1
-	}
-	defer pool.Close()
-
-	// A worker's heartbeat is refreshed every minute; one that beat in the last
-	// two minutes means Rails is still running and would race the move.
-	var alive int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM solid_queue_processes
-		WHERE last_heartbeat_at > (now() AT TIME ZONE 'UTC') - interval '2 minutes'`).Scan(&alive); err != nil {
-		fmt.Fprintf(stderr, "move-solid-queue-jobs: %v\n", err)
-		return 1
-	}
-	if alive > 0 {
-		fmt.Fprintf(stderr, "move-solid-queue-jobs: %d Solid Queue process(es) are still alive; stop Rails first\n", alive)
-		return 1
-	}
-
-	var before int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM go_jobs`).Scan(&before); err != nil {
-		fmt.Fprintf(stderr, "move-solid-queue-jobs: %v\n", err)
-		return 1
-	}
-	// The script is several statements with its own BEGIN/COMMIT: simple protocol.
-	if _, err := pool.Exec(ctx, cutover.MoveSolidQueueJobs, pgx.QueryExecModeSimpleProtocol); err != nil {
-		fmt.Fprintf(stderr, "move-solid-queue-jobs: %v\n", err)
-		return 1
-	}
-	var after int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM go_jobs`).Scan(&after); err != nil {
-		fmt.Fprintf(stderr, "move-solid-queue-jobs: %v\n", err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "Moved %d job(s) to go_jobs.\n", after-before)
 	return 0
 }

@@ -26,7 +26,7 @@ import (
 // largest of these (the handlers extend their own deadlines per request with
 // http.NewResponseController), and keep ReadHeaderTimeout for slow headers.
 const (
-	// writeSlack is added to the OpenAI timeout for the rest of a create.
+	// writeSlack is added to the sota-llms timeout for the rest of a create.
 	writeSlack = 15 * time.Second
 	// uploadDeadline is how long a client has to send an upload body and get
 	// its answer.
@@ -56,7 +56,7 @@ const (
 )
 
 // Formatter turns the posted text into Markdown. The default is the
-// OpenAI-backed llm.Formatter; tests inject fakes with WithFormatter.
+// sota-llms-backed llm.Formatter; tests inject fakes with WithFormatter.
 //
 // An error that is llm.ErrConfiguration or an *llm.Error is an upstream
 // failure and answers 502; any other error is a 500.
@@ -69,10 +69,9 @@ func WithFormatter(f Formatter) Option {
 	return func(s *Server) { s.formatter = f }
 }
 
-// newFormatter is the real formatter: OPENAI_API_KEY, falling back to
-// EXPANSION_LLM_API_KEY.
+// newFormatter is the real formatter, keyed with SOTA_LLMS_API_KEY.
 func newFormatter(cfg config.Config) *llm.Formatter {
-	return llm.NewFormatter(llm.NewClient(llm.APIKey(cfg.OpenAIKey, cfg.ExpansionLLMKey)))
+	return llm.NewFormatter(llm.NewClient(cfg.SotaLLMsKey))
 }
 
 // publicURL is the link returned for a created file. Like Rails it does not
@@ -146,18 +145,18 @@ func (s *Server) recordCreated(w http.ResponseWriter, r *http.Request, name stri
 }
 
 // createFile is POST /file/new (FilesController#create): format content with
-// OpenAI and save it as <filename>.md, with -1, -2, ... on a name clash. It is
+// sota-llms and save it as <filename>.md, with -1, -2, ... on a name clash. It is
 // authorized by the bearer token only; a session cookie does not count.
 //
 // Like Ruby the file name is checked before the formatter runs, so a bad name
-// costs no OpenAI call. Unlike Ruby the name is claimed only when the file is
+// costs no sota-llms call. Unlike Ruby the name is claimed only when the file is
 // written (O_EXCL), after the formatter's answer is in.
 func (s *Server) createFile(w http.ResponseWriter, r *http.Request) {
 	if !auth.BearerOK(r, s.cfg.APIToken) {
 		writeDetail(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	// The formatter call can take as long as the OpenAI client waits.
+	// The formatter call can take as long as the sota-llms client waits.
 	extendDeadlines(w, 0, llm.DefaultTimeout+writeSlack)
 	params, err := parseParams(w, r, s.maxCreateBytes)
 	if err != nil {
@@ -200,13 +199,13 @@ func (s *Server) createFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// formatError answers a failed Format: 502 with a fixed text for an OpenAI
+// formatError answers a failed Format: 502 with a fixed text for a sota-llms
 // failure or a missing key (neither shows the upstream's words), 500 for
 // anything else.
 func (s *Server) formatError(w http.ResponseWriter, r *http.Request, err error) {
 	var upstream *llm.Error
 	if errors.Is(err, llm.ErrConfiguration) || errors.As(err, &upstream) {
-		slog.Error("OpenAI formatting failed", "err", err.Error())
+		slog.Error("sota-llms formatting failed", "err", err.Error())
 		writeDetail(w, http.StatusBadGateway, llm.FormattingFailed)
 		return
 	}

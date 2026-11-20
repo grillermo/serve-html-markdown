@@ -132,7 +132,7 @@ func (p *Processor) Process(ctx context.Context, e *store.Expansion) (string, er
 	// file_path.basename did (even when the file is in a subdirectory).
 	name := filepath.Base(rel)
 	params := llm.Params{
-		FileName: name, Document: source, Selection: e.SelectedText, Question: e.Question, UseOpenAI: e.UseOpenAI,
+		FileName: name, Document: source, Selection: e.SelectedText, Question: e.Question, UseSotaLLMs: e.UseSotaLLMs,
 	}
 	rec := NewRecorder(ctx, p.DB, e.ID)
 	if e.EditInPlace() {

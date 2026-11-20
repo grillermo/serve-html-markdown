@@ -123,7 +123,7 @@ func (s *Server) createExpansion(w http.ResponseWriter, r *http.Request) {
 		Occurrence:     occurrenceParam(params.get("occurrence")),
 		Mode:           mode,
 		FallbackAnchor: fallback,
-		UseOpenAI:      castBoolean(params.lookup("use_openai")),
+		UseSotaLLMs:    castBoolean(params.lookup("use_sota_llms")),
 	})
 	if err != nil {
 		var invalid *store.InvalidExpansionError

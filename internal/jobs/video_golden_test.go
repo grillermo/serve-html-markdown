@@ -106,7 +106,7 @@ var goldenScenarios = map[string]func(e *videoEnv) goldenResult{
 	},
 	"captions_summarizer_error": func(e *videoEnv) goldenResult {
 		e.summ.fn = func(context.Context, string) (llm.Summary, error) {
-			return llm.Summary{}, llm.ErrOpenAI("OpenAI summarization failed.")
+			return llm.Summary{}, llm.ErrSotaLLMs("sota-llms summarization failed.")
 		}
 		return goldenCaptions(e, tweetURL, 0)
 	},

@@ -17,14 +17,14 @@ import (
 // Ruby: "formats content through the configured OpenAI model".
 func TestFormatterSendsThePromptAndContent(t *testing.T) {
 	srv, got := fakeEndpoint(t, 200, okResponse)
-	out, err := NewFormatter(clientFor(srv, "openai-key")).Format(context.Background(), "source text")
+	out, err := NewFormatter(clientFor(srv, "sota-llms-key")).Format(context.Background(), "source text")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out != "formatted markdown" {
 		t.Errorf("out = %q", out)
 	}
-	if got.auth != "Bearer openai-key" || got.path != "/v1/chat/completions" {
+	if got.auth != "Bearer sota-llms-key" || got.path != "/v1/chat/completions" {
 		t.Errorf("request = %s %s", got.path, got.auth)
 	}
 	if got.body["model"] != "agy:gemini-3.8-flash-medium" || userContent(got.body) != FormatPrompt+"source text" {
@@ -38,7 +38,7 @@ func TestFormatterSendsThePromptAndContent(t *testing.T) {
 // Ruby: "rejects an empty API key before making a request".
 func TestFormatterMissingKey(t *testing.T) {
 	_, err := NewFormatter(NewClient("")).Format(context.Background(), "x")
-	if !errors.Is(err, ErrConfiguration) || err.Error() != "OPENAI_API_KEY is not configured." {
+	if !errors.Is(err, ErrConfiguration) || err.Error() != "SOTA_LLMS_API_KEY is not configured." {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -121,16 +121,16 @@ func TestSummarizerParsesTheModelJSON(t *testing.T) {
 		"json fence": {text: "```json\n" + good + "\n```", title: "T", html: "<p>x</p>"},
 		"bare fence": {text: "```\n" + good + "\n```", title: "T", html: "<p>x</p>"},
 		// \z is the very end, so Ruby leaves a fence followed by a newline in place.
-		"fence then newline": {text: "```json\n" + good + "\n```\n", wantError: "OpenAI returned unparseable summary."},
+		"fence then newline": {text: "```json\n" + good + "\n```\n", wantError: "sota-llms returned unparseable summary."},
 		"fence no newline":   {text: "```json" + good + "```", title: "T", html: "<p>x</p>"},
-		"missing title":      {text: `{"summary_html":"<p>x</p>"}`, wantError: "OpenAI returned incomplete summary."},
-		"blank title":        {text: modelJSON("  ", "<p>x</p>"), wantError: "OpenAI returned incomplete summary."},
-		"blank html":         {text: modelJSON("T", " \n"), wantError: "OpenAI returned incomplete summary."},
-		"null html":          {text: `{"title":"T","summary_html":null}`, wantError: "OpenAI returned incomplete summary."},
-		"not an object":      {text: `["a"]`, wantError: "OpenAI returned incomplete summary."},
-		"not json":           {text: "Sure! here is the article", wantError: "OpenAI returned unparseable summary."},
-		"truncated":          {text: `{"title":"T","summary_html":"<p>x`, wantError: "OpenAI returned unparseable summary."},
-		"only a fence":       {text: "```json\n```", wantError: "OpenAI returned unparseable summary."},
+		"missing title":      {text: `{"summary_html":"<p>x</p>"}`, wantError: "sota-llms returned incomplete summary."},
+		"blank title":        {text: modelJSON("  ", "<p>x</p>"), wantError: "sota-llms returned incomplete summary."},
+		"blank html":         {text: modelJSON("T", " \n"), wantError: "sota-llms returned incomplete summary."},
+		"null html":          {text: `{"title":"T","summary_html":null}`, wantError: "sota-llms returned incomplete summary."},
+		"not an object":      {text: `["a"]`, wantError: "sota-llms returned incomplete summary."},
+		"not json":           {text: "Sure! here is the article", wantError: "sota-llms returned unparseable summary."},
+		"truncated":          {text: `{"title":"T","summary_html":"<p>x`, wantError: "sota-llms returned unparseable summary."},
+		"only a fence":       {text: "```json\n```", wantError: "sota-llms returned unparseable summary."},
 	} {
 		srv, _ := fakeEndpoint(t, 200, envelope(t, tc.text))
 		res, err := NewSummarizer(clientFor(srv, "k")).Summarize(context.Background(), "t")

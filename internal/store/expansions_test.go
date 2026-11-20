@@ -38,7 +38,7 @@ func TestCreateExpansionDefaults(t *testing.T) {
 	if e.ID == 0 || e.UserID != u.ID || e.FileName != "notes.md" || e.SelectedText != "beta" || e.Question != "Why?" {
 		t.Fatalf("got %+v", e)
 	}
-	if e.Status != "pending" || e.Mode != "create_new" || e.Occurrence != 0 || e.UseOpenAI {
+	if e.Status != "pending" || e.Mode != "create_new" || e.Occurrence != 0 || e.UseSotaLLMs {
 		t.Fatalf("defaults: %+v", e)
 	}
 	if e.URL != nil || e.ErrorDetail != nil || e.FallbackAnchor != nil || e.ProviderUsed != nil || e.HTMLBytes != nil {
@@ -60,12 +60,12 @@ func TestCreateExpansionStoresEveryColumn(t *testing.T) {
 	u := newExpansionUser(t, pool, "e@x.com")
 	e, err := store.CreateExpansion(ctx, pool, store.NewExpansion{
 		UserID: u.ID, FileName: "n.md", SelectedText: "s", Question: "q",
-		Occurrence: 3, Mode: "edit_in_place", FallbackAnchor: "sec-2", UseOpenAI: true,
+		Occurrence: 3, Mode: "edit_in_place", FallbackAnchor: "sec-2", UseSotaLLMs: true,
 	})
 	must(t, err)
 	got, err := store.FindExpansion(ctx, pool, e.ID)
 	must(t, err)
-	if got.Occurrence != 3 || got.Mode != "edit_in_place" || !got.UseOpenAI || !got.EditInPlace() ||
+	if got.Occurrence != 3 || got.Mode != "edit_in_place" || !got.UseSotaLLMs || !got.EditInPlace() ||
 		got.FallbackAnchor == nil || *got.FallbackAnchor != "sec-2" {
 		t.Fatalf("got %+v", got)
 	}

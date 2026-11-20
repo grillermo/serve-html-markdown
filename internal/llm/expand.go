@@ -20,8 +20,8 @@ const (
 	DefaultClaudeModel = "sonnet"
 	// CodexModel is the model of the codex fallback.
 	CodexModel = "earth"
-	// OpenAIExpandModel is the model of the OpenAI path (now sota-llms' agy model).
-	OpenAIExpandModel = DefaultModel
+	// SotaLLMsExpandModel is the model of the sota-llms path.
+	SotaLLMsExpandModel = DefaultModel
 )
 
 // Stages stamped on the expansion while it is generated.
@@ -67,27 +67,27 @@ type Params struct {
 	Document  string
 	Selection string
 	Question  string
-	// UseOpenAI sends the prompt to OpenAI only (no CLI, and no fallback).
-	UseOpenAI bool
+	// UseSotaLLMs sends the prompt to sota-llms only (no CLI, and no fallback).
+	UseSotaLLMs bool
 }
 
 // ExpandService turns a document, a selection and a question into a page
 // (Expand) or into the rewritten document (Rewrite): through the claude CLI,
-// then the codex CLI when claude fails, or through OpenAI on request.
+// then the codex CLI when claude fails, or through sota-llms on request.
 type ExpandService struct {
 	// ClaudeModel is passed to claude --model; "" means DefaultClaudeModel.
 	ClaudeModel string
-	// OpenAI is the client of the OpenAI path, built with the
-	// EXPANSION_LLM_API_KEY; nil or a blank key means "not configured".
-	OpenAI *Client
+	// SotaLLMs is the client of the sota-llms path, built with
+	// SOTA_LLMS_API_KEY; nil or a blank key means "not configured".
+	SotaLLMs *Client
 	// Runner starts the CLIs; nil means the real process runner, which kills the
 	// whole process group after CommandTimeout.
 	Runner Runner
 }
 
-// NewExpandService returns a service for the real CLIs and the OpenAI endpoint.
-func NewExpandService(claudeModel, openAIKey string) *ExpandService {
-	return &ExpandService{ClaudeModel: claudeModel, OpenAI: NewClient(openAIKey)}
+// NewExpandService returns a service for the real CLIs and sota-llms.
+func NewExpandService(claudeModel, sotaLLMsKey string) *ExpandService {
+	return &ExpandService{ClaudeModel: claudeModel, SotaLLMs: NewClient(sotaLLMsKey)}
 }
 
 // Expand returns a standalone HTML page that answers the question. rec may be
@@ -136,7 +136,7 @@ func (s *ExpandService) generate(ctx context.Context, template string, validate 
 			"duration", time.Since(start).Round(time.Millisecond), "err", err.Error()}, Diagnostics(err)...)
 		slog.Warn(msg, attrs...)
 	}
-	if !p.UseOpenAI && len(prompt) > MaxPromptArgBytes {
+	if !p.UseSotaLLMs && len(prompt) > MaxPromptArgBytes {
 		// The CLIs take the prompt as an argument, which the OS limits (see
 		// promptArgLimit): refuse now rather than spawn two doomed processes.
 		slog.Warn("[ClaudeExpandService] prompt too large for the CLIs", "file", p.FileName, "prompt_bytes", len(prompt))
@@ -159,19 +159,19 @@ func (s *ExpandService) generate(ctx context.Context, template string, validate 
 	}
 
 	slog.Info("[ClaudeExpandService] generating", "file", p.FileName, "selection_bytes", len(p.Selection),
-		"question_bytes", len(p.Question), "use_openai", p.UseOpenAI)
+		"question_bytes", len(p.Question), "use_sota_llms", p.UseSotaLLMs)
 	stamp(StageRequestStart)
 
-	if p.UseOpenAI {
-		text, err := s.runOpenAI(ctx, prompt)
+	if p.UseSotaLLMs {
+		text, err := s.runSotaLLMs(ctx, prompt)
 		if err == nil {
-			text, err = finish("openai", text)
+			text, err = finish("sota-llms", text)
 		}
 		if err != nil {
-			failed("openai", start, err, "[ClaudeExpandService] openai failed")
+			failed("sota-llms", start, err, "[ClaudeExpandService] sota-llms failed")
 			return "", err
 		}
-		return done("openai", text)
+		return done("sota-llms", text)
 	}
 
 	text, err := s.runClaude(ctx, prompt)
@@ -206,19 +206,19 @@ func (s *ExpandService) run(ctx context.Context, argv []string) ([]byte, []byte,
 	return execRunner(ctx, argv)
 }
 
-func (s *ExpandService) runOpenAI(ctx context.Context, prompt string) (string, error) {
-	if s.OpenAI == nil {
-		return "", expandErr("EXPANSION_LLM_API_KEY is not configured.", ErrConfiguration)
+func (s *ExpandService) runSotaLLMs(ctx context.Context, prompt string) (string, error) {
+	if s.SotaLLMs == nil {
+		return "", expandErr("SOTA_LLMS_API_KEY is not configured.", ErrConfiguration)
 	}
-	text, err := s.OpenAI.Generate(ctx, Request{
-		Model: OpenAIExpandModel,
+	text, err := s.SotaLLMs.Generate(ctx, Request{
+		Model: SotaLLMsExpandModel,
 		Input: prompt,
 	})
 	if errors.Is(err, ErrConfiguration) {
-		return "", expandErr("EXPANSION_LLM_API_KEY is not configured.", err)
+		return "", expandErr("SOTA_LLMS_API_KEY is not configured.", err)
 	}
 	if err != nil {
-		return "", expandErr("openai request failed", err, "model", OpenAIExpandModel, "endpoint", s.OpenAI.Endpoint)
+		return "", expandErr("sota-llms request failed", err, "model", SotaLLMsExpandModel, "endpoint", s.SotaLLMs.Endpoint)
 	}
 	return text, nil
 }

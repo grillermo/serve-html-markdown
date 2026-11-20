@@ -279,10 +279,10 @@ func TestCreateRecordsTheServedFile(t *testing.T) {
 }
 
 // Ruby: "returns a generic bad gateway response when OpenAI fails".
-func TestCreateOpenAIFailureIsAGenericBadGateway(t *testing.T) {
-	e := newUploadEnv(t, failing(llm.ErrOpenAI("sensitive upstream detail")))
+func TestCreateSotaLLMsFailureIsAGenericBadGateway(t *testing.T) {
+	e := newUploadEnv(t, failing(llm.ErrSotaLLMs("sensitive upstream detail")))
 	rec := e.serve(formReq("/file/new", url.Values{"content": {"source text"}, "filename": {"note"}}, bearer))
-	wantDetail(t, "openai failure", rec, 502, "OpenAI formatting failed.")
+	wantDetail(t, "sota-llms failure", rec, 502, "sota-llms formatting failed.")
 	if strings.Contains(rec.Body.String(), "sensitive") {
 		t.Error("the upstream message leaked")
 	}
@@ -299,7 +299,7 @@ func TestCreateOpenAIFailureIsAGenericBadGateway(t *testing.T) {
 func TestCreateMissingAPIKeyIsABadGateway(t *testing.T) {
 	e := newUploadEnv(t, failing(llm.ErrConfiguration))
 	rec := e.serve(formReq("/file/new", url.Values{"content": {"x"}, "filename": {"note"}}, bearer))
-	wantDetail(t, "configuration", rec, 502, "OpenAI formatting failed.")
+	wantDetail(t, "configuration", rec, 502, "sota-llms formatting failed.")
 	if got := e.children(t); len(got) != 0 {
 		t.Errorf("files created: %v", got)
 	}
@@ -309,7 +309,7 @@ func TestCreateMissingAPIKeyIsABadGateway(t *testing.T) {
 	srv := New(cfg, testdb.New(t))
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, formReq("/file/new", url.Values{"content": {"x"}, "filename": {"note"}}, bearer))
-	wantDetail(t, "default formatter", rec, 502, "OpenAI formatting failed.")
+	wantDetail(t, "default formatter", rec, 502, "sota-llms formatting failed.")
 }
 
 func TestCreateUnexpectedFormatterErrorIsAnInternalError(t *testing.T) {
@@ -324,15 +324,11 @@ func TestCreateUnexpectedFormatterErrorIsAnInternalError(t *testing.T) {
 	}
 }
 
-// The default formatter talks to OpenAI through the keys of the config.
+// The default formatter talks to sota-llms with SOTA_LLMS_API_KEY.
 func TestDefaultFormatterUsesTheConfiguredKey(t *testing.T) {
 	cfg := testConfig(t)
-	cfg.OpenAIKey, cfg.ExpansionLLMKey = "", "expansion-key"
-	if got := newFormatter(cfg).Client.APIKey; got != "expansion-key" {
-		t.Errorf("key = %q", got)
-	}
-	cfg.OpenAIKey = "openai-key"
-	if got := newFormatter(cfg).Client.APIKey; got != "openai-key" {
+	cfg.SotaLLMsKey = "sota-llms-key"
+	if got := newFormatter(cfg).Client.APIKey; got != "sota-llms-key" {
 		t.Errorf("key = %q", got)
 	}
 }
@@ -427,7 +423,7 @@ func TestCreateBodyIsCapped(t *testing.T) {
 }
 
 // The formatter is called with the request's context, so a client that goes away
-// stops the OpenAI call, and nothing is created.
+// stops the sota-llms call, and nothing is created.
 func TestCreatePassesTheRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -441,7 +437,7 @@ func TestCreatePassesTheRequestContext(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			seen <- nil
 		}
-		return "", llm.ErrOpenAI("x")
+		return "", llm.ErrSotaLLMs("x")
 	}})
 	req := formReq("/file/new", url.Values{"content": {"x"}, "filename": {"a"}}, bearer).WithContext(ctx)
 	done := make(chan int, 1)
@@ -516,7 +512,7 @@ func TestUploadRejectsMarkdownTheServerWouldRefuseToShow(t *testing.T) {
 }
 
 // Deadlines are extended per request, so server-level timeouts do not cut off a
-// slow OpenAI call or a big upload.
+// slow sota-llms call or a big upload.
 type deadlineWriter struct {
 	http.ResponseWriter
 	read, write time.Time
@@ -555,7 +551,7 @@ func TestCreateAndUploadExtendTheirDeadlines(t *testing.T) {
 func TestCreateRecordsTheRowEvenIfTheClientWentAway(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	e := newUploadEnv(t, &fakeFormatter{fn: func(context.Context, string) (string, error) {
-		cancel() // the client hangs up while OpenAI answers
+		cancel() // the client hangs up while sota-llms answers
 		return "formatted", nil
 	}})
 	e.serve(formReq("/file/new", url.Values{"content": {"x"}, "filename": {"gone"}}, bearer).WithContext(ctx))

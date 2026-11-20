@@ -1,5 +1,5 @@
-// Package llm talks to an OpenAI-compatible chat-completions endpoint (sota-llms,
-// which answers with the agy CLI): one prompt in, the reply text out. Errors never carry the API key or the upstream response body.
+// Package llm talks to sota-llms' chat-completions endpoint (it answers with
+// the agy CLI): one prompt in, the reply text out. Errors never carry the API key or the upstream response body.
 package llm
 
 import (
@@ -28,18 +28,18 @@ const (
 
 // FormattingFailed is the one message the formatter's errors carry and the
 // web layer shows (as the 502 detail); it never includes the upstream's words.
-const FormattingFailed = "OpenAI formatting failed."
+const FormattingFailed = "sota-llms formatting failed."
 
-// Messages of Error, as the Ruby client raised them.
+// Messages of Error.
 const (
-	msgRequestFailed = "OpenAI request failed."
-	msgUnparseable   = "OpenAI returned an unparseable response."
-	msgNoOutput      = "OpenAI returned no output."
-	msgNotCompleted  = "OpenAI request could not be completed."
-	msgNotConfigured = "OPENAI_API_KEY is not configured."
+	msgRequestFailed = "sota-llms request failed."
+	msgUnparseable   = "sota-llms returned an unparseable response."
+	msgNoOutput      = "sota-llms returned no output."
+	msgNotCompleted  = "sota-llms request could not be completed."
+	msgNotConfigured = "SOTA_LLMS_API_KEY is not configured."
 )
 
-// Error is a failed OpenAI call. Message is generic and safe to show or log; it
+// Error is a failed sota-llms call. Message is generic and safe to show or log; it
 // never holds the upstream body or the API key. Cause (when set) is the
 // underlying transport error, reachable with errors.Is/As but not printed by
 // Error. Status (0 when there was no response) and the start of the response
@@ -54,24 +54,15 @@ type Error struct {
 func (e *Error) Error() string { return e.Message }
 func (e *Error) Unwrap() error { return e.cause }
 
-// ErrOpenAI makes an Error with msg.
-func ErrOpenAI(msg string) error { return &Error{Message: msg} }
+// ErrSotaLLMs makes an Error with msg.
+func ErrSotaLLMs(msg string) error { return &Error{Message: msg} }
 
-// ErrConfiguration is returned when no API key is configured.
+// ErrConfiguration is returned when SOTA_LLMS_API_KEY is blank.
 var ErrConfiguration error = configurationError{}
 
 type configurationError struct{}
 
 func (configurationError) Error() string { return msgNotConfigured }
-
-// APIKey is OPENAI_API_KEY, falling back to EXPANSION_LLM_API_KEY when the
-// first is blank (Ruby's `.presence ||`).
-func APIKey(openAI, expansion string) string {
-	if strings.TrimSpace(openAI) != "" {
-		return openAI
-	}
-	return expansion
-}
 
 // Client posts prompts to the chat-completions endpoint. Endpoint and HTTPClient are
 // fields so tests can point it at an httptest server.

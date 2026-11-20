@@ -50,7 +50,7 @@ type Server struct {
 	// as HTML (see MaxRenderBytes, MaxHTMLBytes); tests lower them.
 	maxRenderBytes, maxHTMLBytes int64
 	// formatter turns posted text into Markdown (WithFormatter replaces the
-	// OpenAI-backed default); maxCreateBytes and maxUploadBytes cap the bodies of
+	// sota-llms-backed default); maxCreateBytes and maxUploadBytes cap the bodies of
 	// POST /file/new and /file/upload (tests lower them).
 	formatter                      Formatter
 	maxCreateBytes, maxUploadBytes int64

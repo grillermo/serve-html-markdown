@@ -52,7 +52,7 @@ type Expansion struct {
 	FallbackAnchor *string
 	ProviderUsed   *string
 	HTMLBytes      *int
-	UseOpenAI      bool
+	UseSotaLLMs    bool
 	Timings        map[string]int64
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -63,13 +63,13 @@ type Expansion struct {
 func (e *Expansion) EditInPlace() bool { return e.Mode == "edit_in_place" }
 
 const expansionColumns = `id, user_id, file_name, selected_text, question, occurrence, mode, status, url,
-	error_detail, fallback_anchor, provider_used, html_bytes, use_openai, timings, created_at, updated_at`
+	error_detail, fallback_anchor, provider_used, html_bytes, use_sota_llms, timings, created_at, updated_at`
 
 func scanExpansion(row pgx.Row) (*Expansion, error) {
 	var e Expansion
 	var timings string
 	err := row.Scan(&e.ID, &e.UserID, &e.FileName, &e.SelectedText, &e.Question, &e.Occurrence, &e.Mode, &e.Status,
-		&e.URL, &e.ErrorDetail, &e.FallbackAnchor, &e.ProviderUsed, &e.HTMLBytes, &e.UseOpenAI, &timings,
+		&e.URL, &e.ErrorDetail, &e.FallbackAnchor, &e.ProviderUsed, &e.HTMLBytes, &e.UseSotaLLMs, &timings,
 		&e.CreatedAt, &e.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -116,7 +116,7 @@ type NewExpansion struct {
 	Occurrence     int
 	Mode           string
 	FallbackAnchor string
-	UseOpenAI      bool
+	UseSotaLLMs    bool
 }
 
 func (n NewExpansion) validate() *InvalidExpansionError {
@@ -161,10 +161,10 @@ func CreateExpansion(ctx context.Context, db DB, n NewExpansion) (*Expansion, er
 	}
 	now := utcNow()
 	e, err := scanExpansion(db.QueryRow(ctx, `INSERT INTO expansions
-		(user_id, file_name, selected_text, question, occurrence, mode, fallback_anchor, use_openai, created_at, updated_at)
+		(user_id, file_name, selected_text, question, occurrence, mode, fallback_anchor, use_sota_llms, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
 		RETURNING `+expansionColumns,
-		n.UserID, n.FileName, n.SelectedText, n.Question, n.Occurrence, n.Mode, fallback, n.UseOpenAI, now))
+		n.UserID, n.FileName, n.SelectedText, n.Question, n.Occurrence, n.Mode, fallback, n.UseSotaLLMs, now))
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23503" { // foreign_key_violation: no such user
 		return nil, ErrNotFound

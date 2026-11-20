@@ -133,13 +133,13 @@
   },
   "captions_summarizer_error": {
     "status": "failed",
-    "error_detail": "OpenAI summarization failed.",
+    "error_detail": "sota-llms summarization failed.",
     "caption_attempts": 0,
     "html_filename": null,
     "rulinky_link_id": null,
     "slack_success": [],
     "slack_failure": [
-      "[twitter-video #{id}] captions/publish failed: OpenaiSummarizer::Error: OpenAI summarization failed."
+      "[twitter-video #{id}] captions/publish failed: SotaLLMsSummarizer::Error: sota-llms summarization failed."
     ],
     "next_check_in_minutes": null
   },

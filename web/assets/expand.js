@@ -463,8 +463,8 @@
       fontSize: "16px" // keeps iOS from zooming the page on focus
     });
 
-    const openaiLabel = document.createElement("label");
-    Object.assign(openaiLabel.style, {
+    const sotaLLMsLabel = document.createElement("label");
+    Object.assign(sotaLLMsLabel.style, {
       display: "flex",
       alignItems: "center",
       gap: "6px",
@@ -472,10 +472,10 @@
       fontSize: "16px",
       cursor: "pointer"
     });
-    const openaiCheckbox = document.createElement("input");
-    openaiCheckbox.type = "checkbox";
-    Object.assign(openaiCheckbox.style, { width: "20px", height: "20px" });
-    openaiLabel.append(openaiCheckbox, document.createTextNode("Use OpenAI"));
+    const sotaLLMsCheckbox = document.createElement("input");
+    sotaLLMsCheckbox.type = "checkbox";
+    Object.assign(sotaLLMsCheckbox.style, { width: "20px", height: "20px" });
+    sotaLLMsLabel.append(sotaLLMsCheckbox, document.createTextNode("Use sota-llms"));
 
     const submit = document.createElement("button");
     submit.type = "submit";
@@ -493,7 +493,7 @@
       fontSize: "16px"
     });
 
-    actions.append(modeSelect, openaiLabel, submit);
+    actions.append(modeSelect, sotaLLMsLabel, submit);
 
     const message = document.createElement("div");
     message.style.color = "#e08080";
@@ -520,7 +520,7 @@
           question: textarea.value,
           mode: modeSelect.value,
           fallback_anchor: currentSelection.fallbackAnchor,
-          use_openai: openaiCheckbox.checked,
+          use_sota_llms: sotaLLMsCheckbox.checked,
           client_clicked_at: Date.now()
         })
       })

@@ -44,10 +44,10 @@ func clientFor(srv *httptest.Server, key string) *Client {
 
 const okResponse = `{"choices":[{"index":0,"message":{"role":"assistant","content":"formatted markdown"},"finish_reason":"stop"}]}`
 
-// Ruby: "formats content through the configured OpenAI model" (request half).
+// Ruby: "formats content through the configured model" (request half).
 func TestGeneratePostsModelAndInputWithBearerKey(t *testing.T) {
 	srv, got := fakeEndpoint(t, 200, okResponse)
-	text, err := clientFor(srv, "openai-key").Generate(context.Background(), Request{Model: "agy:gemini-3.8-flash-medium", Input: "hello"})
+	text, err := clientFor(srv, "sota-llms-key").Generate(context.Background(), Request{Model: "agy:gemini-3.8-flash-medium", Input: "hello"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestGeneratePostsModelAndInputWithBearerKey(t *testing.T) {
 	if got.method != "POST" || got.path != "/v1/chat/completions" {
 		t.Errorf("request = %s %s", got.method, got.path)
 	}
-	if got.auth != "Bearer openai-key" {
+	if got.auth != "Bearer sota-llms-key" {
 		t.Errorf("Authorization = %q", got.auth)
 	}
 	if got.contentType != "application/json" {
@@ -88,14 +88,14 @@ func TestGenerateUsesTheFirstChoice(t *testing.T) {
 	}
 }
 
-// Ruby: "raises a generic error when OpenAI rejects the request".
+// Ruby: "raises a generic error when sota-llms rejects the request".
 func TestGenerateNon2xxIsAGenericErrorWithoutTheBody(t *testing.T) {
 	const secret = "sensitive upstream details"
 	for _, status := range []int{400, 401, 429, 500, 302} {
 		srv, _ := fakeEndpoint(t, status, secret)
 		_, err := clientFor(srv, "sk-secret-key").Generate(context.Background(), Request{Input: "x"})
 		var e *Error
-		if !errors.As(err, &e) || e.Message != "OpenAI request failed." {
+		if !errors.As(err, &e) || e.Message != "sota-llms request failed." {
 			t.Fatalf("status %d: err = %v", status, err)
 		}
 		for _, leak := range []string{secret, "sk-secret-key"} {
@@ -106,13 +106,13 @@ func TestGenerateNon2xxIsAGenericErrorWithoutTheBody(t *testing.T) {
 	}
 }
 
-// Ruby: "raises a generic error when OpenAI returns a malformed body".
+// Ruby: "raises a generic error when sota-llms returns a malformed body".
 func TestGenerateUnparseableBody(t *testing.T) {
 	for _, body := range []string{"not json sensitive", "", `[1,2]`, `{"choices":`} {
 		srv, _ := fakeEndpoint(t, 200, body)
 		_, err := clientFor(srv, "k").Generate(context.Background(), Request{Input: "x"})
 		var e *Error
-		if !errors.As(err, &e) || e.Message != "OpenAI returned an unparseable response." {
+		if !errors.As(err, &e) || e.Message != "sota-llms returned an unparseable response." {
 			t.Errorf("body %q: err = %v", body, err)
 		}
 		if strings.Contains(err.Error(), "sensitive") {
@@ -131,7 +131,7 @@ func TestGenerateNoOutput(t *testing.T) {
 		srv, _ := fakeEndpoint(t, 200, body)
 		_, err := clientFor(srv, "k").Generate(context.Background(), Request{Input: "x"})
 		var e *Error
-		if !errors.As(err, &e) || e.Message != "OpenAI returned no output." {
+		if !errors.As(err, &e) || e.Message != "sota-llms returned no output." {
 			t.Errorf("body %s: err = %v", body, err)
 		}
 	}
@@ -145,7 +145,7 @@ func TestGenerateMissingKeyMakesNoRequest(t *testing.T) {
 		if !errors.Is(err, ErrConfiguration) {
 			t.Errorf("key %q: err = %v, want ErrConfiguration", key, err)
 		}
-		if err != nil && err.Error() != "OPENAI_API_KEY is not configured." {
+		if err != nil && err.Error() != "SOTA_LLMS_API_KEY is not configured." {
 			t.Errorf("message = %q", err.Error())
 		}
 	}
@@ -160,7 +160,7 @@ func TestGenerateTransportFailureIsGeneric(t *testing.T) {
 	srv.Close()
 	_, err := c.Generate(context.Background(), Request{Input: "x"})
 	var e *Error
-	if !errors.As(err, &e) || e.Message != "OpenAI request could not be completed." {
+	if !errors.As(err, &e) || e.Message != "sota-llms request could not be completed." {
 		t.Fatalf("err = %v", err)
 	}
 	if strings.Contains(err.Error(), "127.0.0.1") {
@@ -199,7 +199,7 @@ func TestGenerateHonoursContextCancellation(t *testing.T) {
 		t.Fatal("Generate did not return after the context was cancelled")
 	}
 	var e *Error
-	if !errors.As(err, &e) || e.Message != "OpenAI request could not be completed." {
+	if !errors.As(err, &e) || e.Message != "sota-llms request could not be completed." {
 		t.Fatalf("err = %v", err)
 	}
 	if !errors.Is(err, context.Canceled) {
@@ -218,7 +218,7 @@ func TestGenerateTimesOut(t *testing.T) {
 	c.HTTPClient = &hc
 	_, err := c.Generate(context.Background(), Request{Input: "x"})
 	var e *Error
-	if !errors.As(err, &e) || e.Message != "OpenAI request could not be completed." {
+	if !errors.As(err, &e) || e.Message != "sota-llms request could not be completed." {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -238,18 +238,7 @@ func TestGenerateCapsTheResponseSize(t *testing.T) {
 	srv, _ := fakeEndpoint(t, 200, big)
 	_, err := clientFor(srv, "k").Generate(context.Background(), Request{Input: "x"})
 	var e *Error
-	if !errors.As(err, &e) || e.Message != "OpenAI returned an unparseable response." {
+	if !errors.As(err, &e) || e.Message != "sota-llms returned an unparseable response." {
 		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestAPIKeyPrefersOpenAIThenExpansionKey(t *testing.T) {
-	cases := []struct{ openai, expansion, want string }{
-		{"a", "b", "a"}, {"", "b", "b"}, {"  ", "b", "b"}, {"", "", ""}, {"a", "", "a"},
-	}
-	for _, c := range cases {
-		if got := APIKey(c.openai, c.expansion); got != c.want {
-			t.Errorf("APIKey(%q,%q) = %q, want %q", c.openai, c.expansion, got, c.want)
-		}
 	}
 }

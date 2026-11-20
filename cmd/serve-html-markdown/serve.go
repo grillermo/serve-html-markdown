@@ -142,7 +142,7 @@ func newRunner(cfg config.Config, pool *pgxpool.Pool) (*jobs.Runner, error) {
 		Processor: &expansion.Processor{
 			FilesDir: cfg.FilesDir,
 			DB:       pool,
-			Expander: llm.NewExpandService(cfg.ClaudeModel, cfg.ExpansionLLMKey),
+			Expander: llm.NewExpandService(cfg.ClaudeModel, cfg.SotaLLMsKey),
 		},
 	}
 	videoDeps := jobs.VideoDeps{
@@ -151,7 +151,7 @@ func newRunner(cfg config.Config, pool *pgxpool.Pool) (*jobs.Runner, error) {
 		Ytdlp:       video.NewYtdlpClient(cfg.YtdlpBin),
 		Cookies:     video.NewEgoCookies(),
 		NewUploader: jobs.UploaderSource(pool, cfg.YoutubeClientID, cfg.YoutubeClientSecret, cfg.YoutubeRefreshToken),
-		Summarizer:  llm.NewSummarizer(llm.NewClient(llm.APIKey(cfg.OpenAIKey, cfg.ExpansionLLMKey))),
+		Summarizer:  llm.NewSummarizer(llm.NewClient(cfg.SotaLLMsKey)),
 		Rulinky:     jobs.NewLinkPublisher(cfg.RulinkyHost, cfg.RulinkyToken),
 		Writer:      &files.HTMLWriter{Dir: cfg.FilesDir, DB: pool},
 		VideosDir:   cfg.VideosDir,

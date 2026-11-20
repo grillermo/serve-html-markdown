@@ -12,7 +12,7 @@ import (
 // configEnvKeys lists every environment variable Load/FromEnv reads.
 var configEnvKeys = []string{
 	"APP_ENV", "PORT", "HOST", "API_TOKEN", "SECRET_KEY_BASE",
-	"OPENAI_API_KEY", "EXPANSION_LLM_API_KEY", "EXPANSION_CLAUDE_MODEL",
+	"SOTA_LLMS_API_KEY", "EXPANSION_CLAUDE_MODEL",
 	"DATABASE_HOST", "DATABASE_PORT", "DATABASE_USER", "DATABASE_PASSWORD",
 	"DATABASE_NAME", "DATABASE_POOL", "DATABASE_PREPARED_STATEMENTS",
 	"ADMIN_EMAIL", "ADMIN_PASSWORD",
@@ -179,20 +179,20 @@ func TestLoadUnreadableDotenvWarns(t *testing.T) {
 func TestLoadDotenvDoesNotOverrideRealEnv(t *testing.T) {
 	clearConfigEnv(t)
 	root := t.TempDir()
-	contents := "API_TOKEN=from-dotenv\nOPENAI_API_KEY=from-dotenv\n"
+	contents := "API_TOKEN=from-dotenv\nSOTA_LLMS_API_KEY=from-dotenv\n"
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("API_TOKEN", "from-env")
 	// The file supplies this one; make sure it is unset beforehand and is
 	// cleaned up afterwards (Load exports it into the process environment).
-	unsetEnv(t, "OPENAI_API_KEY")
+	unsetEnv(t, "SOTA_LLMS_API_KEY")
 
 	c := Load(root)
 	if c.APIToken != "from-env" {
 		t.Fatalf("real env was overridden: %q", c.APIToken)
 	}
-	if c.OpenAIKey != "from-dotenv" {
-		t.Fatalf("dotenv file not loaded: %q", c.OpenAIKey)
+	if c.SotaLLMsKey != "from-dotenv" {
+		t.Fatalf("dotenv file not loaded: %q", c.SotaLLMsKey)
 	}
 }

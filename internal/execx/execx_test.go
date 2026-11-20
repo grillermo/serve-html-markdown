@@ -61,7 +61,7 @@ func TestSafeEnvAllowlist(t *testing.T) {
 	}
 	denied := []string{
 		"DATABASE_PASSWORD=s", "DATABASE_URL=u", "SECRET_KEY_BASE=s", "API_TOKEN=t", "SLACK_TOKEN=s",
-		"YOUTUBE_CLIENT_SECRET=y", "RULINKY_TOKEN=r", "OPENAI_API_KEY=o", "EXPANSION_LLM_API_KEY=k", "ADMIN_PASSWORD=a",
+		"YOUTUBE_CLIENT_SECRET=y", "RULINKY_TOKEN=r", "OPENAI_API_KEY=o", "SOTA_LLMS_API_KEY=k", "ADMIN_PASSWORD=a",
 		"ANTHROPIC_API_KEY=a", "AWS_SECRET_ACCESS_KEY=a",
 		"PATHOLOGICAL=1", "LCX=1", "XDG=1", "YTDL=1", "YT_DLPX=1", "NOPYTHON=1", "malformed", "=novalue", "HOME_EXTRA=1", "path=lower",
 	}

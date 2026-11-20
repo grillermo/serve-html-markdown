@@ -292,25 +292,25 @@ func TestExpandHTMLCheckIsCaseInsensitive(t *testing.T) {
 	}
 }
 
-func openAIService(t *testing.T, key string, status int, body string) (*ExpandService, *capture, *fakeRunner) {
+func sotaLLMsService(t *testing.T, key string, status int, body string) (*ExpandService, *capture, *fakeRunner) {
 	t.Helper()
 	srv, got := fakeEndpoint(t, status, body)
 	f := &fakeRunner{claude: func([]string) ([]byte, error) { t.Error("claude must not run"); return nil, errExit }}
 	f.codex = f.claude
 	s := serviceWith(f)
-	s.OpenAI = clientFor(srv, key)
+	s.SotaLLMs = clientFor(srv, key)
 	return s, got, f
 }
 
-var openAIExpandResponse = `{"choices":[{"message":{"content":` +
+var sotaLLMsExpandResponse = `{"choices":[{"message":{"content":` +
 	func() string { b, _ := json.Marshal(expandHTML); return string(b) }() + `}}]}`
 
-// Ruby: "calls openai when use_openai is true" and "records openai as provider_used".
-func TestExpandCallsOpenAI(t *testing.T) {
-	s, got, _ := openAIService(t, "test-key", 200, openAIExpandResponse)
+// Ruby: "calls openai when use_sota_llms is true" and "records openai as provider_used".
+func TestExpandCallsSotaLLMs(t *testing.T) {
+	s, got, _ := sotaLLMsService(t, "test-key", 200, sotaLLMsExpandResponse)
 	rec := &fakeRecorder{}
 	p := expandArgs
-	p.UseOpenAI = true
+	p.UseSotaLLMs = true
 	out, err := s.Expand(context.Background(), p, rec)
 	if err != nil || out != expandHTML {
 		t.Fatalf("got %q, %v", out, err)
@@ -319,16 +319,16 @@ func TestExpandCallsOpenAI(t *testing.T) {
 		!strings.Contains(userContent(got.body), "Alpha beta.") || got.auth != "Bearer test-key" {
 		t.Errorf("request = %v %s", got.body, got.auth)
 	}
-	if fmt.Sprint(rec.stages) != "[llm_request_start llm_response]" || rec.provider != "openai" || rec.bytes != len(expandHTML) {
+	if fmt.Sprint(rec.stages) != "[llm_request_start llm_response]" || rec.provider != "sota-llms" || rec.bytes != len(expandHTML) {
 		t.Errorf("rec = %+v", rec)
 	}
 }
 
 // Ruby: "raises without falling back to codex when openai fails".
-func TestExpandOpenAIFailureDoesNotFallBack(t *testing.T) {
-	s, _, f := openAIService(t, "test-key", 500, "sensitive upstream details")
+func TestExpandSotaLLMsFailureDoesNotFallBack(t *testing.T) {
+	s, _, f := sotaLLMsService(t, "test-key", 500, "sensitive upstream details")
 	p := expandArgs
-	p.UseOpenAI = true
+	p.UseSotaLLMs = true
 	_, err := s.Expand(context.Background(), p, nil)
 	if !isExpandError(err) || strings.Contains(err.Error(), "sensitive") {
 		t.Fatalf("err = %v", err)
@@ -339,10 +339,10 @@ func TestExpandOpenAIFailureDoesNotFallBack(t *testing.T) {
 }
 
 // Ruby: "raises when EXPANSION_LLM_API_KEY is not configured".
-func TestExpandOpenAIWithoutKey(t *testing.T) {
-	for _, s := range []*ExpandService{{}, {OpenAI: NewClient("  ")}} {
+func TestExpandSotaLLMsWithoutKey(t *testing.T) {
+	for _, s := range []*ExpandService{{}, {SotaLLMs: NewClient("  ")}} {
 		p := expandArgs
-		p.UseOpenAI = true
+		p.UseSotaLLMs = true
 		_, err := s.Expand(context.Background(), p, nil)
 		if !isExpandError(err) || !errors.Is(err, ErrConfiguration) {
 			t.Errorf("err = %v", err)
@@ -350,11 +350,11 @@ func TestExpandOpenAIWithoutKey(t *testing.T) {
 	}
 }
 
-func TestExpandOpenAIOutputIsValidatedToo(t *testing.T) {
+func TestExpandSotaLLMsOutputIsValidatedToo(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"no markup"}}]}`
-	s, _, _ := openAIService(t, "k", 200, body)
+	s, _, _ := sotaLLMsService(t, "k", 200, body)
 	p := expandArgs
-	p.UseOpenAI = true
+	p.UseSotaLLMs = true
 	if _, err := s.Expand(context.Background(), p, nil); err == nil || err.Error() != "output does not look like HTML" {
 		t.Errorf("err = %v", err)
 	}
@@ -470,8 +470,8 @@ func TestExpandRefusesAPromptTheCLIsCannotTake(t *testing.T) {
 	}
 }
 
-// Just under the limit still goes through, and OpenAI has no limit.
-func TestExpandPromptLimitBoundaryAndOpenAI(t *testing.T) {
+// Just under the limit still goes through, and sota-llms has no limit.
+func TestExpandPromptLimitBoundaryAndSotaLLMs(t *testing.T) {
 	f := &fakeRunner{claude: claudeJSON(false, expandHTML)}
 	p := expandArgs
 	overhead := len(strings.NewReplacer("%{file_name}", p.FileName, "%{document}", "", "%{selection}", p.Selection,
@@ -484,9 +484,9 @@ func TestExpandPromptLimitBoundaryAndOpenAI(t *testing.T) {
 	if _, err := serviceWith(f).Expand(context.Background(), p, nil); !errors.Is(err, ErrPromptTooLarge) {
 		t.Fatalf("one byte over: %v", err)
 	}
-	s, _, _ := openAIService(t, "k", 200, openAIExpandResponse)
-	p.UseOpenAI = true
+	s, _, _ := sotaLLMsService(t, "k", 200, sotaLLMsExpandResponse)
+	p.UseSotaLLMs = true
 	if _, err := s.Expand(context.Background(), p, nil); err != nil {
-		t.Fatalf("openai: %v", err)
+		t.Fatalf("sota-llms: %v", err)
 	}
 }

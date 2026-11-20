@@ -27,9 +27,9 @@ const SummaryPrompt = "You are a professional writer. You are given the transcri
 // Messages of the summarizer's own errors (Ruby: OpenaiSummarizer).
 const (
 	// SummarizationFailed is the message of every upstream failure.
-	SummarizationFailed = "OpenAI summarization failed."
-	msgIncomplete       = "OpenAI returned incomplete summary."
-	msgUnparseableJSON  = "OpenAI returned unparseable summary."
+	SummarizationFailed = "sota-llms summarization failed."
+	msgIncomplete       = "sota-llms returned incomplete summary."
+	msgUnparseableJSON  = "sota-llms returned unparseable summary."
 )
 
 // Summary is an article written from a transcript: a plain-text headline and
@@ -39,7 +39,7 @@ type Summary struct {
 	SummaryHTML string
 }
 
-// Summarizer turns a video's captions into an article with the OpenAI model.
+// Summarizer turns a video's captions into an article with the sota-llms model.
 type Summarizer struct {
 	Client *Client
 }
@@ -58,10 +58,10 @@ var (
 // Summarize writes captions (a WebVTT file or plain text; WebVTT is reduced to
 // its spoken words first) up as an article. A missing API key is
 // ErrConfiguration. Every upstream failure is an *Error with the generic
-// message "OpenAI summarization failed." (the cause, such as context.Canceled,
+// message "sota-llms summarization failed." (the cause, such as context.Canceled,
 // stays reachable with errors.Is), a model reply that is not JSON is
-// "OpenAI returned unparseable summary.", and one without a non-blank title
-// and summary_html is "OpenAI returned incomplete summary.". No message ever
+// "sota-llms returned unparseable summary.", and one without a non-blank title
+// and summary_html is "sota-llms returned incomplete summary.". No message ever
 // holds the upstream's words or the model's text.
 func (s *Summarizer) Summarize(ctx context.Context, captions string) (Summary, error) {
 	text, err := s.Client.Generate(ctx, Request{

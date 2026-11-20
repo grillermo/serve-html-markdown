@@ -35,7 +35,7 @@ The main values:
 
 ```dotenv
 API_TOKEN=replace-with-a-long-random-token
-OPENAI_API_KEY=replace-with-your-sota-llms-api-key  # bearer key for https://sota-llms.chiq.me (SOTA_LLMS_API_KEY there)
+SOTA_LLMS_API_KEY=replace-with-your-sota-llms-api-key  # bearer key for https://sota-llms.chiq.me
 SECRET_KEY_BASE=replace-with-a-long-random-secret
 HOST=example.com
 ```
@@ -112,7 +112,7 @@ http://localhost:8009/example.html
 http://localhost:8009/example.md
 ```
 
-Create an OpenAI-formatted Markdown file with a bearer token:
+Create a sota-llms-formatted Markdown file with a bearer token:
 
 ```sh
 curl -X POST http://localhost:8009/file/new \

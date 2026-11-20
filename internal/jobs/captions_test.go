@@ -287,12 +287,12 @@ func TestCaptionsPublishFailuresFailTheVideoWithRubysTexts(t *testing.T) {
 	}{
 		{"summarizer", func(e *videoEnv) {
 			e.summ.fn = func(context.Context, string) (llm.Summary, error) {
-				return llm.Summary{}, llm.ErrOpenAI("OpenAI summarization failed.")
+				return llm.Summary{}, llm.ErrSotaLLMs("sota-llms summarization failed.")
 			}
-		}, "OpenAI summarization failed.", "OpenaiSummarizer::Error: OpenAI summarization failed."},
+		}, "sota-llms summarization failed.", "SotaLLMsSummarizer::Error: sota-llms summarization failed."},
 		{"summarizer unconfigured", func(e *videoEnv) {
 			e.summ.fn = func(context.Context, string) (llm.Summary, error) { return llm.Summary{}, llm.ErrConfiguration }
-		}, "OPENAI_API_KEY is not configured.", "OpenaiSummarizer::ConfigurationError: OPENAI_API_KEY is not configured."},
+		}, "SOTA_LLMS_API_KEY is not configured.", "SotaLLMsSummarizer::ConfigurationError: SOTA_LLMS_API_KEY is not configured."},
 		{"rulinky", func(e *videoEnv) {
 			e.rulinky.fn = func(context.Context, string, string) (string, error) {
 				return "", &video.RulinkyError{Message: "rulinky link creation failed."}
@@ -374,7 +374,7 @@ func TestCaptionsShutdownDuringPublishPutsTheVideoBack(t *testing.T) {
 	cctx, cancel := context.WithCancel(ctx)
 	e.summ.fn = func(ctx context.Context, _ string) (llm.Summary, error) {
 		cancel()
-		return llm.Summary{}, llm.ErrOpenAI("OpenAI summarization failed.") // wraps nothing: the handler looks at ctx
+		return llm.Summary{}, llm.ErrSotaLLMs("sota-llms summarization failed.") // wraps nothing: the handler looks at ctx
 	}
 	v := e.awaiting(tweetURL)
 	err := NewTwitterVideoCaptions(e.deps)(cctx, Args{ID: v.ID})

@@ -16,15 +16,15 @@ func attrsString(attrs []any) string {
 	return b.String()
 }
 
-func TestDiagnosticsOfARejectedOpenAIRequest(t *testing.T) {
+func TestDiagnosticsOfARejectedSotaLLMsRequest(t *testing.T) {
 	srv, _ := fakeEndpoint(t, 429, `{"error":"rate limited"}`)
-	s := &ExpandService{OpenAI: clientFor(srv, "sk-secret-key")}
-	_, err := s.Expand(context.Background(), Params{FileName: "a.md", UseOpenAI: true}, nil)
-	if err == nil || err.Error() != "openai request failed" {
+	s := &ExpandService{SotaLLMs: clientFor(srv, "sk-secret-key")}
+	_, err := s.Expand(context.Background(), Params{FileName: "a.md", UseSotaLLMs: true}, nil)
+	if err == nil || err.Error() != "sota-llms request failed" {
 		t.Fatalf("err = %v", err)
 	}
 	got := attrsString(Diagnostics(err))
-	for _, want := range []string{"http_status=429", `http_body={"error":"rate limited"}`, "model=" + OpenAIExpandModel, "chain="} {
+	for _, want := range []string{"http_status=429", `http_body={"error":"rate limited"}`, "model=" + SotaLLMsExpandModel, "chain="} {
 		if !strings.Contains(got, want) {
 			t.Errorf("diagnostics %q missing %q", got, want)
 		}

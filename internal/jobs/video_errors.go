@@ -36,12 +36,12 @@ func recovered(log *slog.Logger, r any) error {
 // panic.
 func rubyErrorClass(err error) string {
 	var (
-		ytdlp  *video.YtdlpError
-		yt     *video.YoutubeError
-		ego    *video.EgoCookiesError
-		rulink *video.RulinkyError
-		openai *llm.Error
-		pe     *panicError
+		ytdlp    *video.YtdlpError
+		yt       *video.YoutubeError
+		ego      *video.EgoCookiesError
+		rulink   *video.RulinkyError
+		sotaLLMs *llm.Error
+		pe       *panicError
 	)
 	switch {
 	case errors.As(err, &ytdlp):
@@ -58,10 +58,10 @@ func rubyErrorClass(err error) string {
 			return "RulinkyClient::ConfigurationError"
 		}
 		return "RulinkyClient::Error"
-	case errors.As(err, &openai):
-		return "OpenaiSummarizer::Error"
+	case errors.As(err, &sotaLLMs):
+		return "SotaLLMsSummarizer::Error"
 	case errors.Is(err, llm.ErrConfiguration):
-		return "OpenaiSummarizer::ConfigurationError"
+		return "SotaLLMsSummarizer::ConfigurationError"
 	case errors.As(err, &pe):
 		return "panic"
 	}
@@ -81,12 +81,12 @@ func rubyErrorClass(err error) string {
 // the generic text and the real error goes to the log and to Slack only.
 func videoFailureDetail(err error) string {
 	var (
-		ytdlp  *video.YtdlpError
-		yt     *video.YoutubeError
-		ego    *video.EgoCookiesError
-		rulink *video.RulinkyError
-		openai *llm.Error
-		own    *detailError
+		ytdlp    *video.YtdlpError
+		yt       *video.YoutubeError
+		ego      *video.EgoCookiesError
+		rulink   *video.RulinkyError
+		sotaLLMs *llm.Error
+		own      *detailError
 	)
 	switch {
 	case errors.As(err, &ytdlp):
@@ -97,8 +97,8 @@ func videoFailureDetail(err error) string {
 		return ego.Error()
 	case errors.As(err, &rulink):
 		return rulink.Error()
-	case errors.As(err, &openai):
-		return openai.Error()
+	case errors.As(err, &sotaLLMs):
+		return sotaLLMs.Error()
 	case errors.As(err, &own):
 		return own.Error()
 	case errors.Is(err, llm.ErrConfiguration):

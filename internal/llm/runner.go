@@ -25,7 +25,7 @@ const (
 )
 
 // ErrPromptTooLarge is returned, before anything is started, for a prompt that
-// would not fit in the CLIs' argument list. The OpenAI path has no such limit.
+// would not fit in the CLIs' argument list. The sota-llms path has no such limit.
 // It is a shared value: never modify it. The processor turns it into a
 // user-facing error.
 var ErrPromptTooLarge error = &ExpandError{Message: "Document is too large to expand."}
@@ -101,7 +101,7 @@ var execRunner = newExecRunner(CommandTimeout)
 // server's whole one (which holds the database password, the session secret
 // and the API tokens), and runs in a fresh empty temporary directory, removed
 // afterwards, not in the server's working directory (which holds its dotenv
-// file). The OpenAI path starts no process, so none of this applies to it.
+// file). The sota-llms path starts no process, so none of this applies to it.
 func newExecRunner(timeout time.Duration) Runner {
 	return func(ctx context.Context, argv []string) ([]byte, []byte, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -168,7 +168,7 @@ func (w *capWriter) Write(p []byte) (int, error) {
 // envNames and envPrefixes are what a CLI subprocess may inherit: locale,
 // terminal, proxy and certificate settings, plus the variables claude and codex
 // read for their own login (CLAUDE_*, ANTHROPIC_*, CODEX_*, OPENAI_*).
-// Everything else (DATABASE_*, SECRET_KEY_BASE, API_TOKEN, EXPANSION_LLM_API_KEY,
+// Everything else (DATABASE_*, SECRET_KEY_BASE, API_TOKEN, SOTA_LLMS_API_KEY,
 // SLACK_*, YOUTUBE_*, RULINKY_*, ADMIN_* and the rest) is left out.
 var (
 	envNames = map[string]bool{

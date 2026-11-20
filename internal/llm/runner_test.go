@@ -46,7 +46,7 @@ func TestSubprocessEnvAllowlist(t *testing.T) {
 		"SSL_CERT_FILE=/f", "SSL_CERT_DIR=/d", "HTTP_PROXY=p", "HTTPS_PROXY=p", "NO_PROXY=n",
 		"http_proxy=p", "https_proxy=p", "no_proxy=n",
 		"CLAUDE_CONFIG_DIR=/x", "ANTHROPIC_API_KEY=a", "CODEX_HOME=/h", "OPENAI_API_KEY=o",
-		"DATABASE_PASSWORD=s", "DATABASE_URL=u", "SECRET_KEY_BASE=s", "API_TOKEN=t", "EXPANSION_LLM_API_KEY=k",
+		"DATABASE_PASSWORD=s", "DATABASE_URL=u", "SECRET_KEY_BASE=s", "API_TOKEN=t", "SOTA_LLMS_API_KEY=k",
 		"EXPANSION_CLAUDE_MODEL=m", "SLACK_TOKEN=s", "YOUTUBE_API_KEY=y", "RULINKY_TOKEN=r", "ADMIN_PASSWORD=a",
 		"PATHOLOGICAL=1", "LCX=1", "XDG=1", "malformed", "=novalue", "HOME_EXTRA=1", "path=lower",
 	}
@@ -71,7 +71,7 @@ func TestExecRunnerRunsWithTheAllowlistedEnvironmentInAFreshDirectory(t *testing
 	t.Setenv("HOME", "/home/expansion-test")
 	t.Setenv("DATABASE_PASSWORD", "TOP-SECRET-DB")
 	t.Setenv("SECRET_KEY_BASE", "TOP-SECRET-BASE")
-	t.Setenv("EXPANSION_LLM_API_KEY", "TOP-SECRET-KEY")
+	t.Setenv("SOTA_LLMS_API_KEY", "TOP-SECRET-KEY")
 	t.Setenv("ANTHROPIC_API_KEY", "claude-login")
 	out, _, err := execRunner(context.Background(), []string{env})
 	if err != nil {
@@ -83,7 +83,7 @@ func TestExecRunnerRunsWithTheAllowlistedEnvironmentInAFreshDirectory(t *testing
 			t.Errorf("env lacks %q:\n%s", want, vars)
 		}
 	}
-	for _, secret := range []string{"DATABASE_PASSWORD", "SECRET_KEY_BASE", "EXPANSION_LLM_API_KEY", "TOP-SECRET"} {
+	for _, secret := range []string{"DATABASE_PASSWORD", "SECRET_KEY_BASE", "SOTA_LLMS_API_KEY", "TOP-SECRET"} {
 		if strings.Contains(vars, secret) {
 			t.Errorf("env leaks %s:\n%s", secret, vars)
 		}

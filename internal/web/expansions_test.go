@@ -128,7 +128,7 @@ func idOf(t *testing.T, rec *httptest.ResponseRecorder) int64 {
 // Ruby: "creates a pending job and enqueues it without running the expander".
 func TestCreateExpansionEnqueuesAPendingJob(t *testing.T) {
 	e := newExpEnv(t)
-	rec := e.post(bodyWith(t, map[string]any{"use_openai": true, "authenticity_token": ""}))
+	rec := e.post(bodyWith(t, map[string]any{"use_sota_llms": true, "authenticity_token": ""}))
 	if rec.Code != 202 {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
@@ -141,7 +141,7 @@ func TestCreateExpansionEnqueuesAPendingJob(t *testing.T) {
 	}
 	x := e.load(t, id)
 	if x.FileName != "notes.md" || x.SelectedText != "beta" || x.Occurrence != 0 || x.Question != "why?" ||
-		!x.UseOpenAI || x.Status != "pending" || x.Mode != "create_new" || x.UserID != e.user.ID {
+		!x.UseSotaLLMs || x.Status != "pending" || x.Mode != "create_new" || x.UserID != e.user.ID {
 		t.Errorf("row %+v", x)
 	}
 	if len(e.enq.got) != 1 || e.enq.got[0] != (enqueued{jobs.KindGenerateExpansion, jobs.Args{ID: id}, 0}) {
@@ -318,7 +318,7 @@ func TestCreateExpansionOccurrence(t *testing.T) {
 	}
 }
 
-func TestCreateExpansionUseOpenAI(t *testing.T) {
+func TestCreateExpansionUseSotaLLMs(t *testing.T) {
 	e := newExpEnv(t)
 	for _, c := range []struct {
 		in   any
@@ -327,9 +327,9 @@ func TestCreateExpansionUseOpenAI(t *testing.T) {
 		{true, true}, {"true", true}, {"1", true}, {1, true}, {"on", true}, {"yes", true},
 		{false, false}, {"false", false}, {"0", false}, {0, false}, {"off", false}, {"f", false}, {"", false}, {nil, false},
 	} {
-		rec := e.post(bodyWith(t, map[string]any{"use_openai": c.in}))
-		if got := e.load(t, idOf(t, rec)).UseOpenAI; got != c.want {
-			t.Errorf("use_openai %#v stored as %v, want %v", c.in, got, c.want)
+		rec := e.post(bodyWith(t, map[string]any{"use_sota_llms": c.in}))
+		if got := e.load(t, idOf(t, rec)).UseSotaLLMs; got != c.want {
+			t.Errorf("use_sota_llms %#v stored as %v, want %v", c.in, got, c.want)
 		}
 	}
 }
@@ -337,7 +337,7 @@ func TestCreateExpansionUseOpenAI(t *testing.T) {
 func TestCreateExpansionAcceptsFormAndQueryParams(t *testing.T) {
 	e := newExpEnv(t)
 	req := httptest.NewRequest("POST", "/expansions?question=why%3F",
-		strings.NewReader("file_name=notes.md&selected_text=beta&occurrence=1&use_openai=1&mode=edit_in_place"))
+		strings.NewReader("file_name=notes.md&selected_text=beta&occurrence=1&use_sota_llms=1&mode=edit_in_place"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", e.h["Cookie"])
 	rec := httptest.NewRecorder()
@@ -346,7 +346,7 @@ func TestCreateExpansionAcceptsFormAndQueryParams(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	x := e.load(t, idOf(t, rec))
-	if x.Question != "why?" || x.Occurrence != 1 || !x.UseOpenAI || x.Mode != "edit_in_place" {
+	if x.Question != "why?" || x.Occurrence != 1 || !x.UseSotaLLMs || x.Mode != "edit_in_place" {
 		t.Errorf("row %+v", x)
 	}
 }

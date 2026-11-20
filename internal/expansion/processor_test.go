@@ -261,14 +261,14 @@ func TestStampsTheStages(t *testing.T) {
 func TestPassesTheExpansionToTheExpander(t *testing.T) {
 	e := newEnv(t)
 	e.write("notes.md", "Alpha beta gamma.")
-	x := e.expansion(func(n *store.NewExpansion) { n.UseOpenAI = true })
+	x := e.expansion(func(n *store.NewExpansion) { n.UseSotaLLMs = true })
 	e.exp.expand = func(llm.Params) (string, error) {
 		e.exp.recs[0].Stamp(llm.StageRequestStart)
 		e.exp.recs[0].RecordResponse("claude", len(answerHTML))
 		return answerHTML, nil
 	}
 	e.mustProcess(x)
-	want := llm.Params{FileName: "notes.md", Document: "Alpha beta gamma.", Selection: "beta", Question: "Why?", UseOpenAI: true}
+	want := llm.Params{FileName: "notes.md", Document: "Alpha beta gamma.", Selection: "beta", Question: "Why?", UseSotaLLMs: true}
 	if len(e.exp.expands) != 1 || e.exp.expands[0] != want {
 		t.Errorf("params = %+v", e.exp.expands)
 	}

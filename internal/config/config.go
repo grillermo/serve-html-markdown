@@ -14,7 +14,7 @@ import (
 type Config struct {
 	AppEnv, Root, Port, Host                                   string
 	APIToken, SecretKeyBase                                    string
-	OpenAIKey, ExpansionLLMKey, ClaudeModel                    string
+	SotaLLMsKey, ClaudeModel                                   string
 	DatabaseHost, DatabasePort, DatabaseUser, DatabasePassword string
 	DatabaseName                                               string
 	DatabasePool                                               int
@@ -71,7 +71,7 @@ func FromEnv() Config {
 	return Config{
 		AppEnv: env, Port: get("PORT", "8009"), Host: get("HOST", "localhost"),
 		APIToken: os.Getenv("API_TOKEN"), SecretKeyBase: os.Getenv("SECRET_KEY_BASE"),
-		OpenAIKey: os.Getenv("OPENAI_API_KEY"), ExpansionLLMKey: os.Getenv("EXPANSION_LLM_API_KEY"),
+		SotaLLMsKey:  os.Getenv("SOTA_LLMS_API_KEY"),
 		ClaudeModel:  get("EXPANSION_CLAUDE_MODEL", "sonnet"),
 		DatabaseHost: get("DATABASE_HOST", "localhost"), DatabasePort: get("DATABASE_PORT", "5432"),
 		DatabaseUser: os.Getenv("DATABASE_USER"), DatabasePassword: os.Getenv("DATABASE_PASSWORD"),

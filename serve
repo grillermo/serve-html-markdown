@@ -12,6 +12,10 @@ export SESSION=serve-html-markdown
 # shellcheck source=/dev/null
 . "$HOME/c/server/serve-in-place.sh"
 
+# Every subcommand below (migrate and the server) appends what it logs to
+# this file as well as printing it; it rotates to .1 past 50 MB.
+export LOG_FILE="$APP_DIR/log/production.log"
+
 mkdir -p tmp log
 echo "==> go build"; go build -o tmp/serve-html-markdown ./cmd/serve-html-markdown
 # Migrations take a session (advisory lock, multi-statement DDL), so they go
@@ -20,5 +24,5 @@ echo "==> migrate";  tmp/serve-html-markdown migrate
 
 # The web pane goes through PgBouncer (transaction mode), so no prepared
 # statements. SIGTERM stops the listener (30 s) and then lets running jobs finish.
-serve_pane web 8009 "env DATABASE_PORT=6432 DATABASE_PREPARED_STATEMENTS=false DATABASE_POOL=12 sh -c 'tmp/serve-html-markdown serve 2>&1 | tee -a log/production.log'"
+serve_pane web 8009 "env LOG_FILE=$LOG_FILE DATABASE_PORT=6432 DATABASE_PREPARED_STATEMENTS=false DATABASE_POOL=12 tmp/serve-html-markdown serve"
 serve_attach

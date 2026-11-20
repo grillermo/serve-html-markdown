@@ -21,14 +21,25 @@ commands:
 `
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	os.Exit(run(os.Args[1:]))
 }
 
 // run executes the subcommand named by args[0] (default "serve") and returns
-// the process exit code.
+// the process exit code. With LOG_FILE set (./serve sets it), everything the
+// command logs or prints also goes to that file.
 func run(args []string) int {
-	return runTo(args, os.Stdout, os.Stderr)
+	var stdout, stderr io.Writer = os.Stdout, os.Stderr
+	if path := os.Getenv("LOG_FILE"); path != "" {
+		f, err := openLogFile(path)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		defer f.Close()
+		stdout, stderr = io.MultiWriter(os.Stdout, f), io.MultiWriter(os.Stderr, f)
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(stdout, nil)))
+	return runTo(args, stdout, stderr)
 }
 
 func runTo(args []string, stdout, stderr io.Writer) int {

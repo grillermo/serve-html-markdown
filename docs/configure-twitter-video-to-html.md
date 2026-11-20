@@ -10,14 +10,13 @@ YOUTUBE_CLIENT_SECRET=
 The other three are optional overrides: `YOUTUBE_REFRESH_TOKEN` (a bootstrap
 fallback, see step 6), `YOUTUBE_REDIRECT_URI`, and `YOUTUBE_REAUTH_URL`.
 
-`YoutubeUploader` (`app/services/youtube_uploader.rb`) authorizes a
-`Google::Apis::YoutubeV3::YouTubeService` via a `Signet::OAuth2::Client`, using
-a refresh token read from `YoutubeCredential.refresh_token` (see step 6), to
-upload each downloaded tweet video as an **unlisted** YouTube video (so
-auto-captions get generated).
+`video.YoutubeUploader` (`internal/video/youtube_uploader.go`) authorizes the
+YouTube Data API client with `golang.org/x/oauth2`, using a refresh token read
+from the `youtube_credentials` table (see step 6), to upload each downloaded
+tweet video as an **unlisted** YouTube video (so auto-captions get generated).
 
-Run `bin/rails db:migrate` before any of this — it creates the
-`youtube_credentials` table that step 6 stores the token in.
+The table already exists (`db/schema.sql`); `./serve` applies any pending
+migration (`serve-html-markdown migrate`) every time it starts.
 
 ## 1. Create a Google Cloud project
 
@@ -78,7 +77,7 @@ access, and the refresh token is stored in the `youtube_credentials` table.
 There is nothing to copy into `.env` — `YOUTUBE_REFRESH_TOKEN` is now only a
 bootstrap fallback for a checkout that has never authorized.
 
-`rake youtube:refresh_token` just prints that URL.
+`serve-html-markdown youtube-reauth-url` just prints that URL.
 
 When a token does die, the ingest job posts the link to Slack with the stalled
 video's id, and finishing the flow re-queues that video automatically.

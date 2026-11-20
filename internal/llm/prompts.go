@@ -14,7 +14,7 @@ Write a complete standalone HTML page that answers the question and expands on t
 
 Requirements:
 - Output ONLY the HTML document, starting with <!DOCTYPE html>. No markdown fences, no commentary.
-- Dark theme, readable typography (max-width ~70ch, generous line-height), semantic HTML.
+- Dark theme, readable typography (max-width ~140ch, generous line-height), semantic HTML.
 - Title the page after the selection.
 - Ground the answer in the document's context, but bring in outside knowledge freely.
 - Put every code sample, command, or config snippet in <pre><code class="language-LANG">...</code></pre>, where LANG is its highlight.js language name (python, javascript, typescript, ruby, go, bash, sql, json, yaml, html, css, plaintext, ...), with <, > and & escaped. The server loads highlight.js into the page to color these blocks, so do not include any syntax highlighting library or theme yourself, and do not color code by hand.

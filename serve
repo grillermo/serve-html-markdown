@@ -4,8 +4,9 @@
 # Run by ../server/after-reboot.sh at boot and by ./activate after git-sync
 # lands new code.
 set -euo pipefail
-# after-reboot.sh does not run under a login shell; go and tmux live in Homebrew.
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+# after-reboot.sh does not run under a login shell; go and tmux live in Homebrew,
+# and the claude CLI (the expansions' first provider) in ~/.local/bin.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_DIR"
 export SESSION=serve-html-markdown

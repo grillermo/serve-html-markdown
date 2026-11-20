@@ -131,6 +131,10 @@ func TestSummarizerParsesTheModelJSON(t *testing.T) {
 		"not json":           {text: "Sure! here is the article", wantError: "sota-llms returned unparseable summary."},
 		"truncated":          {text: `{"title":"T","summary_html":"<p>x`, wantError: "sota-llms returned unparseable summary."},
 		"only a fence":       {text: "```json\n```", wantError: "sota-llms returned unparseable summary."},
+		// Gemini sometimes pretty-prints the HTML with raw newlines and tabs
+		// inside the string (invalid JSON); they are read as the escapes it meant.
+		"raw control chars in a string": {text: "{\n  \"title\": \"T\",\n  \"summary_html\": \"<p>x</p>\n\t<ul>\r\n<li>\x01y</li></ul>\"\n}", title: "T", html: "<p>x</p>\n\t<ul>\r\n<li>\x01y</li></ul>"},
+		"raw newline after an escape":   {text: "{\"title\":\"T\",\"summary_html\":\"<a href=\\\"u\\\">\n</a>\\\\\n\"}", title: "T", html: "<a href=\"u\">\n</a>\\"},
 	} {
 		srv, _ := fakeEndpoint(t, 200, envelope(t, tc.text))
 		res, err := NewSummarizer(clientFor(srv, "k")).Summarize(context.Background(), "t")

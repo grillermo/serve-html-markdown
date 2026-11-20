@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 
 	"serve-html-markdown/internal/transcript"
@@ -84,7 +85,9 @@ func parseSummary(text string) (Summary, error) {
 	j := rubyStrip(trailingFence.ReplaceAllString(leadingFence.ReplaceAllString(text, ""), ""))
 	var data any
 	if err := json.Unmarshal([]byte(j), &data); err != nil {
-		return Summary{}, &Error{Message: msgUnparseableJSON}
+		if json.Unmarshal(escapeControlsInStrings(j), &data) != nil {
+			return Summary{}, &Error{Message: msgUnparseableJSON}
+		}
 	}
 	obj, _ := data.(map[string]any)
 	title, _ := obj["title"].(string)
@@ -94,4 +97,42 @@ func parseSummary(text string) (Summary, error) {
 		return Summary{}, &Error{Message: msgIncomplete}
 	}
 	return Summary{Title: title, SummaryHTML: html}, nil
+}
+
+// escapeControlsInStrings rewrites the raw control characters (U+0000–U+001F)
+// found inside JSON strings as escapes, leaving the rest of j alone. Gemini
+// sometimes pretty-prints summary_html with literal newlines and indentation
+// inside the string, which JSON forbids; this reads them as the \n and \t it
+// meant (Python's json.loads(strict=False)). Whitespace between tokens stays
+// as is, since it sits outside any string.
+func escapeControlsInStrings(j string) []byte {
+	out := make([]byte, 0, len(j)+64)
+	inString, escaped := false, false
+	for i := 0; i < len(j); i++ {
+		c := j[i]
+		switch {
+		case !inString:
+			inString = c == '"'
+		case escaped:
+			escaped = false
+		case c == '\\':
+			escaped = true
+		case c == '"':
+			inString = false
+		case c < 0x20:
+			switch c {
+			case '\n':
+				out = append(out, `\n`...)
+			case '\r':
+				out = append(out, `\r`...)
+			case '\t':
+				out = append(out, `\t`...)
+			default:
+				out = fmt.Appendf(out, `\u%04x`, c)
+			}
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }

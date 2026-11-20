@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -33,10 +34,12 @@ const (
 // ExpandError is a failed generation. Message is generic and safe to log; it
 // never holds process output, a prompt, the API key or the upstream's words.
 // The underlying cause, when there is one, is reachable with errors.Is/As but
-// not printed by Error.
+// not printed by Error. details are slog attributes for the server log only
+// (see Diagnostics): they may quote CLI stderr or the model's output.
 type ExpandError struct {
 	Message string
 	cause   error
+	details []any
 }
 
 func (e *ExpandError) Error() string { return e.Message }
@@ -45,7 +48,9 @@ func (e *ExpandError) Unwrap() error { return e.cause }
 // ErrExpand makes an ExpandError with msg.
 func ErrExpand(msg string) error { return &ExpandError{Message: msg} }
 
-func expandErr(msg string, cause error) error { return &ExpandError{Message: msg, cause: cause} }
+func expandErr(msg string, cause error, details ...any) error {
+	return &ExpandError{Message: msg, cause: cause, details: details}
+}
 
 // Recorder is what the service reports to the expansion it works for: the
 // stages of its life (see the Stage constants) and which provider answered.
@@ -113,8 +118,23 @@ func (s *ExpandService) generate(ctx context.Context, template string, validate 
 		"%{selection}", p.Selection,
 		"%{question}", p.Question,
 	).Replace(template)
-	finish := func(text string) (string, error) {
-		return validate(stripFence(text, preserveWhitespace))
+	// finish validates a provider's answer; a rejected one keeps its size and
+	// start for the log, under the same generic message.
+	finish := func(provider, text string) (string, error) {
+		out, err := validate(stripFence(text, preserveWhitespace))
+		var xe *ExpandError
+		if err != nil && errors.As(err, &xe) {
+			return "", expandErr(xe.Message, nil, "provider", provider,
+				"output_bytes", len(text), "output_head", head(text, snippetBytes))
+		}
+		return out, err
+	}
+	// failed logs one provider's failure with how long it took and everything
+	// its error carries (see Diagnostics).
+	failed := func(provider string, start time.Time, err error, msg string) {
+		attrs := append([]any{"provider", provider, "file", p.FileName,
+			"duration", time.Since(start).Round(time.Millisecond), "err", err.Error()}, Diagnostics(err)...)
+		slog.Warn(msg, attrs...)
 	}
 	if !p.UseOpenAI && len(prompt) > MaxPromptArgBytes {
 		// The CLIs take the prompt as an argument, which the OS limits (see
@@ -127,8 +147,10 @@ func (s *ExpandService) generate(ctx context.Context, template string, validate 
 			rec.Stamp(stage)
 		}
 	}
+	start := time.Now()
 	done := func(provider, html string) (string, error) {
-		slog.Info("[ClaudeExpandService] succeeded", "provider", provider, "bytes", len(html))
+		slog.Info("[ClaudeExpandService] succeeded", "provider", provider, "bytes", len(html),
+			"duration", time.Since(start).Round(time.Millisecond))
 		stamp(StageResponse)
 		if rec != nil {
 			rec.RecordResponse(provider, len(html))
@@ -143,9 +165,10 @@ func (s *ExpandService) generate(ctx context.Context, template string, validate 
 	if p.UseOpenAI {
 		text, err := s.runOpenAI(ctx, prompt)
 		if err == nil {
-			text, err = finish(text)
+			text, err = finish("openai", text)
 		}
 		if err != nil {
+			failed("openai", start, err, "[ClaudeExpandService] openai failed")
 			return "", err
 		}
 		return done("openai", text)
@@ -153,21 +176,24 @@ func (s *ExpandService) generate(ctx context.Context, template string, validate 
 
 	text, err := s.runClaude(ctx, prompt)
 	if err == nil {
-		text, err = finish(text)
+		text, err = finish("claude", text)
 	}
 	if err == nil {
 		return done("claude", text)
 	}
 	if ctx.Err() != nil {
+		failed("claude", start, err, "[ClaudeExpandService] claude cancelled")
 		return "", expandErr("generation was cancelled", ctx.Err())
 	}
-	slog.Warn("[ClaudeExpandService] claude failed, falling back to codex", "reason", err.Error())
+	failed("claude", start, err, "[ClaudeExpandService] claude failed, falling back to codex")
 	stamp(StageFirstFailure)
+	codexStart := time.Now()
 	text, err = s.runCodex(ctx, prompt)
 	if err == nil {
-		text, err = finish(text)
+		text, err = finish("codex", text)
 	}
 	if err != nil {
+		failed("codex", codexStart, err, "[ClaudeExpandService] codex failed")
 		return "", err
 	}
 	return done("codex", text)
@@ -192,7 +218,7 @@ func (s *ExpandService) runOpenAI(ctx context.Context, prompt string) (string, e
 		return "", expandErr("EXPANSION_LLM_API_KEY is not configured.", err)
 	}
 	if err != nil {
-		return "", expandErr("openai request failed", err)
+		return "", expandErr("openai request failed", err, "model", OpenAIExpandModel, "endpoint", s.OpenAI.Endpoint)
 	}
 	return text, nil
 }
@@ -202,21 +228,25 @@ func (s *ExpandService) runClaude(ctx context.Context, prompt string) (string, e
 	if model == "" {
 		model = DefaultClaudeModel
 	}
-	stdout, _, err := s.run(ctx, []string{
+	stdout, stderr, err := s.run(ctx, []string{
 		"claude", "-p", prompt,
 		"--model", model,
 		"--output-format", "json",
 		"--tools", "",
 	})
 	if err != nil {
-		return "", commandError("claude", err)
+		return "", commandError("claude", err, stdout, stderr)
 	}
 	var parsed map[string]json.RawMessage
 	if err := json.Unmarshal(stdout, &parsed); err != nil || parsed == nil {
-		return "", ErrExpand("claude output was not JSON")
+		return "", expandErr("claude output was not JSON", err, "model", model,
+			"stdout_head", head(string(stdout), snippetBytes), "stderr", tail(stderr, stderrBytes))
 	}
 	if rubyTruthy(parsed["is_error"]) {
-		return "", ErrExpand("claude returned error")
+		// The JSON's result holds claude's error text (e.g. a usage limit).
+		return "", expandErr("claude returned error", nil, "model", model,
+			"subtype", rubyToS(parsed["subtype"]), "result", head(rubyToS(parsed["result"]), snippetBytes),
+			"stderr", tail(stderr, stderrBytes))
 	}
 	return rubyToS(parsed["result"]), nil
 }
@@ -230,7 +260,7 @@ func (s *ExpandService) runCodex(ctx context.Context, prompt string) (string, er
 	defer os.Remove(path)
 	_ = out.Close()
 
-	_, _, err = s.run(ctx, []string{
+	stdout, stderr, err := s.run(ctx, []string{
 		"codex", "exec",
 		"-m", CodexModel,
 		"-s", "read-only",
@@ -240,7 +270,7 @@ func (s *ExpandService) runCodex(ctx context.Context, prompt string) (string, er
 		prompt,
 	})
 	if err != nil {
-		return "", commandError("codex", err)
+		return "", commandError("codex", err, stdout, stderr)
 	}
 	f, err := os.Open(path)
 	if err != nil {

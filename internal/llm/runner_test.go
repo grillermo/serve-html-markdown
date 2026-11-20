@@ -22,12 +22,12 @@ func TestExecRunnerCapturesOutputAndExit(t *testing.T) {
 	}
 	_, _, err = execRunner(context.Background(), []string{"sh", "-c", "exit 3"})
 	var ee *exec.ExitError
-	if !errors.As(err, &ee) || commandError("x", err).Error() != "x CLI failed" {
+	if !errors.As(err, &ee) || commandError("x", err, nil, nil).Error() != "x CLI failed" {
 		t.Errorf("err = %v", err)
 	}
 	_, _, err = execRunner(context.Background(), []string{"/nonexistent/binary"})
-	if err == nil || commandError("claude", err).Error() != "claude CLI could not be started" {
-		t.Errorf("err = %v / %v", err, commandError("claude", err))
+	if err == nil || commandError("claude", err, nil, nil).Error() != "claude CLI could not be started" {
+		t.Errorf("err = %v / %v", err, commandError("claude", err, nil, nil))
 	}
 }
 
@@ -123,7 +123,7 @@ func TestExecRunnerTimeoutKillsTheProcessGroup(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Errorf("took %v", elapsed)
 	}
-	if got := commandError("claude", err).Error(); got != "claude timed out after 120s" {
+	if got := commandError("claude", err, nil, nil).Error(); got != "claude timed out after 120s" {
 		t.Errorf("message = %q", got)
 	}
 	raw, err := os.ReadFile(pidFile)
@@ -162,7 +162,7 @@ func TestExecRunnerCapsStdout(t *testing.T) {
 	if !errors.Is(err, errOutputTooLarge) {
 		t.Fatalf("err = %v", err)
 	}
-	if got := commandError("claude", err).Error(); got != "claude output was too large" {
+	if got := commandError("claude", err, nil, nil).Error(); got != "claude output was too large" {
 		t.Errorf("message = %q", got)
 	}
 }

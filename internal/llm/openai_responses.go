@@ -42,10 +42,13 @@ const (
 // Error is a failed OpenAI call. Message is generic and safe to show or log; it
 // never holds the upstream body or the API key. Cause (when set) is the
 // underlying transport error, reachable with errors.Is/As but not printed by
-// Error.
+// Error. Status (0 when there was no response) and the start of the response
+// body are kept for the server log only (see Diagnostics).
 type Error struct {
 	Message string
+	Status  int
 	cause   error
+	body    string
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -137,23 +140,24 @@ func (c *Client) Generate(ctx context.Context, req Request) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return "", &Error{Message: msgRequestFailed}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return "", &Error{Message: msgRequestFailed, Status: resp.StatusCode, body: head(string(body), snippetBytes)}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return "", &Error{Message: msgNotCompleted, cause: err}
+		return "", &Error{Message: msgNotCompleted, Status: resp.StatusCode, cause: err}
 	}
 	if len(body) > maxResponseBytes {
-		return "", &Error{Message: msgUnparseable}
+		return "", &Error{Message: msgUnparseable, Status: resp.StatusCode, body: head(string(body), snippetBytes)}
 	}
 	var parsed map[string]any
 	if err := json.Unmarshal(body, &parsed); err != nil || parsed == nil {
-		return "", &Error{Message: msgUnparseable}
+		return "", &Error{Message: msgUnparseable, Status: resp.StatusCode, cause: err, body: head(string(body), snippetBytes)}
 	}
 	text := outputText(parsed)
 	if strings.TrimSpace(text) == "" {
-		return "", &Error{Message: msgNoOutput}
+		// The body says why there is no text (a finish_reason, an error object).
+		return "", &Error{Message: msgNoOutput, Status: resp.StatusCode, body: head(string(body), snippetBytes)}
 	}
 	return text, nil
 }

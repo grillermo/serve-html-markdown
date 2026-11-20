@@ -242,17 +242,21 @@ func failExpansion(ctx context.Context, deps ExpansionDeps, log *slog.Logger, id
 	return fmt.Errorf("fail expansion %d: %w", id, err)
 }
 
-// logFailure logs the real error of a failed generation: its type, its text and,
-// for a reader-facing error that hides one (a failed write), the cause. Never
-// the document, the selection or the question.
+// logFailure logs the real error of a failed generation: its type, its text,
+// the reader-facing detail it becomes, for a reader-facing error that hides one
+// (a failed write) the cause, and for an LLM failure what llm.Diagnostics
+// recovers (HTTP status and body, CLI exit code and stderr, the start of a
+// rejected output, the error chain). Never the document, the selection or the
+// question.
 func logFailure(log *slog.Logger, err error) {
-	attrs := []any{"err", err, "type", fmt.Sprintf("%T", err)}
+	attrs := []any{"err", err, "type", fmt.Sprintf("%T", err), "detail", failureDetail(err)}
 	var ee *expansion.Error
 	if errors.As(err, &ee) {
 		if cause := errors.Unwrap(ee); cause != nil {
 			attrs = append(attrs, "cause", cause.Error(), "cause_type", fmt.Sprintf("%T", cause))
 		}
 	}
+	attrs = append(attrs, llm.Diagnostics(err)...)
 	log.Error("expansion job failed", attrs...)
 }
 

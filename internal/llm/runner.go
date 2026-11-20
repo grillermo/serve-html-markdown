@@ -20,7 +20,7 @@ const (
 	// maxCommandOutput caps the stdout and the codex output file that are read,
 	// so a runaway process cannot exhaust memory.
 	maxCommandOutput = 16 << 20
-	// maxCommandStderr caps what is kept of stderr (which is never used).
+	// maxCommandStderr caps what is kept of stderr (only its end is logged on a failure).
 	maxCommandStderr = 1 << 20
 )
 
@@ -49,25 +49,40 @@ func promptArgLimit(goos string) int {
 type Runner func(ctx context.Context, argv []string) (stdout, stderr []byte, err error)
 
 // commandError turns a Runner error into the generic ExpandError of the
-// command; the error text itself (which may hold paths or output) is dropped.
-func commandError(name string, err error) error {
+// command; the error text itself (which may hold paths or output) stays out of
+// the message. What the process wrote (the end of stderr, the start of stdout)
+// and its exit code go into the error's log-only details.
+func commandError(name string, err error, stdout, stderr []byte) error {
 	var exitErr *exec.ExitError
 	var execErr *exec.Error
 	var pathErr *fs.PathError
 	var errno syscall.Errno
+	details := []any{"command", name}
+	if errors.As(err, &exitErr) {
+		details = append(details, "exit_code", exitErr.ExitCode())
+		if exitErr.ExitCode() < 0 {
+			details = append(details, "exit_state", exitErr.String())
+		}
+	}
+	if len(stderr) > 0 {
+		details = append(details, "stderr", tail(stderr, stderrBytes))
+	}
+	if len(stdout) > 0 {
+		details = append(details, "stdout_head", head(string(stdout), snippetBytes))
+	}
 	switch {
 	case errors.Is(err, errTimedOut):
-		return expandErr(fmt.Sprintf("%s timed out after %ds", name, int(CommandTimeout/time.Second)), err)
+		return expandErr(fmt.Sprintf("%s timed out after %ds", name, int(CommandTimeout/time.Second)), err, details...)
 	case errors.Is(err, errOutputTooLarge):
-		return expandErr(name+" output was too large", err)
+		return expandErr(name+" output was too large", err, details...)
 	case errors.Is(err, syscall.E2BIG):
-		return expandErr(name+" CLI could not be started: the prompt is too large", err)
+		return expandErr(name+" CLI could not be started: the prompt is too large", err, details...)
 	case errors.As(err, &exitErr):
-		return expandErr(name+" CLI failed", err)
+		return expandErr(name+" CLI failed", err, details...)
 	case errors.As(err, &execErr), errors.As(err, &pathErr), errors.As(err, &errno):
-		return expandErr(name+" CLI could not be started", err)
+		return expandErr(name+" CLI could not be started", err, details...)
 	}
-	return expandErr(name+" CLI failed", err)
+	return expandErr(name+" CLI failed", err, details...)
 }
 
 var (
@@ -115,11 +130,12 @@ func newExecRunner(timeout time.Duration) Runner {
 		errb := &capWriter{limit: maxCommandStderr}
 		cmd.Stdout, cmd.Stderr = out, errb
 		err = cmd.Run()
+		// stderr is kept on failures too: it is what says why (for the log).
 		switch {
 		case out.exceeded:
-			return nil, nil, fmt.Errorf("%s: %w", argv[0], errOutputTooLarge)
+			return nil, errb.buf.Bytes(), fmt.Errorf("%s: %w", argv[0], errOutputTooLarge)
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			return nil, nil, fmt.Errorf("%s: %w", argv[0], errTimedOut)
+			return nil, errb.buf.Bytes(), fmt.Errorf("%s: %w", argv[0], errTimedOut)
 		}
 		return out.buf.Bytes(), errb.buf.Bytes(), err
 	}

@@ -26,7 +26,7 @@ const maxSlugBytes = 240
 const SummaryStylesheet = `html, body { margin: 0; padding: 0; }
 body { background: #111; color: #ddd; font-family: Georgia, "Times New Roman", serif; line-height: 1.6;
   -webkit-text-size-adjust: 100%; }
-main { max-width: 44em; margin: 0 auto; padding: 24px 24px 104px; font-size: 20px; }
+main { max-width: 88em; margin: 0 auto; padding: 24px 24px 104px; font-size: 20px; }
 a { color: #8ab4f8; }
 img { max-width: 100%; height: auto; }
 h1, h2, h3, h4 { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; line-height: 1.25; color: #fff; }

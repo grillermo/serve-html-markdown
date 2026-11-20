@@ -251,7 +251,7 @@ func TestSummaryDocumentMatchesTheGoldenFile(t *testing.T) {
 	}
 }
 
-const goldenServedHTMLSHA256 = "fb9e5be61f76d9931b05b3be20829dd37489f2f63da7db70c328075043393934"
+const goldenServedHTMLSHA256 = "e45f91c2117664b5581a506ccc4f506fa77d95a21185bcea7b44c873db1328d7"
 
 const writerRuby = "served_html_writer.rb"
 

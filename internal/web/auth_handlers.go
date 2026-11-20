@@ -160,9 +160,26 @@ func (s *Server) sessionUser(r *http.Request) (*store.User, error) {
 // context (auth.UserFrom). An anonymous request is answered the way Devise's
 // failure app does: a 401 for non-navigational formats (JSON, XHR), otherwise a
 // 302 to the sign-in page, remembering a GET/HEAD location in return_to.
+//
+// A request on the LAN listener from a trusted device (lanTrusted) acts as the
+// ADMIN_EMAIL user without a session; requireSession is the guard that never
+// allows that.
 func (s *Server) requireUser(next http.HandlerFunc) http.Handler {
+	return s.guard(next, true)
+}
+
+// requireSession is requireUser without LAN trust, for routes that change
+// account-level state (the YouTube authorization).
+func (s *Server) requireSession(next http.HandlerFunc) http.Handler {
+	return s.guard(next, false)
+}
+
+func (s *Server) guard(next http.HandlerFunc, allowLAN bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, err := s.sessionUser(r)
+		if err == nil && user == nil && allowLAN && s.lanTrusted(r) {
+			user, err = s.lanUser(r)
+		}
 		if err != nil {
 			s.serverError(w, r, err)
 			return

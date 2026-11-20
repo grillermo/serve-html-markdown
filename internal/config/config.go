@@ -20,9 +20,13 @@ type Config struct {
 	DatabasePool                                               int
 	PreparedStatements                                         bool
 	AdminEmail, AdminPassword                                  string
-	YtdlpBin, VideosDir, FilesDir                              string
-	YoutubeClientID, YoutubeClientSecret, YoutubeRefreshToken  string
-	YoutubeRedirectURI, YoutubeReauthURL                       string
+	// LanPort, when set, opens a second listener on which requests from
+	// LanTrustedIPs act as the ADMIN_EMAIL user without signing in (see
+	// internal/web/lan.go). LanTrustedIPs is the raw LAN_TRUSTED_IPS list.
+	LanPort, LanTrustedIPs                                    string
+	YtdlpBin, VideosDir, FilesDir                             string
+	YoutubeClientID, YoutubeClientSecret, YoutubeRefreshToken string
+	YoutubeRedirectURI, YoutubeReauthURL                      string
 	// YoutubeHost is HOST with Ruby's YouTube default, "localhost:8009" (Host
 	// defaults to "localhost"). The OAuth redirect and reauth URLs are built
 	// from it: Task 9.8 passes it as video.YoutubeSettings.Host and to
@@ -80,6 +84,7 @@ func FromEnv() Config {
 		DatabasePool:       getInt("DATABASE_POOL", 5),
 		PreparedStatements: os.Getenv("DATABASE_PREPARED_STATEMENTS") != "false",
 		AdminEmail:         os.Getenv("ADMIN_EMAIL"), AdminPassword: os.Getenv("ADMIN_PASSWORD"),
+		LanPort: os.Getenv("LAN_PORT"), LanTrustedIPs: os.Getenv("LAN_TRUSTED_IPS"),
 		YtdlpBin: get("YTDLP_BIN", "/opt/homebrew/bin/yt-dlp"), VideosDir: os.Getenv("VIDEOS_DIR"),
 		YoutubeClientID: os.Getenv("YOUTUBE_CLIENT_ID"), YoutubeClientSecret: os.Getenv("YOUTUBE_CLIENT_SECRET"),
 		YoutubeRefreshToken: os.Getenv("YOUTUBE_REFRESH_TOKEN"),

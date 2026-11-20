@@ -40,9 +40,9 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /summarize-video/{id}", numericID(http.HandlerFunc(s.showVideoSummary))) // public, like Rails
 	mux.Handle("GET /twitter-video/{id}", numericID(http.HandlerFunc(s.showVideoSummary)))
 
-	mux.Handle("GET /youtube/reauth", s.requireUser(s.youtubeReauth))
-	mux.Handle("GET /youtube/callback", s.requireUser(s.youtubeCallback))
-	mux.Handle("GET /youtube/debug", s.requireUser(s.youtubeDebug))
+	mux.Handle("GET /youtube/reauth", s.requireSession(s.youtubeReauth))
+	mux.Handle("GET /youtube/callback", s.requireSession(s.youtubeCallback))
+	mux.Handle("GET /youtube/debug", s.requireSession(s.youtubeDebug))
 	mux.Handle("POST /expansions", s.requireUser(s.createExpansion))
 	mux.Handle("GET /expansions/{id}", numericID(s.requireUser(conditionalGet(s.showExpansion))))
 	mux.Handle("PATCH /scroll_position", s.requireUser(s.updateScrollPosition))

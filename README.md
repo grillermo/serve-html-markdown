@@ -94,6 +94,17 @@ Viewing served files requires signing in. Configure `ADMIN_EMAIL` and
 admin user. API uploads remain authenticated separately with the `API_TOKEN`
 bearer token.
 
+### LAN access without signing in
+
+Set `LAN_PORT` (`./serve` uses 8010) and `LAN_TRUSTED_IPS` (comma-separated
+addresses) to open a second listener: a request on that port from a listed
+address acts as the `ADMIN_EMAIL` user with no sign-in, e.g.
+`http://192.168.1.1:8010/notes.md`. Trust comes from the connection's own source
+address and the port it arrived on, never from headers, and loopback addresses
+are refused. That is why it is safe only while the Cloudflare tunnel points at
+`PORT` and never at `LAN_PORT`. The YouTube routes still need a real session.
+A bad LAN setting turns the LAN listener off (logged) and leaves the site up.
+
 ## Run
 
 ```sh

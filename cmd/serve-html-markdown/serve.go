@@ -64,25 +64,39 @@ func serve(cfg config.Config, args []string, stderr io.Writer) int {
 	}
 	defer pool.Close()
 
+	// A bad LAN setting turns the LAN listener off, never the site.
+	if _, err := web.CheckLAN(cfg); err != nil {
+		slog.Error("serve: LAN listener disabled", "err", err)
+		cfg.LanPort = ""
+	}
 	ln, err := net.Listen("tcp", ":"+cfg.Port)
 	if err != nil {
 		fmt.Fprintf(stderr, "serve: %v\n", err)
 		return 1
 	}
-	if err := runServer(ctx, cfg, pool, ln, !*noJobs); err != nil {
+	// The LAN listener (see internal/web/lan.go) is only opened with LAN_PORT.
+	// The tunnel must never point at it.
+	var lanLn net.Listener
+	if cfg.LanPort != "" {
+		if lanLn, err = net.Listen("tcp", ":"+cfg.LanPort); err != nil {
+			slog.Error("serve: LAN listener disabled", "err", err)
+			lanLn, cfg.LanPort = nil, ""
+		}
+	}
+	if err := runServer(ctx, cfg, pool, ln, lanLn, !*noJobs); err != nil {
 		fmt.Fprintf(stderr, "serve: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-// runServer serves on ln and, with withJobs, runs the workers, until ctx is
+// runServer serves on ln (and on lanLn when it is not nil) and, with withJobs, runs the workers, until ctx is
 // cancelled. It then stops the listener and waits for in-flight requests
 // (shutdownGrace), and only then stops the workers, which finish their running
 // jobs (jobs.DefaultShutdownGrace): an expansion queued by a request that was
 // still in flight is not lost, and a restart never cuts a job short of its
 // database update.
-func runServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, ln net.Listener, withJobs bool) error {
+func runServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, ln, lanLn net.Listener, withJobs bool) error {
 	srv := &http.Server{
 		Handler:           web.New(cfg, pool),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -107,16 +121,23 @@ func runServer(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, ln ne
 		slog.Info("serve: job workers are off (--no-jobs)")
 	}
 
-	serveErr := make(chan error, 1)
+	// One channel for both listeners: either one failing on its own stops the
+	// server, and Shutdown closes both.
+	serveErr := make(chan error, 2)
 	go func() { serveErr <- srv.Serve(ln) }()
 	slog.Info("serve: listening", "addr", ln.Addr().String(), "env", cfg.AppEnv, "files", cfg.FilesDir)
+	if lanLn != nil {
+		go func() { serveErr <- srv.Serve(lanLn) }()
+		slog.Info("serve: LAN listener without sign-in for trusted IPs", "addr", lanLn.Addr().String(), "trusted", cfg.LanTrustedIPs)
+	}
 
 	var result error
 	select {
 	case err := <-serveErr:
 		// The listener failed on its own (Serve only returns before Shutdown
-		// when it broke).
+		// when it broke). Close the other listener too.
 		result = err
+		_ = srv.Close()
 	case <-ctx.Done():
 		slog.Info("serve: shutting down")
 		shutCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)

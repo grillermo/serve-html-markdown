@@ -59,7 +59,7 @@ func startServer(t *testing.T, withJobs bool) (addr string, stop func() error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	cfg := testConfig(t)
-	go func() { done <- runServer(ctx, cfg, pool, ln, withJobs) }()
+	go func() { done <- runServer(ctx, cfg, pool, ln, nil, withJobs) }()
 	return ln.Addr().String(), func() error {
 		cancel()
 		select {

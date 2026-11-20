@@ -25,5 +25,11 @@ echo "==> migrate";  tmp/serve-html-markdown migrate
 
 # The web pane goes through PgBouncer (transaction mode), so no prepared
 # statements. SIGTERM stops the listener (30 s) and then lets running jobs finish.
-serve_pane web 8009 "env LOG_FILE=$LOG_FILE DATABASE_PORT=6432 DATABASE_PREPARED_STATEMENTS=false DATABASE_POOL=12 tmp/serve-html-markdown serve"
+#
+# LAN_PORT 8010 serves the same pages to the devices in LAN_TRUSTED_IPS with no
+# sign-in (internal/web/lan.go). Never point the Cloudflare tunnel at it. The
+# macmini (192.168.1.1) is left out on purpose: traffic a local proxy relays
+# would come from its own address.
+LAN_TRUSTED_IPS="192.168.1.2,192.168.1.3,192.168.1.4,192.168.1.6"
+serve_pane web 8009 "env LOG_FILE=$LOG_FILE LAN_PORT=8010 LAN_TRUSTED_IPS=$LAN_TRUSTED_IPS DATABASE_PORT=6432 DATABASE_PREPARED_STATEMENTS=false DATABASE_POOL=12 tmp/serve-html-markdown serve"
 serve_attach

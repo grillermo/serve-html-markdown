@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,6 +36,8 @@ type Server struct {
 	// WithYoutubeAuthorizer); the default is built from the YouTube settings and
 	// fails while they are incomplete.
 	youtubeAuth func() (YoutubeAuthorizer, error)
+	// lanTrustedIPs are the devices trusted on the LAN listener (see lan.go).
+	lanTrustedIPs map[netip.Addr]bool
 	// pages holds the parsed page templates by name (see parsePages).
 	pages map[string]*template.Template
 	// digests maps asset names to digested paths and files (see newAssetTable).
@@ -136,6 +139,11 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 	if s.formatter == nil {
 		s.formatter = newFormatter(cfg)
 	}
+	trusted, err := CheckLAN(cfg)
+	if err != nil {
+		panic("web: " + err.Error())
+	}
+	s.lanTrustedIPs = trusted
 	s.renders = newLimiter(s.renderConcurrency)
 	s.htmlLimit = newLimiter(s.htmlConcurrency)
 	s.codec = auth.NewCodec(cfg.SecretKeyBase, "session").WithClock(func() time.Time { return s.Clock() })

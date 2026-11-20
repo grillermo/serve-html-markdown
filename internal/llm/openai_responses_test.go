@@ -37,24 +37,24 @@ func fakeEndpoint(t *testing.T, status int, response string) (*httptest.Server, 
 
 func clientFor(srv *httptest.Server, key string) *Client {
 	c := NewClient(key)
-	c.Endpoint = srv.URL + "/v1/responses"
+	c.Endpoint = srv.URL + "/v1/chat/completions"
 	c.HTTPClient = srv.Client()
 	return c
 }
 
-const okResponse = `{"output":[{"type":"reasoning","summary":[]},{"type":"message","content":[{"type":"output_text","text":"formatted markdown"}]}]}`
+const okResponse = `{"choices":[{"index":0,"message":{"role":"assistant","content":"formatted markdown"},"finish_reason":"stop"}]}`
 
 // Ruby: "formats content through the configured OpenAI model" (request half).
 func TestGeneratePostsModelAndInputWithBearerKey(t *testing.T) {
 	srv, got := fakeEndpoint(t, 200, okResponse)
-	text, err := clientFor(srv, "openai-key").Generate(context.Background(), Request{Model: "gpt-6-luna", Input: "hello"})
+	text, err := clientFor(srv, "openai-key").Generate(context.Background(), Request{Model: "agy:gemini-3.8-flash-medium", Input: "hello"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if text != "formatted markdown" {
 		t.Errorf("text = %q", text)
 	}
-	if got.method != "POST" || got.path != "/v1/responses" {
+	if got.method != "POST" || got.path != "/v1/chat/completions" {
 		t.Errorf("request = %s %s", got.method, got.path)
 	}
 	if got.auth != "Bearer openai-key" {
@@ -63,10 +63,10 @@ func TestGeneratePostsModelAndInputWithBearerKey(t *testing.T) {
 	if got.contentType != "application/json" {
 		t.Errorf("Content-Type = %q", got.contentType)
 	}
-	want := `{"input":"hello","model":"gpt-6-luna"}`
+	want := `{"messages":[{"content":"hello","role":"user"}],"model":"agy:gemini-3.8-flash-medium"}`
 	b, _ := json.Marshal(got.body)
 	if string(b) != want {
-		t.Errorf("body = %s, want %s (no text, no reasoning)", b, want)
+		t.Errorf("body = %s, want %s ", b, want)
 	}
 }
 
@@ -75,38 +75,16 @@ func TestGenerateDefaultsToTheFormatterModel(t *testing.T) {
 	if _, err := clientFor(srv, "k").Generate(context.Background(), Request{Input: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if got.body["model"] != "gpt-6-luna" {
+	if got.body["model"] != "agy:gemini-3.8-flash-medium" {
 		t.Errorf("model = %v", got.body["model"])
 	}
 }
 
-func TestGenerateSendsOptionalTextFormatAndReasoning(t *testing.T) {
-	srv, got := fakeEndpoint(t, 200, okResponse)
-	format := map[string]any{"type": "json_schema", "name": "summary", "strict": true, "schema": map[string]any{"type": "object"}}
-	_, err := clientFor(srv, "k").Generate(context.Background(), Request{
-		Model: "gpt-5.6-terra", Input: "in", ReasoningEffort: "medium", TextFormat: format,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(got.body)
-	want := `{"input":"in","model":"gpt-5.6-terra","reasoning":{"effort":"medium"},"text":{"format":{"name":"summary","schema":{"type":"object"},"strict":true,"type":"json_schema"}}}`
-	if string(b) != want {
-		t.Errorf("body = %s\nwant   %s", b, want)
-	}
-}
-
-func TestGenerateJoinsEveryOutputTextOfEveryMessage(t *testing.T) {
-	srv, _ := fakeEndpoint(t, 200, `{"output":[
-		{"type":"message","content":[{"type":"output_text","text":"a"},{"type":"refusal","text":"nope"},{"type":"output_text","text":"b"}]},
-		{"type":"function_call","content":[{"type":"output_text","text":"skipped"}]},
-		{"type":"message","content":[{"type":"output_text","text":"c"}]}]}`)
+func TestGenerateUsesTheFirstChoice(t *testing.T) {
+	srv, _ := fakeEndpoint(t, 200, `{"choices":[{"message":{"content":"first"}},{"message":{"content":"second"}}]}`)
 	text, err := clientFor(srv, "k").Generate(context.Background(), Request{Input: "x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if text != "abc" {
-		t.Errorf("text = %q, want abc", text)
+	if err != nil || text != "first" {
+		t.Errorf("text = %q, err = %v", text, err)
 	}
 }
 
@@ -130,7 +108,7 @@ func TestGenerateNon2xxIsAGenericErrorWithoutTheBody(t *testing.T) {
 
 // Ruby: "raises a generic error when OpenAI returns a malformed body".
 func TestGenerateUnparseableBody(t *testing.T) {
-	for _, body := range []string{"not json sensitive", "", `[1,2]`, `{"output":`} {
+	for _, body := range []string{"not json sensitive", "", `[1,2]`, `{"choices":`} {
 		srv, _ := fakeEndpoint(t, 200, body)
 		_, err := clientFor(srv, "k").Generate(context.Background(), Request{Input: "x"})
 		var e *Error
@@ -145,11 +123,10 @@ func TestGenerateUnparseableBody(t *testing.T) {
 
 func TestGenerateNoOutput(t *testing.T) {
 	for _, body := range []string{
-		`{}`, `{"output":null}`, `{"output":[]}`,
-		`{"output":[{"type":"reasoning","summary":[]}]}`,
-		`{"output":[{"type":"message","content":[{"type":"output_text","text":"  \n"}]}]}`,
-		`{"output":[{"type":"message","content":[{"type":"refusal","text":"no"}]}]}`,
-		`{"output":[{"type":"message","content":"oops"}]}`,
+		`{}`, `{"choices":null}`, `{"choices":[]}`, `{"choices":[{}]}`,
+		`{"choices":[{"message":{"content":"  \n"}}]}`,
+		`{"choices":[{"message":{"content":null}}]}`,
+		`{"choices":[{"message":"oops"}]}`,
 	} {
 		srv, _ := fakeEndpoint(t, 200, body)
 		_, err := clientFor(srv, "k").Generate(context.Background(), Request{Input: "x"})
@@ -251,13 +228,13 @@ func TestNewClientTimeoutMatchesRuby(t *testing.T) {
 	if got := NewClient("k").HTTPClient.Timeout; got != 60*time.Second {
 		t.Errorf("timeout = %v, want 60s", got)
 	}
-	if got := NewClient("k").Endpoint; got != "https://api.openai.com/v1/responses" {
+	if got := NewClient("k").Endpoint; got != "https://sota-llms.chiq.me/v1/chat/completions" {
 		t.Errorf("endpoint = %q", got)
 	}
 }
 
 func TestGenerateCapsTheResponseSize(t *testing.T) {
-	big := `{"output":[{"type":"message","content":[{"type":"output_text","text":"` + strings.Repeat("a", maxResponseBytes) + `"}]}]}`
+	big := `{"choices":[{"message":{"content":"` + strings.Repeat("a", maxResponseBytes) + `"}}]}`
 	srv, _ := fakeEndpoint(t, 200, big)
 	_, err := clientFor(srv, "k").Generate(context.Background(), Request{Input: "x"})
 	var e *Error

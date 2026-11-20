@@ -9,7 +9,7 @@ directory.
 - `GET /` and `GET /last` redirect to the most recently modified supported file.
 - `HEAD /health` returns `200 OK`.
 - `GET /new?<url>` downloads the `.html`/`.md` at that URL, saves it as a new file and redirects to it. Paste the URL as is after `?` (no escaping needed). Needs a session or the bearer token.
-- `POST /file/new` formats content with OpenAI (gpt-6-luna) and saves it as Markdown.
+- `POST /file/new` formats content with `agy:gemini-3.8-flash-medium` through sota-llms and saves it as Markdown.
 
 It started as a Rails app and was ported to Go; `docs/superpowers/plans/2026-11-17-go-migration.md`
 has the plan and the behaviour that was kept.
@@ -35,7 +35,7 @@ The main values:
 
 ```dotenv
 API_TOKEN=replace-with-a-long-random-token
-OPENAI_API_KEY=replace-with-your-openai-api-key
+OPENAI_API_KEY=replace-with-your-sota-llms-api-key  # bearer key for https://sota-llms.chiq.me (SOTA_LLMS_API_KEY there)
 SECRET_KEY_BASE=replace-with-a-long-random-secret
 HOST=example.com
 ```
@@ -63,7 +63,7 @@ transaction mode, set `DATABASE_PREPARED_STATEMENTS=false`.
 
 `POST /summarize-video` (bearer `API_TOKEN`, body `{ "url": "<x.com post or YouTube video url>" }`)
 downloads a tweet's video and uploads it unlisted to YouTube for auto-captions (YouTube links skip straight to captions),
-summarizes the transcript with OpenAI (gpt-6-luna), saves an HTML page, and pushes a link to
+summarizes the transcript with `agy:gemini-3.8-flash-medium` through sota-llms, saves an HTML page, and pushes a link to
 [rulinky](../rulinky). Poll `GET /summarize-video/:id` for status.
 
 ### YouTube API setup

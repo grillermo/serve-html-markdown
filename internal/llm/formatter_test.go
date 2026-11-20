@@ -24,10 +24,10 @@ func TestFormatterSendsThePromptAndContent(t *testing.T) {
 	if out != "formatted markdown" {
 		t.Errorf("out = %q", out)
 	}
-	if got.auth != "Bearer openai-key" || got.path != "/v1/responses" {
+	if got.auth != "Bearer openai-key" || got.path != "/v1/chat/completions" {
 		t.Errorf("request = %s %s", got.path, got.auth)
 	}
-	if got.body["model"] != "gpt-6-luna" || got.body["input"] != FormatPrompt+"source text" {
+	if got.body["model"] != "agy:gemini-3.8-flash-medium" || userContent(got.body) != FormatPrompt+"source text" {
 		t.Errorf("body = %v", got.body)
 	}
 	if len(got.body) != 2 {
@@ -52,7 +52,7 @@ func TestFormatterUpstreamFailuresAreGeneric(t *testing.T) {
 	}{
 		"rejected":  {500, "sensitive upstream details"},
 		"malformed": {200, "not json sensitive"},
-		"no output": {200, `{"output":[]}`},
+		"no output": {200, `{"choices":[]}`},
 	} {
 		srv, _ := fakeEndpoint(t, tc.status, tc.body)
 		_, err := NewFormatter(clientFor(srv, "k")).Format(context.Background(), "x")

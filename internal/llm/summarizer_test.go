@@ -13,11 +13,11 @@ import (
 	"testing"
 )
 
-// envelope wraps model text in a Responses API body.
+// envelope wraps model text in a chat-completions body.
 func envelope(t *testing.T, text string) string {
 	t.Helper()
-	b, err := json.Marshal(map[string]any{"output": []any{map[string]any{
-		"type": "message", "content": []any{map[string]any{"type": "output_text", "text": text}}}}})
+	b, err := json.Marshal(map[string]any{"choices": []any{map[string]any{
+		"message": map[string]any{"role": "assistant", "content": text}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,25 +39,14 @@ func TestSummarizerSummarizesTranscriptIntoTitleAndHTML(t *testing.T) {
 	if res.Title != "The Big Idea" || res.SummaryHTML != "<p>Short summary.</p>" {
 		t.Errorf("result = %+v", res)
 	}
-	if got.path != "/v1/responses" {
+	if got.path != "/v1/chat/completions" {
 		t.Errorf("path = %q", got.path)
 	}
-	if got.body["model"] != "gpt-6-luna" {
+	if got.body["model"] != "agy:gemini-3.8-flash-medium" {
 		t.Errorf("model = %v", got.body["model"])
 	}
-	if in, _ := got.body["input"].(string); in != SummaryPrompt+"full transcript" {
+	if in := userContent(got.body); in != SummaryPrompt+"full transcript" {
 		t.Errorf("input = %q", in)
-	}
-	format := got.body["text"].(map[string]any)["format"].(map[string]any)
-	if format["type"] != "json_schema" || format["strict"] != true || format["name"] != "article" {
-		t.Errorf("text.format = %v", format)
-	}
-	if _, ok := got.body["reasoning"]; ok {
-		t.Error("the Ruby summarizer sends no reasoning")
-	}
-	// The exact bytes of the text format, as Ruby's to_json writes them.
-	if !strings.Contains(got.rawBody, `"text":{"format":`+SummaryTextFormat+`}`) {
-		t.Errorf("raw body does not carry SummaryTextFormat verbatim: %s", got.rawBody)
 	}
 }
 
@@ -68,7 +57,7 @@ func TestSummarizerReducesVTTToItsSpokenText(t *testing.T) {
 	if _, err := NewSummarizer(clientFor(srv, "k")).Summarize(context.Background(), vtt); err != nil {
 		t.Fatal(err)
 	}
-	if in, _ := got.body["input"].(string); in != SummaryPrompt+"hello world" {
+	if in := userContent(got.body); in != SummaryPrompt+"hello world" {
 		t.Errorf("input = %q", in)
 	}
 }
@@ -82,7 +71,7 @@ func TestSummarizerUpstreamFailuresAreGeneric(t *testing.T) {
 	}{
 		"rejected":  {500, "secret upstream"},
 		"malformed": {200, "{secret upstream"},
-		"no output": {200, `{"output":[]}`},
+		"no output": {200, `{"choices":[]}`},
 	} {
 		srv, _ := fakeEndpoint(t, tc.status, tc.body)
 		_, err := NewSummarizer(clientFor(srv, "k")).Summarize(context.Background(), "t")
@@ -162,15 +151,11 @@ func TestSummarizerParsesTheModelJSON(t *testing.T) {
 
 const (
 	goldenSummaryPromptSHA256 = "f54e56921a2fe7e0ecfa2911025d4c926ac91990fc652947317bd6d953623201"
-	goldenSummaryFormatSHA256 = "b792892c6f750d819fbb3a5fe26bccc3dc159984a14e0e9472d7e7536ba7295f"
 )
 
 func TestSummaryPromptAndFormatGolden(t *testing.T) {
 	if got := sha(SummaryPrompt); got != goldenSummaryPromptSHA256 {
 		t.Errorf("SummaryPrompt sha256 = %s, want %s", got, goldenSummaryPromptSHA256)
-	}
-	if got := sha(SummaryTextFormat); got != goldenSummaryFormatSHA256 {
-		t.Errorf("SummaryTextFormat sha256 = %s, want %s", got, goldenSummaryFormatSHA256)
 	}
 }
 
@@ -251,14 +236,25 @@ print OpenaiSummarizer::PROMPT, "\0", OpenaiSummarizer::TEXT_FORMAT.to_json
 		}
 		t.Fatalf("ruby (%s) failed: %v\n%s", ruby, err, stderr)
 	}
-	prompt, format, ok := strings.Cut(string(out), "\x00")
+	prompt, _, ok := strings.Cut(string(out), "\x00")
 	if !ok {
 		t.Fatalf("unexpected ruby output %q", out)
 	}
 	if prompt != SummaryPrompt {
 		t.Errorf("SummaryPrompt differs from Ruby's PROMPT:\n go:   %q\n ruby: %q", SummaryPrompt, prompt)
 	}
-	if format != SummaryTextFormat {
-		t.Errorf("SummaryTextFormat differs from Ruby's TEXT_FORMAT.to_json:\n go:   %s\n ruby: %s", SummaryTextFormat, format)
+}
+
+// userContent is the content of the one user message of a chat-completions body.
+func userContent(body map[string]any) string {
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) != 1 {
+		return ""
 	}
+	m, _ := msgs[0].(map[string]any)
+	if m["role"] != "user" {
+		return ""
+	}
+	s, _ := m["content"].(string)
+	return s
 }

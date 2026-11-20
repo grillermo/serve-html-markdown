@@ -24,13 +24,6 @@ const SummaryPrompt = "You are a professional writer. You are given the transcri
 	"<h3>, <ul>, <li>, <blockquote>, <strong>, <em> as needed, no <html>/<body> " +
 	"wrapper and no <h1>). Transcript:\n\n"
 
-// SummaryTextFormat is the Responses API text.format of the summary: Structured
-// Outputs, because without it a long article sometimes comes back as invalid
-// JSON. It is byte for byte TEXT_FORMAT.to_json of the Ruby summarizer.
-const SummaryTextFormat = `{"type":"json_schema","name":"article","strict":true,"schema":{"type":"object",` +
-	`"properties":{"title":{"type":"string"},"summary_html":{"type":"string"}},` +
-	`"required":["title","summary_html"],"additionalProperties":false}}`
-
 // Messages of the summarizer's own errors (Ruby: OpenaiSummarizer).
 const (
 	// SummarizationFailed is the message of every upstream failure.
@@ -74,8 +67,6 @@ func (s *Summarizer) Summarize(ctx context.Context, captions string) (Summary, e
 	text, err := s.Client.Generate(ctx, Request{
 		Model: DefaultModel,
 		Input: SummaryPrompt + transcript.VttText(captions),
-		// json.RawMessage is written verbatim, key order and all.
-		TextFormat: json.RawMessage(SummaryTextFormat),
 	})
 	if err != nil {
 		if errors.Is(err, ErrConfiguration) {

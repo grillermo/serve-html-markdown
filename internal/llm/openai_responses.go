@@ -1,5 +1,5 @@
-// Package llm talks to OpenAI's Responses API: one prompt in, the output text
-// out. Errors never carry the API key or the upstream response body.
+// Package llm talks to an OpenAI-compatible chat-completions endpoint (sota-llms,
+// which answers with the agy CLI): one prompt in, the reply text out. Errors never carry the API key or the upstream response body.
 package llm
 
 import (
@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	// DefaultModel is the model OpenAIResponses used unless told otherwise.
-	DefaultModel = "gpt-6-luna"
-	// DefaultEndpoint is OpenAI's Responses API.
-	DefaultEndpoint = "https://api.openai.com/v1/responses"
+	// DefaultModel is the model used unless told otherwise: Gemini 3.8 Flash
+	// (medium) through Antigravity, served by sota-llms.
+	DefaultModel = "agy:gemini-3.8-flash-medium"
+	// DefaultEndpoint is sota-llms' OpenAI-compatible chat completions.
+	DefaultEndpoint = "https://sota-llms.chiq.me/v1/chat/completions"
 	// DefaultTimeout is Net::HTTP's default open and read timeout (60 s), which
 	// the Ruby client used. Here it bounds the whole call, body included.
 	DefaultTimeout = 60 * time.Second
@@ -69,7 +70,7 @@ func APIKey(openAI, expansion string) string {
 	return expansion
 }
 
-// Client posts prompts to the Responses API. Endpoint and HTTPClient are
+// Client posts prompts to the chat-completions endpoint. Endpoint and HTTPClient are
 // fields so tests can point it at an httptest server.
 type Client struct {
 	APIKey     string
@@ -91,15 +92,11 @@ func newHTTPClient() *http.Client {
 	}
 }
 
-// Request is one Responses API call.
+// Request is one chat-completions call.
 type Request struct {
 	// Model defaults to DefaultModel.
 	Model string
 	Input string
-	// ReasoningEffort, when set, is sent as reasoning.effort.
-	ReasoningEffort string
-	// TextFormat, when set, is sent as text.format (e.g. a json_schema).
-	TextFormat any
 }
 
 func (r Request) body() ([]byte, error) {
@@ -107,18 +104,13 @@ func (r Request) body() ([]byte, error) {
 	if model == "" {
 		model = DefaultModel
 	}
-	body := map[string]any{"model": model, "input": r.Input}
-	if r.ReasoningEffort != "" {
-		body["reasoning"] = map[string]any{"effort": r.ReasoningEffort}
-	}
-	if r.TextFormat != nil {
-		body["text"] = map[string]any{"format": r.TextFormat}
-	}
-	return json.Marshal(body)
+	return json.Marshal(map[string]any{
+		"model":    model,
+		"messages": []map[string]string{{"role": "user", "content": r.Input}},
+	})
 }
 
-// Generate posts req and returns the joined text of every output_text of every
-// message item. It returns ErrConfiguration, before any request, when the key
+// Generate posts req and returns the content of the first choice's message. It returns ErrConfiguration, before any request, when the key
 // is blank, and an *Error for everything that goes wrong afterwards.
 func (c *Client) Generate(ctx context.Context, req Request) (string, error) {
 	if strings.TrimSpace(c.APIKey) == "" {
@@ -166,26 +158,14 @@ func (c *Client) Generate(ctx context.Context, req Request) (string, error) {
 	return text, nil
 }
 
-// outputText joins every output_text of every message item, skipping anything
-// else the way the Ruby select chain did.
+// outputText is choices[0].message.content, or "" when the body has no such string.
 func outputText(parsed map[string]any) string {
-	var sb strings.Builder
-	items, _ := parsed["output"].([]any)
-	for _, item := range items {
-		m, _ := item.(map[string]any)
-		if m["type"] != "message" {
-			continue
-		}
-		contents, _ := m["content"].([]any)
-		for _, c := range contents {
-			cm, _ := c.(map[string]any)
-			if cm["type"] != "output_text" {
-				continue
-			}
-			if s, ok := cm["text"].(string); ok {
-				sb.WriteString(s)
-			}
-		}
+	choices, _ := parsed["choices"].([]any)
+	if len(choices) == 0 {
+		return ""
 	}
-	return sb.String()
+	first, _ := choices[0].(map[string]any)
+	msg, _ := first["message"].(map[string]any)
+	text, _ := msg["content"].(string)
+	return text
 }

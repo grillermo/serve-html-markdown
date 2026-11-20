@@ -19,10 +19,8 @@ const (
 	DefaultClaudeModel = "sonnet"
 	// CodexModel is the model of the codex fallback.
 	CodexModel = "earth"
-	// OpenAIExpandModel is the model of the OpenAI path.
-	OpenAIExpandModel = "gpt-5.6-terra"
-	// OpenAIReasoningEffort is its reasoning.effort.
-	OpenAIReasoningEffort = "medium"
+	// OpenAIExpandModel is the model of the OpenAI path (now sota-llms' agy model).
+	OpenAIExpandModel = DefaultModel
 )
 
 // Stages stamped on the expansion while it is generated.
@@ -187,9 +185,8 @@ func (s *ExpandService) runOpenAI(ctx context.Context, prompt string) (string, e
 		return "", expandErr("EXPANSION_LLM_API_KEY is not configured.", ErrConfiguration)
 	}
 	text, err := s.OpenAI.Generate(ctx, Request{
-		Model:           OpenAIExpandModel,
-		Input:           prompt,
-		ReasoningEffort: OpenAIReasoningEffort,
+		Model: OpenAIExpandModel,
+		Input: prompt,
 	})
 	if errors.Is(err, ErrConfiguration) {
 		return "", expandErr("EXPANSION_LLM_API_KEY is not configured.", err)

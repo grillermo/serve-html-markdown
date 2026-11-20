@@ -302,8 +302,8 @@ func openAIService(t *testing.T, key string, status int, body string) (*ExpandSe
 	return s, got, f
 }
 
-var openAIExpandResponse = `{"output":[{"type":"message","content":[{"type":"output_text","text":` +
-	func() string { b, _ := json.Marshal(expandHTML); return string(b) }() + `}]}]}`
+var openAIExpandResponse = `{"choices":[{"message":{"content":` +
+	func() string { b, _ := json.Marshal(expandHTML); return string(b) }() + `}}]}`
 
 // Ruby: "calls openai when use_openai is true" and "records openai as provider_used".
 func TestExpandCallsOpenAI(t *testing.T) {
@@ -315,9 +315,8 @@ func TestExpandCallsOpenAI(t *testing.T) {
 	if err != nil || out != expandHTML {
 		t.Fatalf("got %q, %v", out, err)
 	}
-	reasoning, _ := got.body["reasoning"].(map[string]any)
-	if got.body["model"] != "gpt-5.6-terra" || reasoning["effort"] != "medium" ||
-		!strings.Contains(got.body["input"].(string), "Alpha beta.") || got.auth != "Bearer test-key" {
+	if got.body["model"] != "agy:gemini-3.8-flash-medium" ||
+		!strings.Contains(userContent(got.body), "Alpha beta.") || got.auth != "Bearer test-key" {
 		t.Errorf("request = %v %s", got.body, got.auth)
 	}
 	if fmt.Sprint(rec.stages) != "[llm_request_start llm_response]" || rec.provider != "openai" || rec.bytes != len(expandHTML) {
@@ -352,7 +351,7 @@ func TestExpandOpenAIWithoutKey(t *testing.T) {
 }
 
 func TestExpandOpenAIOutputIsValidatedToo(t *testing.T) {
-	body := `{"output":[{"type":"message","content":[{"type":"output_text","text":"no markup"}]}]}`
+	body := `{"choices":[{"message":{"content":"no markup"}}]}`
 	s, _, _ := openAIService(t, "k", 200, body)
 	p := expandArgs
 	p.UseOpenAI = true

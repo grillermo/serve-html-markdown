@@ -108,9 +108,11 @@ func TestShowHTMLInjectsBootstrapBeforeBody(t *testing.T) {
 	if !strings.HasPrefix(body, "<html><body><main>Raw</main><script>") {
 		t.Errorf("bootstrap not right after the content: %q", body)
 	}
-	want := `<script src="` + env.expandPath() + `" defer></script></body></html>`
-	if !strings.HasSuffix(body, want) {
-		t.Errorf("body %q does not end with %q", body, want)
+	if !strings.Contains(body, `<script src="`+env.expandPath()+`" defer></script>`) {
+		t.Errorf("body %q does not load %q", body, env.expandPath())
+	}
+	if !strings.Contains(body, "hljs.highlightAll()") || !strings.HasSuffix(body, "</script></body></html>") {
+		t.Errorf("highlight.js not injected right before </body>: %q", body)
 	}
 	if !regexp.MustCompile(`^/assets/expand-[0-9a-f]{8,}\.js$`).MatchString(env.expandPath()) {
 		t.Errorf("expand.js is not digested: %q", env.expandPath())
@@ -127,8 +129,8 @@ func TestShowHTMLInjectsBeforeFirstBodyAnyCase(t *testing.T) {
 	env.writeFile(t, "page.html", "<p>a</p></BODY>mid</body>end")
 
 	body := env.get("/page.html").Body.String()
-	if strings.Count(body, "<script src=") != 1 {
-		t.Fatalf("bootstrap inserted %d times: %q", strings.Count(body, "<script src="), body)
+	if n := strings.Count(body, "window.__fileVersions"); n != 1 {
+		t.Fatalf("bootstrap inserted %d times: %q", n, body)
 	}
 	i := strings.Index(body, "<script>")
 	j := strings.Index(body, "</body>mid</body>end")
@@ -143,7 +145,7 @@ func TestShowHTMLAppendsWithoutBody(t *testing.T) {
 	env.writeFile(t, "page.html", "<main>Raw HTML</main>")
 
 	body := env.get("/page.html").Body.String()
-	if !strings.HasPrefix(body, "<main>Raw HTML</main><script>") || !strings.HasSuffix(body, `defer></script>`) {
+	if !strings.HasPrefix(body, "<main>Raw HTML</main><script>") || !strings.HasSuffix(body, `hljs.highlightAll(); });</script>`) {
 		t.Errorf("body %q", body)
 	}
 }

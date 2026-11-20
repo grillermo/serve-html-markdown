@@ -230,7 +230,7 @@ func TestRenderMarkdownPageEscapesTitleAndNoCSRF(t *testing.T) {
 func TestRenderMarkdownPageScrollAnchorWithScriptCloser(t *testing.T) {
 	srv := newTestServerNoDB(t)
 	_, body := renderMarkdown(t, srv, "a.md", "<p>x</p>", srv.NewExpandBootstrap("x</script><b>", nil, "create_new"))
-	if strings.Count(body, "</script>") != 2 || !strings.Contains(body, `window.__scrollAnchor = "x\u003c/script\u003e\u003cb\u003e";`) {
+	if strings.Count(body, "</script>") != 4 || !strings.Contains(body, `window.__scrollAnchor = "x\u003c/script\u003e\u003cb\u003e";`) {
 		t.Errorf("anchor not neutralised:\n%s", body)
 	}
 }

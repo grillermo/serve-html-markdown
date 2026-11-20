@@ -16,7 +16,7 @@ import (
 
 // requiredAssets are the logical names the shipped templates use; New panics
 // if one is not embedded.
-var requiredAssets = []string{"application.css", "markdown.css", "expand.js"}
+var requiredAssets = []string{"application.css", "markdown.css", "expand.js", "highlight.js", "highlight.css"}
 
 // FileVersionEntry is one element of window.__fileVersions, read by expand.js.
 // The JSON field names are the contract with the script.
@@ -44,6 +44,10 @@ type ExpandBootstrap struct {
 	ExpansionMode string
 	// ExpandJS is the digested URL path of expand.js (Server.AssetPath).
 	ExpandJS string
+	// HighlightJS and HighlightCSS are the digested paths of the vendored
+	// highlight.js bundle and its theme; an empty HighlightJS leaves the
+	// syntax highlighting tags out.
+	HighlightJS, HighlightCSS string
 }
 
 // normalize makes the data match what Ruby sent: a nil FileVersions becomes
@@ -80,9 +84,11 @@ func ExpandBootstrapHTML(b ExpandBootstrap) (template.HTML, error) {
 	return template.HTML(buf.String()), nil
 }
 
-// NewExpandBootstrap fills ExpandJS with the digested path of expand.js.
+// NewExpandBootstrap fills ExpandJS and the highlight.js paths with their
+// digested paths.
 func (s *Server) NewExpandBootstrap(scrollAnchor string, versions []FileVersionEntry, mode string) ExpandBootstrap {
-	return ExpandBootstrap{ScrollAnchor: scrollAnchor, FileVersions: versions, ExpansionMode: mode, ExpandJS: s.AssetPath("expand.js")}
+	return ExpandBootstrap{ScrollAnchor: scrollAnchor, FileVersions: versions, ExpansionMode: mode,
+		ExpandJS: s.AssetPath("expand.js"), HighlightJS: s.AssetPath("highlight.js"), HighlightCSS: s.AssetPath("highlight.css")}
 }
 
 // URLEncode is Ruby's ERB::Util.url_encode: everything except the RFC 3986

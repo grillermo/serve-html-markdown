@@ -57,6 +57,8 @@ type Server struct {
 	// enqueuer receives the generate_expansion job of POST /expansions (see
 	// WithEnqueuer); the default writes to go_jobs through pool.
 	enqueuer jobs.Enqueuer
+	// fetchClient downloads the page of GET /new (WithFetchClient replaces it).
+	fetchClient *http.Client
 	// Test seams. openFile opens a served file, render converts Markdown, and
 	// renderDeadline starts the timer after which a request stops waiting for a
 	// render (it returns the channel and a stop function).
@@ -127,6 +129,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, opts ...Option) *Server {
 	}
 	if s.youtubeAuth == nil {
 		s.youtubeAuth = s.defaultYoutubeAuthorizer
+	}
+	if s.fetchClient == nil {
+		s.fetchClient = newFetchClient()
 	}
 	if s.formatter == nil {
 		s.formatter = newFormatter(cfg)

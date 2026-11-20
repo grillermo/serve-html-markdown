@@ -31,6 +31,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /users/sign_out", s.signOut)
 
 	mux.HandleFunc("POST /file/new", s.createFile)                // bearer
+	mux.HandleFunc("GET /new", s.newFromURL)                      // session or bearer
 	mux.HandleFunc("POST /file/upload", s.uploadFile)             // bearer
 	mux.HandleFunc("POST /summarize-video", s.createVideoSummary) // bearer
 	mux.HandleFunc("POST /twitter-video", s.createVideoSummary)   // legacy name for iOS Shortcuts

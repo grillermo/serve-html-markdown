@@ -8,6 +8,7 @@ directory.
 - `GET /name.md` and `GET /name.markdown` render Markdown with a dark theme.
 - `GET /` and `GET /last` redirect to the most recently modified supported file.
 - `HEAD /health` returns `200 OK`.
+- `GET /new?<url>` downloads the `.html`/`.md` at that URL, saves it as a new file and redirects to it. Paste the URL as is after `?` (no escaping needed). Needs a session or the bearer token.
 - `POST /file/new` formats content with OpenAI (gpt-6-luna) and saves it as Markdown.
 
 It started as a Rails app and was ported to Go; `docs/superpowers/plans/2026-11-17-go-migration.md`

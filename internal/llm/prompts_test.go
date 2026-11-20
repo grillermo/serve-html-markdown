@@ -12,7 +12,7 @@ import (
 // Golden hashes of the two templates, so any change to their wording is a
 // deliberate one: update the hash together with the text.
 const (
-	goldenExpandPromptSHA256  = "b60e9036cc1f7652f8faa9a4eefebbd103c0ac595f07e2390f291fa9f9504919"
+	goldenExpandPromptSHA256  = "c6edb3c13fd6178a4bc1c68a4682a94bf783d55c4135c3f36fea825a815d590b"
 	goldenRewritePromptSHA256 = "0ecf0635329477ce40c442e5df5cf9d1c53ec18e4ff39b0cf26ecd7e4bc4bdfc"
 )
 
